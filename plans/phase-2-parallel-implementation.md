@@ -143,3 +143,12 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 - 2026-05-11-14-56: Merged Lane E into `codex/integration-v1`; post-merge
   `python -m pytest -m "not live_api and not live_scraping"` reported 215 passed, 1 expected skip,
   and 3 deselected; `ruff check .` passed.
+- 2026-05-11-14-57: Merged Lane F into `codex/integration-v1`.
+- 2026-05-11-15-00: Final integration verification passed: `python -m pytest` reported
+  230 passed and 6 expected skips; `python -m pytest -m "not live_api and not live_scraping"`
+  reported 230 passed, 1 expected skip, and 5 deselected; `python -m pytest -m e2e` reported
+  2 passed, 1 expected legacy placeholder skip, and 233 deselected; `python -m pytest -m live_api`
+  and `python -m pytest -m live_scraping` selected only opt-in skipped smoke placeholders.
+  `ruff check .`, `ruff format --check .`, `mypy .`, and `python -m nlp_stock_prediction --help`
+  passed. Direct offline CLI smoke wrote `report.md`, `report.json`, and audit artifacts, then the
+  temporary output directory was removed.
