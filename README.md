@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-Phase 2 implementation is integrated. Phase 3 Stages 0-4 are complete on `feature/integration-and-hardening`; failure drills and final V1 acceptance still pending. The current CLI can generate a deterministic offline report bundle with Markdown, JSON, and audit artifacts, and the provider, extraction, analysis, scoring, reporting, reliability, and compliance lanes are present in the main application surface. See `plans/phase-3-integration-live-smoke.md` for the active Phase 3 plan, `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 2 implementation is integrated. Phase 3 Stages 0-5 are complete on `feature/integration-and-hardening`; final V1 acceptance is still pending. The current CLI can generate a deterministic offline report bundle with Markdown, JSON, and audit artifacts, and the provider, extraction, analysis, scoring, reporting, reliability, and compliance lanes are present in the main application surface. See `plans/phase-3-integration-live-smoke.md` for the active Phase 3 plan, `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 

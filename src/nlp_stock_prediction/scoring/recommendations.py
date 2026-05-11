@@ -14,6 +14,7 @@ from nlp_stock_prediction.contracts import (
     EvidenceReference,
     InstrumentType,
     PositionType,
+    ProviderWarning,
     RecommendationAction,
     RiskProfile,
     ScoreBreakdown,
@@ -67,13 +68,14 @@ def score_strategy_cluster(
         signals=signals,
         risk_passed=risk_plan.passed,
     )
-    penalties = _penalties(analysis)
+    penalties = _penalties(analysis, cluster)
     threshold = _threshold(risk_profile)
     overall_score = _overall_score(components, penalties)
     failed_gates = _failed_score_gates(
         overall_score=overall_score,
         threshold=threshold,
         contradiction_count=len(analysis.contradictions),
+        cluster_warnings=cluster.warnings,
     )
     if not risk_plan.passed:
         action = RecommendationAction.AVOID
@@ -111,7 +113,7 @@ def score_strategy_cluster(
         contradictions=analysis.contradictions,
         evidence=cluster.evidence,
         score_input_ids=(analysis.analysis_id, cluster.cluster_id),
-        warnings=analysis.warnings,
+        warnings=(*cluster.warnings, *analysis.warnings),
         disclaimer_id=disclaimer_id,
         metadata={
             "score_version": SCORE_VERSION,
@@ -229,22 +231,64 @@ def _component(
     )
 
 
-def _penalties(analysis: AnalysisBundle) -> tuple[ScoreComponent, ...]:
-    if not analysis.contradictions:
-        return ()
-    penalty_score = clamp(len(analysis.contradictions) / 3.0)
-    contribution = round(-(penalty_score * 0.18), 6)
-    return (
-        ScoreComponent(
-            name="contradiction-penalty",
-            raw_value=len(analysis.contradictions),
-            normalized_score=round(penalty_score, 4),
-            weight=0.18,
-            contribution=contribution,
-            rationale="Contradictory analysis inputs reduce recommendation confidence.",
-            evidence=analysis.evidence,
-        ),
+def _penalties(
+    analysis: AnalysisBundle,
+    cluster: StrategyCluster,
+) -> tuple[ScoreComponent, ...]:
+    penalties: list[ScoreComponent] = []
+    if analysis.contradictions:
+        penalty_score = clamp(len(analysis.contradictions) / 3.0)
+        contribution = round(-(penalty_score * 0.18), 6)
+        penalties.append(
+            ScoreComponent(
+                name="contradiction-penalty",
+                raw_value=len(analysis.contradictions),
+                normalized_score=round(penalty_score, 4),
+                weight=0.18,
+                contribution=contribution,
+                rationale="Contradictory analysis inputs reduce recommendation confidence.",
+                evidence=analysis.evidence,
+            )
+        )
+
+    sarcasm_warnings = _warnings_by_risk_type(cluster.warnings, "high_sarcasm_joke_risk")
+    if sarcasm_warnings:
+        risk = max(_warning_numeric_metadata(warning, "risk") for warning in sarcasm_warnings)
+        normalized_risk = round(clamp(risk), 4)
+        penalties.append(
+            ScoreComponent(
+                name="sarcasm-joke-risk-penalty",
+                raw_value=normalized_risk,
+                normalized_score=normalized_risk,
+                weight=0.12,
+                contribution=round(-(normalized_risk * 0.12), 6),
+                rationale=("High sarcasm or joke risk in the cited discussion reduces confidence."),
+                evidence=cluster.evidence,
+                warning_ids=_warning_ids(sarcasm_warnings),
+            )
+        )
+
+    source_conflict_warnings = _warnings_by_risk_type(
+        cluster.warnings,
+        "conflicting_source_evidence",
     )
+    if source_conflict_warnings:
+        penalties.append(
+            ScoreComponent(
+                name="source-conflict-penalty",
+                raw_value="opposing source evidence",
+                normalized_score=1.0,
+                weight=0.18,
+                contribution=-0.18,
+                rationale=(
+                    "Opposing source evidence for the same setup keeps the strategy watch-only."
+                ),
+                evidence=cluster.evidence,
+                warning_ids=_warning_ids(source_conflict_warnings),
+            )
+        )
+
+    return tuple(penalties)
 
 
 def _reddit_strength(cluster: StrategyCluster, signals: RecommendationSignals) -> float:
@@ -303,13 +347,49 @@ def _failed_score_gates(
     overall_score: float,
     threshold: float,
     contradiction_count: int,
+    cluster_warnings: tuple[ProviderWarning, ...],
 ) -> tuple[str, ...]:
     failed_gates: list[str] = []
     if contradiction_count >= 2:
         failed_gates.append("conflicting-analysis")
+    warning_risk_types = _warning_risk_types(cluster_warnings)
+    if "conflicting_source_evidence" in warning_risk_types:
+        failed_gates.append("conflicting-source-evidence")
+    if "high_sarcasm_joke_risk" in warning_risk_types:
+        failed_gates.append("high-sarcasm-joke-risk")
     if overall_score < threshold:
         failed_gates.append("score-below-threshold")
     return tuple(failed_gates)
+
+
+def _warning_risk_types(warnings: tuple[ProviderWarning, ...]) -> set[str]:
+    return {
+        risk_type
+        for warning in warnings
+        if isinstance((risk_type := warning.metadata.get("risk_type")), str)
+    }
+
+
+def _warnings_by_risk_type(
+    warnings: tuple[ProviderWarning, ...],
+    risk_type: str,
+) -> tuple[ProviderWarning, ...]:
+    return tuple(warning for warning in warnings if warning.metadata.get("risk_type") == risk_type)
+
+
+def _warning_numeric_metadata(warning: ProviderWarning, key: str) -> float:
+    value = warning.metadata.get(key)
+    if isinstance(value, int | float):
+        return float(value)
+    return 1.0
+
+
+def _warning_ids(warnings: tuple[ProviderWarning, ...]) -> tuple[str, ...]:
+    warning_ids = (
+        f"{warning.provider_name or 'unknown-provider'}:{warning.code.value}"
+        for warning in warnings
+    )
+    return tuple(dict.fromkeys(warning_ids))
 
 
 def _threshold(risk_profile: RiskProfile) -> float:

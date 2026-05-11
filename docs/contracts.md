@@ -81,6 +81,8 @@ Frozen warning codes are:
 - Valid ticker discovery requires exactly six unique tickers in first-seen order.
 - Invalid ticker discovery results must include warnings.
 - Strategy extractions and clusters must cite normalized evidence.
+- High sarcasm/joke risk and conflicting source evidence must be surfaced as extraction/cluster
+  warnings and must not qualify silently as clean trade candidates.
 - Evidence quote spans must be monotonic when both start and end offsets are provided.
 - Score breakdowns must include at least one component.
 - Actionable trade candidates must cite evidence and include score, risk, invalidation, and
@@ -141,6 +143,6 @@ Core scenario names to use first:
 ## Phase Boundary
 
 Phase 0 and Phase 1 are complete, and Phase 2 implementation lanes have been integrated. Phase 3 is
-active on `feature/integration-and-hardening`; Stages 0-4 are complete, with failure drills and
-final V1 acceptance still pending. Shared public contracts should stay stable unless a
+active on `feature/integration-and-hardening`; Stages 0-5 are complete, with final V1 acceptance
+still pending. Shared public contracts should stay stable unless a
 single-threaded contract revision is recorded in the active Phase 3 plan.

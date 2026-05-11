@@ -16,7 +16,10 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 
 - Validate pure functions and small modules without network access.
 - Cover ticker extraction, ticker matching, evidence normalization, clustering, technical indicators, scoring rules, risk gates, and report rendering helpers.
-- Include negative cases for malformed HTML, duplicate tickers, missing provider data, short ticker false positives, unsupported recommendations, and joke/sarcasm risk.
+- Include negative cases for malformed HTML, duplicate or insufficient tickers, missing provider
+  data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
+  recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
+  ticker false positives.
 
 ### 2. Schema and model tests
 
@@ -107,6 +110,12 @@ Fixture-backed e2e coverage now exercises offline CLI report generation. Live AP
 checks remain opt-in, and live LLM checks are reserved until a live adapter and credential contract
 exist. See `docs/configuration.md` for the current live-smoke environment variables and `.env`
 guidance.
+
+Stage 5 failure drills are represented across parser, provider-adapter, extraction/clustering,
+scoring, report-rendering, and CLI e2e tests. The matrix covers malformed Reddit ticker-card HTML,
+duplicate/insufficient tickers, missing provider data, rate-limit and unavailable-provider
+envelopes, stale market or macro data, unsupported recommendations, conflicting evidence,
+joke/sarcasm risk, and no qualified strategies.
 
 ## CI expectations
 

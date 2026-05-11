@@ -48,7 +48,10 @@ If the final project uses a task runner, keep this section updated with the cano
 - Use recorded fixtures for provider contract tests, plus separately marked live API and live scraping tests for dependency coverage.
 - Keep the default fast suite deterministic; run live dependency tests explicitly or in scheduled CI with the required credentials, network access, and quota controls.
 - End-to-end tests should include fixture-backed report generation plus separate opt-in live provider smoke coverage when the needed external dependencies are configured.
-- Include negative tests for malformed HTML, duplicate tickers, missing provider data, joke/sarcasm risk, unsupported recommendations, and short ticker false positives.
+- Include negative tests for malformed HTML, duplicate or insufficient tickers, missing provider
+  data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
+  recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
+  ticker false positives.
 - Any recommendation logic change must include tests for no-trade days, conflicting evidence, and at least one qualified strategy.
 
 ## Planning rules

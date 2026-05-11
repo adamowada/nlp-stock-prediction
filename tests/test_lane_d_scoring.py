@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -12,14 +12,18 @@ from nlp_stock_prediction.contracts import (
     EvidenceReference,
     FundamentalAnalysis,
     InstrumentType,
+    JsonObject,
     MacroContext,
     PositionType,
+    ProviderWarning,
     RecommendationAction,
     RiskProfile,
     SectorContext,
     StrategyCluster,
     TechnicalAnalysis,
     TimeHorizon,
+    WarningCode,
+    WarningSeverity,
 )
 from nlp_stock_prediction.scoring import (
     RecommendationSignals,
@@ -49,6 +53,7 @@ def _cluster(
     instrument: InstrumentType = InstrumentType.OPTION_SPREAD,
     direction: Direction = Direction.BULLISH,
     confidence: float = 0.78,
+    warnings: tuple[ProviderWarning, ...] = (),
 ) -> StrategyCluster:
     return StrategyCluster(
         cluster_id=f"cluster-{ticker.lower()}-spread",
@@ -60,6 +65,7 @@ def _cluster(
         member_strategy_ids=(f"strategy-{ticker.lower()}-spread-1",),
         evidence=(_evidence_ref(),),
         confidence=confidence,
+        warnings=warnings,
     )
 
 
@@ -121,6 +127,24 @@ def _analysis_bundle(
             "macro": 0.66,
         },
         evidence=(_evidence_ref(),),
+    )
+
+
+def _cluster_warning(risk_type: str, *, risk: float | None = None) -> ProviderWarning:
+    metadata: JsonObject = {"risk_type": risk_type}
+    if risk is not None:
+        metadata["risk"] = risk
+    return ProviderWarning(
+        code=(
+            WarningCode.UNSUPPORTED_CLAIM
+            if risk_type == "high_sarcasm_joke_risk"
+            else WarningCode.PARTIAL_DATA
+        ),
+        severity=WarningSeverity.WARNING,
+        message=f"Fixture cluster warning: {risk_type}",
+        provider_name="strategy-clustering",
+        occurred_at=datetime(2026, 5, 11, 12, 0, tzinfo=UTC),
+        metadata=metadata,
     )
 
 
@@ -260,6 +284,94 @@ def test_contradiction_penalties_lower_score_and_prevent_qualification() -> None
     assert "score-below-threshold" in candidate.score.failed_gates
     assert any(penalty.name == "contradiction-penalty" for penalty in candidate.score.penalties)
     assert candidate.contradictions == analysis.contradictions
+
+
+@pytest.mark.unit
+def test_unsupported_recommendation_instrument_is_avoided_and_not_qualified() -> None:
+    candidate = score_strategy_cluster(
+        cluster=_cluster(instrument=InstrumentType.UNKNOWN),
+        analysis=_analysis_bundle(),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+        disclaimer_id=DISCLAIMER_ID,
+    )
+
+    qualified = select_qualified_candidates((candidate,))
+
+    assert candidate.action == RecommendationAction.AVOID
+    assert candidate.position_type == PositionType.WATCH_ONLY
+    assert candidate.risk_plan.passed is False
+    assert "unsupported-instrument" in candidate.risk_plan.failed_gates
+    assert "defined-risk-required" in candidate.risk_plan.failed_gates
+    assert qualified == ()
+    assert candidate.risks[0].startswith("Risk gates failed:")
+
+
+@pytest.mark.unit
+def test_high_sarcasm_joke_warning_penalizes_and_prevents_qualification() -> None:
+    warning = _cluster_warning("high_sarcasm_joke_risk", risk=0.88)
+    candidate = score_strategy_cluster(
+        cluster=_cluster(warnings=(warning,)),
+        analysis=_analysis_bundle(),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+        disclaimer_id=DISCLAIMER_ID,
+    )
+
+    assert candidate.action == RecommendationAction.WATCH
+    assert candidate.risk_plan.passed is True
+    assert "high-sarcasm-joke-risk" in candidate.score.failed_gates
+    assert any(penalty.name == "sarcasm-joke-risk-penalty" for penalty in candidate.score.penalties)
+    assert candidate.warnings == (warning,)
+    assert select_qualified_candidates((candidate,)) == ()
+
+
+@pytest.mark.unit
+def test_conflicting_source_evidence_warning_penalizes_and_prevents_qualification() -> None:
+    warning = _cluster_warning("conflicting_source_evidence")
+    candidate = score_strategy_cluster(
+        cluster=_cluster(warnings=(warning,)),
+        analysis=_analysis_bundle(),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+        disclaimer_id=DISCLAIMER_ID,
+    )
+
+    assert candidate.action == RecommendationAction.WATCH
+    assert "conflicting-source-evidence" in candidate.score.failed_gates
+    assert any(penalty.name == "source-conflict-penalty" for penalty in candidate.score.penalties)
+    assert candidate.warnings == (warning,)
+    assert select_qualified_candidates((candidate,)) == ()
 
 
 @pytest.mark.unit

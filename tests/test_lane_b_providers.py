@@ -23,7 +23,7 @@ from nlp_stock_prediction.contracts import (
     TimeHorizon,
     WarningCode,
 )
-from nlp_stock_prediction.providers._base import JsonResponse, ProviderCache
+from nlp_stock_prediction.providers._base import JsonResponse, ProviderCache, ProviderTransportError
 from nlp_stock_prediction.providers.fred import FredMacroProvider
 from nlp_stock_prediction.providers.market import (
     AlphaVantageFundamentalsProvider,
@@ -62,6 +62,25 @@ class _FakeJsonTransport:
             if url_fragment in url:
                 return response
         raise AssertionError(f"Unexpected URL: {url}")
+
+
+@dataclass
+class _FailingJsonTransport:
+    error: ProviderTransportError
+    calls: list[str] = field(default_factory=list)
+    headers: list[Mapping[str, str] | None] = field(default_factory=list)
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+    ) -> JsonResponse:
+        del timeout
+        self.calls.append(url)
+        self.headers.append(headers)
+        raise self.error
 
 
 @pytest.mark.unit
@@ -191,6 +210,108 @@ def test_public_news_provider_returns_unconfigured_warning_for_required_key() ->
 
 
 @pytest.mark.contract
+def test_public_news_provider_returns_no_data_warning_for_empty_articles() -> None:
+    config = PublicNewsProviderConfig(
+        provider_name="fixture-news",
+        endpoint="https://news.example.invalid/v1/search",
+        api_key_param="token",
+        query_param="search",
+    )
+    transport = _FakeJsonTransport(
+        {"news.example.invalid/v1/search": JsonResponse(payload={"articles": []})}
+    )
+    provider = PublicNewsProvider(
+        config=config,
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-empty-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+        query="TSLA",
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.EMPTY
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.NO_DATA
+    assert "returned no articles" in result.warnings[0].message
+    assert result.health.status == ProviderStatus.EMPTY
+
+
+@pytest.mark.contract
+def test_public_news_provider_maps_rate_limit_transport_failure() -> None:
+    transport = _FailingJsonTransport(
+        ProviderTransportError(
+            "fixture news quota exhausted",
+            status_code=429,
+            retryable=True,
+            error_type="http_error",
+        )
+    )
+    provider = PublicNewsProvider(
+        config=PublicNewsProviderConfig(provider_name="fixture-news"),
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-rate-limited-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.RATE_LIMITED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.RATE_LIMITED
+    assert result.warnings[0].retryable is True
+    assert result.warnings[0].provider_status_code == 429
+    assert result.warnings[0].provider_error_type == "http_error"
+    assert result.health.status == ProviderStatus.RATE_LIMITED
+    assert result.health.rate_limit_remaining == 0
+    assert len(transport.calls) == 1
+
+
+@pytest.mark.contract
+def test_public_news_provider_maps_upstream_unavailable_transport_failure() -> None:
+    transport = _FailingJsonTransport(
+        ProviderTransportError(
+            "fixture news upstream unavailable",
+            status_code=503,
+            retryable=True,
+            error_type="http_error",
+        )
+    )
+    provider = PublicNewsProvider(
+        config=PublicNewsProviderConfig(provider_name="fixture-news"),
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-upstream-unavailable-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.FAILED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.UPSTREAM_UNAVAILABLE
+    assert result.warnings[0].retryable is True
+    assert result.warnings[0].provider_status_code == 503
+    assert result.warnings[0].provider_error_type == "http_error"
+    assert result.health.status == ProviderStatus.FAILED
+    assert len(transport.calls) == 1
+
+
+@pytest.mark.contract
 def test_alpha_vantage_daily_candles_map_and_reuse_cache(tmp_path: Path) -> None:
     transport = _FakeJsonTransport(
         {
@@ -225,6 +346,43 @@ def test_alpha_vantage_daily_candles_map_and_reuse_cache(tmp_path: Path) -> None
     assert first.raw_snapshot_id == second.raw_snapshot_id
     assert len(transport.calls) == 1
     assert tmp_path.joinpath("2026-05-11", "TSLA", "alpha-vantage-daily").exists()
+
+
+@pytest.mark.contract
+def test_alpha_vantage_daily_candles_marks_stale_market_data() -> None:
+    payload: dict[str, Any] = {
+        "Time Series (Daily)": {
+            "2026-04-28": {
+                "1. open": "181.00",
+                "2. high": "186.00",
+                "3. low": "180.50",
+                "4. close": "184.25",
+                "5. adjusted close": "184.25",
+                "6. volume": "123456789",
+            }
+        }
+    }
+    transport = _FakeJsonTransport({"TIME_SERIES_DAILY_ADJUSTED": JsonResponse(payload=payload)})
+    provider = AlphaVantageMarketDataProvider(
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+        stale_after_days=5,
+    )
+    request = MarketDataRequest(
+        request_id="market-stale-tsla-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_daily_candles(request)
+
+    assert result.status == ProviderStatus.STALE
+    assert result.data is not None
+    assert result.data.bars[0].timestamp == date(2026, 4, 28)
+    assert result.warnings[0].code == WarningCode.STALE_DATA
+    assert result.warnings[0].metadata["latest_date"] == "2026-04-28"
+    assert result.health.status == ProviderStatus.STALE
 
 
 @pytest.mark.contract

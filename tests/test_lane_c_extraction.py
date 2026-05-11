@@ -238,14 +238,18 @@ def _strategy(
     catalyst: str,
     evidence_id: str,
     confidence: float,
+    direction: Direction = Direction.BULLISH,
+    instrument: InstrumentType = InstrumentType.CALL_OPTION,
+    position_type: PositionType = PositionType.LONG,
+    sarcasm_joke_risk: float = 0.1,
 ) -> StrategyExtraction:
     return StrategyExtraction(
         strategy_id=strategy_id,
         ticker="TSLA",
         label=label,
-        direction=Direction.BULLISH,
-        instrument=InstrumentType.CALL_OPTION,
-        position_type=PositionType.LONG,
+        direction=direction,
+        instrument=instrument,
+        position_type=position_type,
         time_horizon=TimeHorizon.WEEKLY,
         catalyst=catalyst,
         risk_or_hedge="Premium at risk.",
@@ -258,7 +262,7 @@ def _strategy(
             ),
         ),
         confidence=confidence,
-        sarcasm_joke_risk=0.1,
+        sarcasm_joke_risk=sarcasm_joke_risk,
     )
 
 
@@ -309,6 +313,70 @@ def test_cluster_strategies_groups_near_duplicate_call_variants_into_earnings() 
         "evidence-3",
     ]
     assert cluster.confidence == pytest.approx(0.8)
+
+
+@pytest.mark.llm
+@pytest.mark.unit
+def test_cluster_strategies_flags_high_sarcasm_joke_risk() -> None:
+    clusters = cluster_strategies(
+        (
+            _strategy(
+                "strategy-tsla-joke-calls",
+                label="TSLA calls are guaranteed yacht money lol",
+                catalyst="earnings",
+                evidence_id="evidence-joke-risk",
+                confidence=0.78,
+                sarcasm_joke_risk=0.88,
+            ),
+        ),
+        occurred_at=NOW,
+    )
+
+    assert len(clusters) == 1
+    warning = clusters[0].warnings[0]
+    assert warning.code == WarningCode.UNSUPPORTED_CLAIM
+    assert warning.message.startswith("High sarcasm/joke risk")
+    assert warning.metadata["risk_type"] == "high_sarcasm_joke_risk"
+    assert warning.metadata["risk"] == 0.88
+    assert warning.metadata["member_strategy_ids"] == ["strategy-tsla-joke-calls"]
+
+
+@pytest.mark.llm
+@pytest.mark.unit
+def test_cluster_strategies_flags_conflicting_source_evidence() -> None:
+    clusters = cluster_strategies(
+        (
+            _strategy(
+                "strategy-tsla-long-shares",
+                label="long TSLA shares into earnings",
+                catalyst="earnings",
+                evidence_id="evidence-bullish",
+                confidence=0.72,
+                direction=Direction.BULLISH,
+                instrument=InstrumentType.SHARES,
+                position_type=PositionType.LONG,
+            ),
+            _strategy(
+                "strategy-tsla-short-shares",
+                label="short TSLA shares into earnings",
+                catalyst="ER",
+                evidence_id="evidence-bearish",
+                confidence=0.69,
+                direction=Direction.BEARISH,
+                instrument=InstrumentType.SHARES,
+                position_type=PositionType.SHORT,
+            ),
+        ),
+        occurred_at=NOW,
+    )
+
+    assert len(clusters) == 2
+    warnings = [cluster.warnings[0] for cluster in clusters]
+    assert {warning.code for warning in warnings} == {WarningCode.PARTIAL_DATA}
+    assert {warning.metadata["risk_type"] for warning in warnings} == {
+        "conflicting_source_evidence"
+    }
+    assert all(warning.metadata["directions"] == ["bearish", "bullish"] for warning in warnings)
 
 
 @pytest.mark.llm

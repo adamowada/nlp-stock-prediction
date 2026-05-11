@@ -129,6 +129,7 @@ unqualified investment advice.
   - Conflicting evidence.
   - Joke/sarcasm risk.
   - No qualified strategies.
+  - Source-of-truth docs agree on Stage 5 status and the active failure-drill matrix.
 
 ### Stage 6: Final V1 Acceptance Gate
 
@@ -167,8 +168,7 @@ python -m pytest -m live_scraping
       documented environment variables.
 - [x] End-to-end report QA confirms evidence, provenance, warnings, confidence inputs, and
       disclaimers are preserved.
-- [ ] Failure drills cover malformed, missing, stale, conflicting, unsupported, and no-trade
-      scenarios.
+- [x] Failure drills cover all Stage 5 scenarios listed above.
 - [ ] Final V1 acceptance gate passes from a clean checkout.
 
 ## Verification commands
@@ -210,6 +210,9 @@ Live checks remain opt-in:
 - 2026-05-11-16-00: Markdown report recommendations should show the same practical QA inputs as
   JSON: catalysts, risks, assumptions, contradictions, confidence inputs, risk controls, score
   components, penalties, evidence IDs, and score input IDs.
+- 2026-05-11-16-10: Stage 5 treats high sarcasm/joke risk and conflicting source evidence as
+  extraction/cluster warnings that add score penalties and failed gates, keeping affected setups
+  watch-only instead of silently qualified.
 
 ## Progress log
 
@@ -291,3 +294,19 @@ Live checks remain opt-in:
   `run --help`, live marker selections, configured live SEC API smoke, configured live scraping
   smoke, and direct offline CLI smoke all passed. The offline smoke wrote Markdown, JSON, and audit
   artifacts to a temporary workspace directory that was removed after verification.
+- 2026-05-11-16-10: Started Stage 5 risk, reliability, and failure drills. Parallel read-only
+  audits found weak adapter-level rate-limit/unavailable and empty-data drills, no explicit stale
+  Alpha Vantage market drill, conflicting-analysis coverage without conflicting source-evidence
+  behavior, weak high-sarcasm behavior, and source-of-truth docs still describing Stage 5 as
+  pending.
+- 2026-05-11-16-12: Added concrete provider-adapter drills for empty news payloads, 429
+  rate-limit envelopes, 503 upstream-unavailable envelopes, and stale Alpha Vantage candles; added
+  unsupported-instrument scoring coverage; added cluster warnings plus scoring penalties/gates for
+  high sarcasm/joke risk and conflicting source evidence; aligned README, roadmap, contracts,
+  testing docs, AGENTS, and this plan. No blocker requiring credentials or `.env` values was
+  encountered.
+- 2026-05-11-16-14: Stage 5 verification passed with the repo venv: full pytest reported
+  256 passed and 3 opt-in live skips; non-live pytest reported 256 passed and 3 deselected; e2e
+  reported 4 passed and 255 deselected; `ruff check .`, `ruff format --check .`, `mypy .`,
+  top-level CLI help, `run --help`, and direct offline CLI smoke all passed. The offline smoke wrote
+  Markdown, JSON, and audit artifacts to a temporary directory that was removed after verification.
