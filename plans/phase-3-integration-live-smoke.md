@@ -49,7 +49,7 @@ unqualified investment advice.
 - Done when:
   - This plan includes goal, non-goals, context, milestones, acceptance criteria, verification
     commands, decision log, and progress log.
-  - Current docs agree that Phase 2 is integrated and Phase 3 is active.
+  - Current docs agree that Phase 2 is integrated and Phase 3 has entered integration hardening.
   - The Phase 3 baseline verification is recorded.
   - Stale pre-Phase-3 "not implemented" wording is removed or narrowed to accurate live-only gaps.
   - The repo is clean after ACP.
@@ -142,6 +142,7 @@ unqualified investment advice.
 ```sh
 python -m pytest
 python -m pytest -m "not live_api and not live_scraping"
+python -m pytest -m e2e
 ruff check .
 ruff format --check .
 mypy .
@@ -169,7 +170,7 @@ python -m pytest -m live_scraping
 - [x] End-to-end report QA confirms evidence, provenance, warnings, confidence inputs, and
       disclaimers are preserved.
 - [x] Failure drills cover all Stage 5 scenarios listed above.
-- [ ] Final V1 acceptance gate passes from a clean checkout.
+- [x] Final V1 acceptance gate passes from a clean checkout.
 
 ## Verification commands
 
@@ -178,6 +179,7 @@ Use the repository virtual environment if the ambient shell points at another pr
 ```sh
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m pytest -m "not live_api and not live_scraping"
+.\.venv\Scripts\python.exe -m pytest -m e2e
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m ruff format --check .
 .\.venv\Scripts\python.exe -m mypy .
@@ -213,6 +215,9 @@ Live checks remain opt-in:
 - 2026-05-11-16-10: Stage 5 treats high sarcasm/joke risk and conflicting source evidence as
   extraction/cluster warnings that add score penalties and failed gates, keeping affected setups
   watch-only instead of silently qualified.
+- 2026-05-11-16-25: Stage 6 final acceptance keeps live-provider report orchestration outside V1;
+  configured SEC API and public scraping smoke checks passed as opt-in gates, while live LLM smoke
+  remains a reserved skip until a live adapter and credential contract exist.
 
 ## Progress log
 
@@ -310,3 +315,19 @@ Live checks remain opt-in:
   reported 4 passed and 255 deselected; `ruff check .`, `ruff format --check .`, `mypy .`,
   top-level CLI help, `run --help`, and direct offline CLI smoke all passed. The offline smoke wrote
   Markdown, JSON, and audit artifacts to a temporary directory that was removed after verification.
+- 2026-05-11-16-25: Started Stage 6 final V1 acceptance gate from a clean branch. Read-only audits
+  found source-of-truth docs still saying acceptance was pending, the active plan missing the
+  explicit `pytest -m e2e` command, and the live-smoke CI job missing
+  `NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT`.
+- 2026-05-11-16-28: Completed Stage 6 doc and CI alignment: marked Phase 3 local V1 acceptance
+  complete in README, roadmap, contract docs, historical plans, and this plan; added e2e to the
+  Stage 6 gate; and wired the live-scraping expected-text secret into CI. No `.env`, API key, or
+  credential blocker was encountered. The first live SEC retry received HTTP 403 with a generic
+  non-contact User-Agent, then passed with a contact-style non-secret User-Agent.
+- 2026-05-11-16-29: Stage 6 verification passed with the repo venv: full pytest reported
+  256 passed and 3 opt-in live skips; non-live pytest reported 256 passed and 3 deselected; e2e
+  reported 4 passed and 255 deselected; `ruff check .`, `ruff format --check .`, `mypy .`,
+  top-level CLI help, `run --help`, configured live API reported 1 passed, 1 reserved live-LLM skip,
+  and 257 deselected; configured live scraping reported 1 passed and 258 deselected; and direct
+  offline CLI smoke wrote Markdown, JSON, and audit artifacts to a temporary directory that was
+  removed after verification.

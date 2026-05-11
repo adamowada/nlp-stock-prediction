@@ -1,7 +1,7 @@
 # Phase 0 Contract Settlement
 
-Status: complete. This is a historical Phase 0 plan; Phase 1 and Phase 2 have since been completed,
-and Phase 3 is now active in `plans/phase-3-integration-live-smoke.md`.
+Status: complete. This is a historical Phase 0 plan; Phase 1, Phase 2, and Phase 3 local V1
+acceptance have since been completed.
 
 ## Goal
 

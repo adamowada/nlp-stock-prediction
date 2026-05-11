@@ -1,8 +1,8 @@
 # Lane E Report CLI
 
 Status: complete. This is a historical Phase 2 lane plan; the integrated application now supports
-deterministic offline report generation through `run --offline`, and Phase 3 owns live-provider
-hardening.
+deterministic offline report generation through `run --offline`, and Phase 3 local V1 acceptance is
+complete. Future live-provider orchestration remains separate.
 
 ## Goal
 

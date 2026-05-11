@@ -142,7 +142,6 @@ Core scenario names to use first:
 
 ## Phase Boundary
 
-Phase 0 and Phase 1 are complete, and Phase 2 implementation lanes have been integrated. Phase 3 is
-active on `feature/integration-and-hardening`; Stages 0-5 are complete, with final V1 acceptance
-still pending. Shared public contracts should stay stable unless a
-single-threaded contract revision is recorded in the active Phase 3 plan.
+Phase 0 and Phase 1 are complete, Phase 2 implementation lanes have been integrated, and Phase 3
+local V1 acceptance is complete on `feature/integration-and-hardening`. Shared public contracts
+should stay stable unless a single-threaded contract revision is recorded in a new active plan.

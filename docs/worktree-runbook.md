@@ -2,7 +2,8 @@
 
 This is the historical Phase 2 worktree runbook. Phase 2 has already been integrated; keep this
 document as the reproducible procedure for the lane-based implementation model and for future
-parallel lane work. Active Phase 3 coordination lives in `plans/phase-3-integration-live-smoke.md`.
+parallel lane work. Phase 3 local V1 acceptance is complete; future live-provider orchestration
+should use a new active plan.
 
 ## Frozen Contract Ref
 

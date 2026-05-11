@@ -1,7 +1,7 @@
 # Phase 1 Contract Test Harness
 
-Status: complete. This is a historical Phase 1 plan; Phase 2 has since been integrated, and Phase 3
-is now active in `plans/phase-3-integration-live-smoke.md`.
+Status: complete. This is a historical Phase 1 plan; Phase 2 integration and Phase 3 local V1
+acceptance have since been completed.
 
 ## Goal
 
