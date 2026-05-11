@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nlp-stock-prediction"
+version = "0.1.0"
+description = "Contracts-first CLI for evidence-grounded daily stock opportunity reports."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.8,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.11,<2",
+  "pytest>=8.3,<9",
+  "ruff>=0.6,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nlp_stock_prediction"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["--strict-config", "--strict-markers", "-ra"]
+markers = [
+  "unit: Pure logic and small modules.",
+  "schema: Pydantic models and serialization.",
+  "contract: Provider adapters using recorded fixtures.",
+  "integration: Multi-module behavior with controlled dependencies.",
+  "live_api: Real API calls requiring credentials or internet access.",
+  "live_scraping: Real public HTML scraping checks.",
+  "llm: LLM extraction and schema validation.",
+  "e2e: Full CLI report generation.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "SIM", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+show_error_codes = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]

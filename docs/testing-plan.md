@@ -2,7 +2,7 @@
 
 ## Summary
 
-This project should test both deterministic application logic and the live external dependencies that make the report useful. Fixture-based tests provide fast feedback and reproducibility; live API and scraping tests verify that Reddit, X/Twitter, market-data, fundamentals, macro, and HTML extraction integrations still work against real services.
+This project should test both deterministic application logic and the live external dependencies that make the report useful. Fixture-based tests provide fast feedback and reproducibility; live API and scraping tests verify that Reddit, X/Twitter, news, market-data, fundamentals, macro, and HTML extraction integrations still work against real services.
 
 Live dependency tests are part of the testing strategy, but they should be explicitly marked because they can require credentials, internet access, paid/free quota, and resilient handling of upstream changes.
 
@@ -29,7 +29,7 @@ Live dependency tests are part of the testing strategy, but they should be expli
 
 ### 4. Live API integration tests
 
-- Verify real provider access for Reddit, X/Twitter, market data, fundamentals, SEC EDGAR, FRED, and any LLM provider.
+- Verify real provider access for Reddit, X/Twitter, news, market data, fundamentals, SEC EDGAR, FRED, and any LLM provider.
 - Require explicit environment variables for credentials and opt-in execution.
 - Check authentication failures, quota/rate-limit responses, malformed upstream responses, and stale data behavior.
 - Mark these tests separately from fast local tests, for example:
@@ -89,6 +89,7 @@ python -m pytest -m live_api
 python -m pytest -m live_scraping
 python -m pytest -m e2e
 ruff check .
+ruff format --check .
 mypy .
 ```
 
