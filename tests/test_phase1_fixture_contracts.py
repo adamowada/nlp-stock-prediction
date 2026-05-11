@@ -258,3 +258,30 @@ def test_fixture_contracts_reject_invalid_shapes() -> None:
                 "run_date": "2026-05-11",
             }
         )
+
+    with pytest.raises(ValidationError, match="raw fixture scenario"):
+        FixtureManifest(
+            scenario="normal_six_ticker_day",
+            run_date=date(2026, 5, 11),
+            raw_fixtures=(_raw_fixture(scenario="partial_provider_outage"),),
+        )
+
+    with pytest.raises(ValidationError, match="request run_date"):
+        FixtureManifest(
+            scenario="normal_six_ticker_day",
+            run_date=date(2026, 5, 12),
+            raw_fixtures=(_raw_fixture(),),
+        )
+
+    with pytest.raises(ValidationError, match="normalized fixture scenario"):
+        FixtureManifest(
+            scenario="normal_six_ticker_day",
+            run_date=date(2026, 5, 11),
+            normalized_fixtures=(
+                NormalizedFixture(
+                    scenario="partial_provider_outage",
+                    layer="evidence",
+                    path="normalized/evidence/partial_provider_outage.json",
+                ),
+            ),
+        )

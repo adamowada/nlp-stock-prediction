@@ -135,7 +135,7 @@ def _score_component(name: str = "evidence-strength") -> ScoreComponent:
     )
 
 
-def _score_breakdown() -> ScoreBreakdown:
+def _score_breakdown(*, failed_gates: tuple[str, ...] = ()) -> ScoreBreakdown:
     return ScoreBreakdown(
         score_version="phase1-test-score-v1",
         overall_score=0.74,
@@ -153,7 +153,7 @@ def _score_breakdown() -> ScoreBreakdown:
                 evidence=(_evidence_ref(),),
             ),
         ),
-        failed_gates=("requires-live-market-confirmation",),
+        failed_gates=failed_gates,
     )
 
 
@@ -204,6 +204,14 @@ def test_base_aliases_normalize_tickers_and_reject_out_of_range_values() -> None
             {
                 **_source_evidence().model_dump(),
                 "ticker": "$TSLA",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        SourceEvidence.model_validate(
+            {
+                **_source_evidence().model_dump(),
+                "evidence_id": 123,
             }
         )
 
@@ -267,6 +275,26 @@ def test_json_metadata_fields_reject_non_serializable_values() -> None:
             }
         )
 
+    with pytest.raises(ValidationError):
+        SourceProvenance.model_validate(
+            {
+                **_provenance().model_dump(),
+                "provider_metadata": {"bad": float("nan")},
+            }
+        )
+
+
+@pytest.mark.schema
+def test_json_metadata_is_deeply_immutable_after_validation() -> None:
+    provenance = _provenance()
+
+    with pytest.raises(TypeError):
+        provenance.provider_metadata["new"] = "value"
+    tags = provenance.provider_metadata["tags"]
+    assert isinstance(tags, list)
+    with pytest.raises(TypeError):
+        tags.append("mutated")
+
 
 @pytest.mark.schema
 def test_source_provenance_serializes_traceability_fields() -> None:
@@ -281,6 +309,43 @@ def test_source_provenance_serializes_traceability_fields() -> None:
     assert dumped["raw_snapshot_id"] == "raw-snapshot-abc"
     assert dumped["provider_metadata"]["tags"] == ["daily", "ticker-card"]
     assert isinstance(dumped["fetched_at"], str)
+
+
+@pytest.mark.schema
+def test_source_provenance_requires_external_traceability_and_aware_timestamps() -> None:
+    with pytest.raises(ValidationError, match="source_url or permalink"):
+        SourceProvenance(
+            provider_name="fixture-reddit",
+            source_kind=SourceKind.REDDIT_POST,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=_now(),
+            raw_identifier="raw-post-1",
+            raw_snapshot_id="raw-snapshot-1",
+            freshness_status=FreshnessStatus.FRESH,
+        )
+
+    with pytest.raises(ValidationError, match="raw_identifier"):
+        SourceProvenance(
+            provider_name="fixture-reddit",
+            source_kind=SourceKind.REDDIT_POST,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=_now(),
+            source_url="https://example.test/post/1",
+            raw_snapshot_id="raw-snapshot-1",
+            freshness_status=FreshnessStatus.FRESH,
+        )
+
+    with pytest.raises(ValidationError, match="timestamps must be timezone-aware"):
+        SourceProvenance(
+            provider_name="fixture-reddit",
+            source_kind=SourceKind.REDDIT_POST,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=datetime(2026, 5, 11, 12, 0),
+            source_url="https://example.test/post/1",
+            raw_identifier="raw-post-1",
+            raw_snapshot_id="raw-snapshot-1",
+            freshness_status=FreshnessStatus.FRESH,
+        )
 
 
 @pytest.mark.schema
@@ -628,7 +693,7 @@ def test_analysis_bundle_preserves_multi_lane_context_and_json_inputs() -> None:
 
 @pytest.mark.schema
 def test_score_component_and_breakdown_validate_scoring_bounds() -> None:
-    breakdown = _score_breakdown()
+    breakdown = _score_breakdown(failed_gates=("requires-live-market-confirmation",))
 
     assert breakdown.components[0].normalized_score == 0.82
     assert breakdown.penalties[0].contribution < 0
@@ -735,6 +800,55 @@ def test_trade_candidate_requires_evidence_for_actionable_recommendations() -> N
 
     assert no_trade.action == RecommendationAction.NO_TRADE
     assert no_trade.evidence == ()
+
+
+@pytest.mark.schema
+def test_qualified_trade_candidate_requires_passing_risk_and_score_gates() -> None:
+    candidate_payload = _trade_candidate().model_dump()
+
+    with pytest.raises(ValidationError, match="pass risk gates"):
+        TradeCandidate.model_validate(
+            {
+                **candidate_payload,
+                "risk_plan": {
+                    **_risk_assessment().model_dump(),
+                    "passed": False,
+                },
+            }
+        )
+
+    with pytest.raises(ValidationError, match="failed risk gates"):
+        TradeCandidate.model_validate(
+            {
+                **candidate_payload,
+                "risk_plan": {
+                    **_risk_assessment().model_dump(),
+                    "failed_gates": ("position-size-too-large",),
+                },
+            }
+        )
+
+    with pytest.raises(ValidationError, match="failed score gates"):
+        TradeCandidate.model_validate(
+            {
+                **candidate_payload,
+                "score": _score_breakdown(
+                    failed_gates=("requires-live-market-confirmation",)
+                ).model_dump(),
+            }
+        )
+
+    with pytest.raises(ValidationError, match="meet score threshold"):
+        TradeCandidate.model_validate(
+            {
+                **candidate_payload,
+                "score": {
+                    **_score_breakdown().model_dump(),
+                    "overall_score": 0.2,
+                    "threshold": 0.7,
+                },
+            }
+        )
 
 
 @pytest.mark.schema

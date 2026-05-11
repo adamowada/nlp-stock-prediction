@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from nlp_stock_prediction.contracts import (
+    DEFAULT_MARKDOWN_REPORT_OUTLINE,
     AuditArtifact,
     AuditManifest,
     CredentialState,
@@ -345,6 +346,90 @@ def test_daily_report_without_candidates_requires_no_trade_summary() -> None:
 
 
 @pytest.mark.schema
+def test_daily_report_validates_candidate_section_and_disclaimer_links() -> None:
+    candidate = _trade_candidate()
+
+    with pytest.raises(ValidationError, match="referenced by a ticker section"):
+        _daily_report(trade_candidates=(candidate,), no_trade_summary=None)
+
+    with pytest.raises(ValidationError, match="recommendation_ids must reference candidates"):
+        _daily_report(
+            ticker_sections=(
+                TickerReportSection(
+                    ticker="TSLA",
+                    recommendation_ids=("missing-candidate",),
+                ),
+                *_ticker_sections(TICKERS[1:]),
+            ),
+            no_trade_summary="No setup passed risk gates.",
+        )
+
+    with pytest.raises(ValidationError, match="match candidate ticker"):
+        _daily_report(
+            ticker_sections=(
+                TickerReportSection(
+                    ticker="TSLA",
+                ),
+                TickerReportSection(ticker="NVDA", recommendation_ids=(candidate.candidate_id,)),
+                *_ticker_sections(TICKERS[2:]),
+            ),
+            trade_candidates=(candidate,),
+            no_trade_summary=None,
+        )
+
+    with pytest.raises(ValidationError, match="disclaimer_id must match"):
+        _daily_report(
+            ticker_sections=_ticker_sections(include_candidate_links=True),
+            trade_candidates=(
+                TradeCandidate.model_validate(
+                    {
+                        **candidate.model_dump(),
+                        "disclaimer_id": "other-disclaimer",
+                    }
+                ),
+            ),
+            no_trade_summary=None,
+        )
+
+    with pytest.raises(ValidationError, match="discovered tickers"):
+        _daily_report(
+            ticker_sections=(
+                TickerReportSection(
+                    ticker="TSLA",
+                    recommendation_ids=(candidate.candidate_id,),
+                ),
+                *_ticker_sections(TICKERS[1:]),
+            ),
+            trade_candidates=(
+                TradeCandidate.model_validate(
+                    {
+                        **candidate.model_dump(),
+                        "ticker": "QQQ",
+                    }
+                ),
+            ),
+            no_trade_summary=None,
+        )
+
+    with pytest.raises(ValidationError, match="ids must be unique"):
+        _daily_report(
+            ticker_sections=(
+                TickerReportSection(
+                    ticker="TSLA",
+                    recommendation_ids=(candidate.candidate_id,),
+                ),
+                TickerReportSection(
+                    ticker="NVDA",
+                    recommendation_ids=(candidate.candidate_id,),
+                ),
+                *_ticker_sections(TICKERS[2:]),
+            ),
+            trade_candidates=(candidate, candidate),
+            no_trade_summary=None,
+        )
+
+
+@pytest.mark.schema
 def test_report_header_shape_serializes_disclaimer_health_and_freshness() -> None:
     report = _daily_report()
     dumped = report.model_dump(mode="json")
@@ -376,6 +461,32 @@ def test_report_header_shape_serializes_disclaimer_health_and_freshness() -> Non
             text="Missing the v1 no-auto-trading guardrail.",
             no_auto_trading=False,
         )
+
+
+@pytest.mark.schema
+def test_default_markdown_report_outline_freezes_required_section_shape() -> None:
+    outline = DEFAULT_MARKDOWN_REPORT_OUTLINE
+    dumped = outline.model_dump(mode="json")
+
+    assert dumped["schema_version"] == "markdown-report.v1"
+    assert dumped["heading_order"] == [
+        "Daily Stock Opportunity Report",
+        "Data Freshness",
+        "Provider Warnings",
+        "Ticker Sections",
+        "Qualified Trading Strategies Or No-Trade Summary",
+        "Disclaimer",
+        "Audit Artifacts",
+    ]
+    assert outline.ticker_section_heading_template == "{ticker}"
+    assert "Evidence References" in outline.required_ticker_subsections
+    assert outline.final_section_headings == (
+        "Qualified Trading Strategies",
+        "No-Trade Summary",
+    )
+    assert outline.require_disclaimer is True
+    assert outline.require_evidence_references is True
+    assert outline.require_audit_artifacts is True
 
 
 @pytest.mark.schema

@@ -22,6 +22,7 @@ Expected commands once the Python package is scaffolded:
 
 ```sh
 python -m pytest
+python -m pytest -m "not live_api and not live_scraping"
 ruff check .
 ruff format .
 mypy .
@@ -31,4 +32,4 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
 
 The canonical CLI invocation is the Python module form, `python -m nlp_stock_prediction`. If a console script is added later, it should remain a thin alias for that module command and the docs should be updated together.
 
-During the contract-gate phase, `run` validates the command contract and exits with code `3` because report generation is not implemented yet.
+During the contract-gate phase, `run` validates the command contract and exits with code `3` because report generation is not implemented yet. The default test harness blocks network access; live tests require explicit opt-in.

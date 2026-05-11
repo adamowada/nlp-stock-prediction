@@ -380,7 +380,7 @@ class _FakeLLMExtractor:
         return _health(self.provider_name)
 
 
-@pytest.mark.contract
+@pytest.mark.integration
 def test_deterministic_fake_providers_return_protocol_result_shapes() -> None:
     reddit: RedditProvider = _FakeRedditProvider()
     x_provider: XProvider = _FakeXProvider()
@@ -526,6 +526,30 @@ def test_provider_result_success_and_partial_envelopes_preserve_data() -> None:
 
 
 @pytest.mark.schema
+def test_provider_result_empty_envelope_requires_no_data_warning_and_no_data() -> None:
+    request = EvidenceRequest(request_id="empty-provider", run_date=RUN_DATE, tickers=("TSLA",))
+
+    result = ProviderResult[tuple[SourceEvidence, ...]](
+        provider_name="fixture-provider",
+        status=ProviderStatus.EMPTY,
+        request=request,
+        fetched_at=FETCHED_AT,
+        data=None,
+        warnings=(
+            _warning(
+                "fixture-provider",
+                code=WarningCode.NO_DATA,
+                severity=WarningSeverity.INFO,
+            ),
+        ),
+        health=_health("fixture-provider", ProviderStatus.EMPTY),
+    )
+
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.NO_DATA
+
+
+@pytest.mark.schema
 def test_provider_result_rejects_invalid_envelope_semantics() -> None:
     request = ProviderRequest(request_id="invalid-envelope", run_date=RUN_DATE)
 
@@ -565,6 +589,45 @@ def test_provider_result_rejects_invalid_envelope_semantics() -> None:
             health=_health("fixture-provider", ProviderStatus.FAILED),
         )
 
+    with pytest.raises(ValidationError, match="empty provider results must not include data"):
+        ProviderResult[str](
+            provider_name="fixture-provider",
+            status=ProviderStatus.EMPTY,
+            request=request,
+            fetched_at=FETCHED_AT,
+            data="unexpected",
+            warnings=(
+                _warning(
+                    "fixture-provider",
+                    code=WarningCode.NO_DATA,
+                    severity=WarningSeverity.INFO,
+                ),
+            ),
+            health=_health("fixture-provider", ProviderStatus.EMPTY),
+        )
+
+    with pytest.raises(ValidationError, match="no_data warning"):
+        ProviderResult[str](
+            provider_name="fixture-provider",
+            status=ProviderStatus.EMPTY,
+            request=request,
+            fetched_at=FETCHED_AT,
+            data=None,
+            warnings=(_warning("fixture-provider"),),
+            health=_health("fixture-provider", ProviderStatus.EMPTY),
+        )
+
+    with pytest.raises(ValidationError, match="warnings must match provider_name"):
+        ProviderResult[str](
+            provider_name="fixture-provider",
+            status=ProviderStatus.PARTIAL,
+            request=request,
+            fetched_at=FETCHED_AT,
+            data="partial data",
+            warnings=(_warning("other-provider"),),
+            health=_health("fixture-provider", ProviderStatus.PARTIAL),
+        )
+
 
 @pytest.mark.schema
 def test_provider_request_round_trips_through_json_serialization() -> None:
@@ -600,3 +663,15 @@ def test_provider_request_round_trips_through_json_serialization() -> None:
     assert dumped["include_comments"] is True
     assert dumped["include_posts"] is False
     assert decoded == request
+
+
+@pytest.mark.schema
+def test_date_window_rejects_end_before_start() -> None:
+    with pytest.raises(ValidationError, match="date window end"):
+        DateWindow(start=date(2026, 5, 12), end=date(2026, 5, 11))
+
+    with pytest.raises(ValidationError, match="date window end"):
+        DateWindow(
+            start=datetime(2026, 5, 11, 16, 0, tzinfo=UTC),
+            end=datetime(2026, 5, 11, 9, 30, tzinfo=UTC),
+        )

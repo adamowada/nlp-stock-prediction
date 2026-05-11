@@ -22,3 +22,5 @@ Phase 1 adds contract-harness tests for fixture manifests without requiring real
 Those tests validate raw fixture metadata, normalized fixture layers, scenario composition, JSON
 round trips, redaction metadata, and rejection of invalid shapes. Concrete fixture files should keep
 using these contracts as they are introduced in provider and end-to-end lanes.
+Fixture manifests must not mix scenarios: nested raw and normalized fixture scenarios must match the
+manifest scenario, and raw provider request dates must match the manifest run date.

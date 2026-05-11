@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Sequence
 from datetime import date
@@ -17,6 +18,8 @@ PHASE_0_NOT_IMPLEMENTED_EXIT_CODE = CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
 
 
 def _parse_date(value: str) -> date:
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is None:
+        raise argparse.ArgumentTypeError("expected YYYY-MM-DD")
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
@@ -28,6 +31,8 @@ def _parse_decimal(value: str) -> Decimal:
         parsed = Decimal(value)
     except InvalidOperation as exc:
         raise argparse.ArgumentTypeError("expected a decimal number") from exc
+    if not parsed.is_finite():
+        raise argparse.ArgumentTypeError("capital must be a finite decimal number")
     if parsed < 0:
         raise argparse.ArgumentTypeError("capital must be non-negative")
     return parsed

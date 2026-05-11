@@ -41,12 +41,17 @@ not return `TechnicalAnalysis`, `FundamentalAnalysis`, `SectorContext`, `MacroCo
 Lane D analysis outputs.
 
 `ProviderResult[T]` requires the result provider/status to match its `ProviderHealth`, requires data
-for `ok` results, and requires at least one warning for non-`ok` results.
+for `ok` results, and requires at least one warning for non-`ok` results. Warning provider names
+must be absent or match the result provider. `empty` results must not carry data and must include a
+`no_data` warning.
 
 All normalized external data carries `SourceProvenance` with provider name, source kind,
 retrieval method, fetched timestamp, source URL or permalink when available, raw identifier,
 raw snapshot ID, freshness status, cache key, query, and provider metadata.
 Metadata fields must be JSON-serializable.
+External provenance must include a source URL or permalink, raw identifier, raw snapshot ID, explicit
+freshness status, and timezone-aware timestamps. Internal/derived analysis provenance is the explicit
+exception.
 
 Frozen warning codes are:
 
@@ -75,9 +80,13 @@ Frozen warning codes are:
 - Score breakdowns must include at least one component.
 - Actionable trade candidates must cite evidence and include score, risk, invalidation, and
   disclaimer references.
+- Qualified trade candidates must pass risk gates, have no failed risk or score gates, and meet or
+  exceed the configured score threshold.
 - V1 disclaimers must remain educational-only, not financial advice, and no-auto-trading.
 - Reports must include exactly six ticker sections matching ticker discovery order.
 - Reports without trade candidates must include a no-trade summary.
+- Report trade candidates must use discovered tickers, have unique candidate IDs, match the report
+  disclaimer, and be referenced by exactly one matching ticker section.
 - Valid ticker discovery must include candidate records and a raw snapshot ID.
 
 ## Phase 1 Contract Harness
@@ -93,12 +102,17 @@ The Phase 1 harness covers:
   fundamentals, macro, and LLM extraction adapters.
 - Daily report shape, including six ticker sections, no-trade summaries, provider health, data
   freshness, disclaimers, audit manifests, and JSON round trips.
+- Minimal Markdown report outline, including required header, freshness, provider warnings,
+  per-ticker subsections, final qualified-strategy or no-trade section, disclaimer, and audit
+  artifact sections.
 
 ## Fixture Shape
 
 Fixture manifests are modeled in `contracts.fixtures`. Later tests should store fixtures under
 `tests/fixtures/` with raw provider snapshots, normalized provider results, evidence,
 extraction, analysis, scoring, and expected report artifacts separated by scenario.
+Manifest scenarios must match nested raw and normalized fixture scenarios, and raw fixture request
+dates must match the manifest run date.
 
 Core scenario names to use first:
 

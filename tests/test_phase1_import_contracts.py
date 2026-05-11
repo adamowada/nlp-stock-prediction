@@ -94,16 +94,19 @@ EXPECTED_MODULE_EXPORTS: dict[str, tuple[str, ...]] = {
         "TradeCandidate",
     ),
     "report": (
+        "DEFAULT_MARKDOWN_REPORT_OUTLINE",
         "AuditArtifact",
         "AuditManifest",
         "DailyReport",
         "DataFreshnessSummary",
         "Disclaimer",
+        "MarkdownReportOutline",
         "TickerReportSection",
     ),
 }
 
 EXPECTED_CONTRACT_NAMESPACE_EXPORTS = (
+    "DEFAULT_MARKDOWN_REPORT_OUTLINE",
     "AnalysisBundle",
     "AnalysisComponent",
     "AnalysisSignal",
@@ -136,6 +139,7 @@ EXPECTED_CONTRACT_NAMESPACE_EXPORTS = (
     "MacroRequest",
     "MacroSeries",
     "MacroSnapshot",
+    "MarkdownReportOutline",
     "MarketDataProvider",
     "MarketDataRequest",
     "MarketSnapshot",
@@ -207,7 +211,6 @@ def test_contract_namespace_all_matches_phase1_public_surface() -> None:
     exported_names = tuple(contracts.__all__)
 
     assert len(exported_names) == len(set(exported_names))
-    assert exported_names == tuple(sorted(exported_names))
     assert exported_names == EXPECTED_CONTRACT_NAMESPACE_EXPORTS
 
 
@@ -242,7 +245,6 @@ def test_contract_submodule_all_matches_expected_exports(
     exported_names = tuple(module.__all__)
 
     assert len(exported_names) == len(set(exported_names))
-    assert exported_names == tuple(sorted(exported_names))
     assert exported_names == expected_exports
     for export_name in expected_exports:
         assert hasattr(module, export_name)

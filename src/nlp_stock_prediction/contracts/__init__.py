@@ -84,15 +84,18 @@ from nlp_stock_prediction.contracts.recommendation import (
     TradeCandidate,
 )
 from nlp_stock_prediction.contracts.report import (
+    DEFAULT_MARKDOWN_REPORT_OUTLINE,
     AuditArtifact,
     AuditManifest,
     DailyReport,
     DataFreshnessSummary,
     Disclaimer,
+    MarkdownReportOutline,
     TickerReportSection,
 )
 
 __all__ = [
+    "DEFAULT_MARKDOWN_REPORT_OUTLINE",
     "AnalysisBundle",
     "AnalysisComponent",
     "AnalysisSignal",
@@ -125,6 +128,7 @@ __all__ = [
     "MacroRequest",
     "MacroSeries",
     "MacroSnapshot",
+    "MarkdownReportOutline",
     "MarketDataProvider",
     "MarketDataRequest",
     "MarketSnapshot",

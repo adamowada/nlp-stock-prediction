@@ -58,12 +58,13 @@ shape.
 
 - [x] Import/export tests cover the public `nlp_stock_prediction.contracts` namespace.
 - [x] Schema tests cover key invariants for evidence, extraction, analysis, recommendations, reports,
-      provider health, and fixture manifests.
+      provider health, fixture manifests, provenance completeness, and cross-object integrity.
 - [x] CLI tests cover help, valid run parsing, invalid dates/capital, offline/fixture/cache options,
       and Phase 1's intentional run exit code.
 - [x] Provider contract tests use deterministic fake providers and verify graceful failure envelopes.
 - [x] Report-shape tests verify exactly six ticker sections, no-trade summaries, disclaimer fields,
-      provider health, data freshness, and audit manifest serialization.
+      provider health, data freshness, audit manifest serialization, recommendation linkage, and a
+      minimal Markdown section outline.
 - [x] Default tests do not require network access or credentials.
 - [x] `python -m pytest`, `ruff check .`, `ruff format --check .`, `mypy .`, and canonical CLI checks
       pass.
@@ -79,7 +80,7 @@ ruff check .
 ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # expected exit code 3
 ```
 
 ## Decision Log
@@ -94,6 +95,10 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
   guardrail gaps: `None` is no longer coerced into strings/tickers, evidence reference spans must be
   monotonic, score breakdowns require components, and v1 disclaimers must keep educational,
   not-financial-advice, and no-auto-trading flags enabled.
+- 2026-05-11-13-42: Phase 1 owns cross-object contract integrity that later lanes rely on:
+  qualified candidates must pass risk/score gates, report recommendation IDs must link to matching
+  candidates, provider/fixture envelopes must be coherent, and external provenance must carry an
+  auditable source trail. Lane E still owns rendering and file writing.
 
 ## Progress Log
 
@@ -108,3 +113,6 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
   complete and Phase 2 ready.
 - 2026-05-11-13-24: Verified the final tree with the default suite, non-live suite, ruff, format
   check, mypy, CLI help, and the expected contract-gate `run` exit code.
+- 2026-05-11-13-42: Addressed deep review findings with stricter CLI parsing, provenance, provider,
+  fixture, recommendation, report-linkage, Markdown-outline, network-guard, and marker-placeholder
+  tests.

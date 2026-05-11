@@ -109,6 +109,14 @@ def test_run_command_phase1_exit_behavior_after_contract_validation(
             "expected YYYY-MM-DD",
         ),
         (
+            ["run", "--date", "20260511", "--output", "reports/"],
+            "expected YYYY-MM-DD",
+        ),
+        (
+            ["run", "--date", "2026-W20-1", "--output", "reports/"],
+            "expected YYYY-MM-DD",
+        ),
+        (
             [
                 "run",
                 "--date",
@@ -131,6 +139,30 @@ def test_run_command_phase1_exit_behavior_after_contract_validation(
                 "-1",
             ],
             "capital must be non-negative",
+        ),
+        (
+            [
+                "run",
+                "--date",
+                "2026-05-11",
+                "--output",
+                "reports/",
+                "--capital",
+                "NaN",
+            ],
+            "capital must be a finite decimal number",
+        ),
+        (
+            [
+                "run",
+                "--date",
+                "2026-05-11",
+                "--output",
+                "reports/",
+                "--capital",
+                "Infinity",
+            ],
+            "capital must be a finite decimal number",
         ),
     ],
 )

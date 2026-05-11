@@ -48,12 +48,12 @@ The contract gate requires:
 ```sh
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
-python -m nlp_stock_prediction run --capital 1000 --risk-profile exploratory
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --capital 1000 --risk-profile exploratory
 ```
 
 - Public models defined at API boundaries with Pydantic or typed dataclasses where appropriate.
 - Provider protocols defined for Reddit, X/social, news, market data, fundamentals, macro data, and LLM extraction.
-- Report contracts defined for `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/`.
+- Report contracts defined for `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/`. Phase 1 freezes the JSON spine, audit manifest shape, and minimal Markdown section outline; Lane E implements rendering and file writing.
 - Fixture shapes defined for raw provider snapshots, normalized evidence, extraction outputs, analysis contexts, scoring inputs, and expected reports.
 - Provider health and failure semantics defined for stale data, rate limits, missing credentials, upstream outages, malformed responses, and scraping drift.
 - Test marker taxonomy aligned with `docs/testing-plan.md`: `unit`, `schema`, `contract`, `integration`, `live_api`, `live_scraping`, `llm`, and `e2e`.
@@ -94,6 +94,8 @@ Shared behavior:
 - Clearly separate observed Reddit, X/Twitter, and news discussion from the app's own analysis and recommendations.
 - Treat ticker discovery as valid only when the Devvit ticker-card parser produces exactly six unique tickers by first-seen order.
 - Reject unsupported strategy and recommendation claims unless they cite normalized evidence records.
+- Reject qualified recommendations that fail risk gates, fail score gates, or do not meet their configured score threshold.
+- Keep report sections, recommendation IDs, candidate tickers, disclaimers, and no-trade summaries internally consistent.
 - Degrade gracefully when providers fail and surface failures in report warnings or logs.
 
 ## Parallel Implementation Lanes
@@ -237,17 +239,23 @@ python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # exits 3 until report generation is implemented
 ```
 
-## Acceptance Criteria
+## Phase 1 Contract-Gate Acceptance Criteria
 
 - The contract gate is complete before parallel implementation begins.
 - Each lane has clear ownership and can be assigned to a separate git worktree and Codex subagent.
 - Public contracts preserve evidence, provider metadata, confidence inputs, and disclaimers.
 - Contract and fixture-backed tests define expected behavior before implementation fills it in.
 - Default tests remain deterministic and do not require live credentials or network access.
-- Live API and live scraping tests are opt-in and marked.
-- Full fixture-backed report generation produces Markdown, JSON, and audit artifacts.
-- Provider failures degrade gracefully and are visible in reports or logs.
+- Live API, live scraping, and e2e markers are registered and have skipped placeholders until their lanes implement real coverage.
+- Provider failures have coherent result-envelope semantics and are visible as warnings/health records.
 - Documentation is updated when commands, configuration, behavior, or report structure changes.
+
+## Later V1 Acceptance Criteria
+
+- Full fixture-backed report generation produces Markdown, JSON, and audit artifacts.
+- Live API and live scraping tests are opt-in, marked, and implemented by their provider/reliability lanes.
+- Provider failures degrade gracefully through actual provider adapters and are visible in reports or logs.
+- Recommendation scoring has fixture-backed no-trade, conflicting-evidence, and qualified-strategy outcomes.
 
 ## Assumptions
 

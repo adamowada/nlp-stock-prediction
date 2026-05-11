@@ -103,6 +103,15 @@ class TradeCandidate(ContractModel):
     def require_evidence_for_actionable_candidates(self) -> TradeCandidate:
         if self.action != RecommendationAction.NO_TRADE and not self.evidence:
             raise ValueError("actionable trade candidates must cite evidence")
+        if self.action == RecommendationAction.QUALIFIED:
+            if not self.risk_plan.passed:
+                raise ValueError("qualified trade candidates must pass risk gates")
+            if self.risk_plan.failed_gates:
+                raise ValueError("qualified trade candidates must not include failed risk gates")
+            if self.score.failed_gates:
+                raise ValueError("qualified trade candidates must not include failed score gates")
+            if self.score.overall_score < self.score.threshold:
+                raise ValueError("qualified trade candidates must meet score threshold")
         return self
 
 
