@@ -1,8 +1,10 @@
 # Frozen Contract Gate
 
 Phase 0 settled the public contract surface and Phase 1 added the deterministic test harness for
-later worktree lanes. Concrete providers, analysis formulas, report rendering, and live integrations
-are intentionally out of scope until later phases.
+later worktree lanes. Phase 2 integrated concrete providers, analysis helpers, scoring, report
+rendering, audit writing, reliability helpers, and opt-in live smoke scaffolding against those
+contracts. Phase 3 owns hardening the integrated CLI and live smoke surface without weakening the
+frozen contract invariants.
 
 ## Python Package And CLI
 
@@ -10,9 +12,11 @@ are intentionally out of scope until later phases.
 - Canonical invocation: `python -m nlp_stock_prediction`.
 - `run` accepts `--date`, `--output`, `--capital`, `--risk-profile`, `--fixture-dir`,
   `--cache-dir`, and `--offline`.
-- During the contract-gate phase, `run` validates the command shape and exits with code `3` because
-  report generation is not implemented yet.
+- With `--offline`, `run` writes a deterministic fixture-backed report bundle. Without `--offline`,
+  it currently exits with code `3` because live-provider report orchestration is not enabled yet.
 - No console script is frozen in the contract gate.
+- Environment variables and optional ignored `.env` files are documented in
+  `docs/configuration.md`; the default offline path does not require credentials or network access.
 
 ## Contract Modules
 
@@ -26,7 +30,8 @@ are intentionally out of scope until later phases.
 - `contracts.extraction`: evidence-backed strategy extractions and clusters.
 - `contracts.analysis`: technical, fundamental, sector, macro, and combined analysis contracts.
 - `contracts.recommendation`: score, risk, and `TradeCandidate` contracts.
-- `contracts.report`: Markdown/JSON report spine and audit manifest contracts.
+- `contracts.report`: Markdown/JSON report spine, report evidence-source map, and audit manifest
+  contracts.
 - `contracts.providers`: provider request/result envelopes and provider protocols only.
 - `contracts.fixtures`: raw and normalized fixture manifests.
 
@@ -76,6 +81,8 @@ Frozen warning codes are:
 - Valid ticker discovery requires exactly six unique tickers in first-seen order.
 - Invalid ticker discovery results must include warnings.
 - Strategy extractions and clusters must cite normalized evidence.
+- High sarcasm/joke risk and conflicting source evidence must be surfaced as extraction/cluster
+  warnings and must not qualify silently as clean trade candidates.
 - Evidence quote spans must be monotonic when both start and end offsets are provided.
 - Score breakdowns must include at least one component.
 - Actionable trade candidates must cite evidence and include score, risk, invalidation, and
@@ -84,6 +91,9 @@ Frozen warning codes are:
   exceed the configured score threshold.
 - V1 disclaimers must remain educational-only, not financial advice, and no-auto-trading.
 - Reports must include exactly six ticker sections matching ticker discovery order.
+- Reports may include `evidence_sources`; when present, every cited evidence ID in ticker sections,
+  strategy clusters, analysis components, trade candidates, and score inputs must resolve to a
+  normalized evidence source with provenance.
 - Reports without trade candidates must include a no-trade summary.
 - Report trade candidates must use discovered tickers, have unique candidate IDs, match the report
   disclaimer, and be referenced by exactly one matching ticker section.
@@ -132,6 +142,6 @@ Core scenario names to use first:
 
 ## Phase Boundary
 
-Phase 0 and Phase 1 are complete on this branch. Phase 2 parallel implementation lanes should start
-from the Phase 1 contract-gate commit and treat the shared contracts as frozen unless a
-single-threaded contract revision is recorded.
+Phase 0 and Phase 1 are complete, Phase 2 implementation lanes have been integrated, and Phase 3
+local V1 acceptance is complete on `feature/integration-and-hardening`. Shared public contracts
+should stay stable unless a single-threaded contract revision is recorded in a new active plan.

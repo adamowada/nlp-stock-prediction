@@ -4,20 +4,20 @@
 
 Build a TDD-first Python CLI that generates one daily, evidence-grounded stock opportunity report for a retail trader with a small account.
 
-The app discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that signal with technical, fundamental, sector, and macro analysis, then writes Markdown and JSON reports.
+The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that signal with technical, fundamental, sector, and macro analysis, then writes Markdown and JSON reports.
 
 The v1 posture is exploratory but auditable. The app may surface speculative stock/options ideas, but each recommendation must include confidence, source evidence, risks, invalidation criteria, and a clear non-advice disclaimer. No real-money brokerage execution is included.
 
-This roadmap is organized for git worktrees and Codex subagents. Contracts are settled single-threaded first; implementation happens second in parallel lanes from the same frozen contract commit.
+This roadmap is organized for git worktrees and Codex subagents. Contracts were settled single-threaded first; implementation then happened in parallel lanes from the same frozen contract commit; Phase 3 now returns to a coordinated integration and hardening flow.
 
-Current state: Phase 0 contract settlement and Phase 1 contract test harness are implemented. Parallel implementation worktrees/subagents are the next milestone and should start from the Phase 1 contract-gate commit.
+Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase 2 parallel implementation, and Phase 3 local V1 acceptance are complete. The CLI generates deterministic offline Markdown, JSON, and audit artifacts; live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record.
 
 ## Phase Status
 
 - **Phase 0:** Complete. Public contracts are implemented under `src/nlp_stock_prediction/contracts/` and documented in `docs/contracts.md`.
 - **Phase 1:** Complete. Comprehensive schema, import, CLI, provider-contract, fixture, and report-shape tests are implemented.
-- **Phase 2:** Ready. Parallel implementation worktrees and lane subagents should start from the Phase 1 contract-gate commit. Use `docs/worktree-runbook.md` when this phase opens.
-- **Phase 3:** Blocked. Integration and live smoke checks wait for lane implementation.
+- **Phase 2:** Complete. Lanes A-F are merged and verified with deterministic tests, lint, format check, typecheck, CLI help, and offline report smoke coverage.
+- **Phase 3:** Complete. Integration hardening, CLI/configuration polish, live smoke readiness, report QA, failure drills, and final V1 acceptance are complete for the local CLI.
 
 ## Delivery Strategy
 
@@ -33,9 +33,9 @@ Current state: Phase 0 contract settlement and Phase 1 contract test harness are
    - Assign each Codex subagent exactly one lane and an explicit ownership boundary.
    - Lane agents may add private helpers freely but must not change frozen shared contracts directly.
 4. **Phase 3: Integration and live smoke.**
-   - Merge lanes back through a controlled integration branch.
-   - Run fixture-backed end-to-end report generation before marked live API or live scraping checks.
-   - Resolve contract gaps single-threaded, then rebase affected worktrees.
+   - Harden the integrated CLI and report pipeline from one coordinator thread.
+   - Keep deterministic fixture-backed report generation green before marked live API or live scraping checks.
+   - Resolve contract gaps single-threaded and record decisions in the active Phase 3 plan.
 
 ## Contract Gate
 
@@ -47,13 +47,13 @@ The contract gate requires:
 
 ```sh
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --capital 1000 --risk-profile exploratory
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --capital 1000 --risk-profile exploratory --offline
 ```
 
 - Public models defined at API boundaries with Pydantic or typed dataclasses where appropriate.
 - Provider protocols defined for Reddit, X/social, news, market data, fundamentals, macro data, and LLM extraction.
-- Report contracts defined for `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/`. Phase 1 freezes the JSON spine, audit manifest shape, and minimal Markdown section outline; Lane E implements rendering and file writing.
+- Report contracts defined for `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/`. Phase 1 froze the JSON spine, audit manifest shape, and minimal Markdown section outline; Phase 2 implemented deterministic rendering and file writing for offline runs.
 - Fixture shapes defined for raw provider snapshots, normalized evidence, extraction outputs, analysis contexts, scoring inputs, and expected reports.
 - Provider health and failure semantics defined for stale data, rate limits, missing credentials, upstream outages, malformed responses, and scraping drift.
 - Test marker taxonomy aligned with `docs/testing-plan.md`: `unit`, `schema`, `contract`, `integration`, `live_api`, `live_scraping`, `llm`, and `e2e`.
@@ -224,19 +224,24 @@ Deliverables:
 
 ## Verification Commands
 
-Expected commands once the Python package is scaffolded:
+Canonical verification commands:
 
 ```sh
 python -m pytest
 python -m pytest -m "not live_api and not live_scraping"
-python -m pytest -m live_api
-python -m pytest -m live_scraping
 python -m pytest -m e2e
 ruff check .
 ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # exits 3 until report generation is implemented
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+```
+
+Opt-in live smoke selections:
+
+```sh
+python -m pytest -m live_api
+python -m pytest -m live_scraping
 ```
 
 ## Phase 1 Contract-Gate Acceptance Criteria
@@ -246,20 +251,22 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # exits 
 - Public contracts preserve evidence, provider metadata, confidence inputs, and disclaimers.
 - Contract and fixture-backed tests define expected behavior before implementation fills it in.
 - Default tests remain deterministic and do not require live credentials or network access.
-- Live API, live scraping, and e2e markers are registered and have skipped placeholders until their lanes implement real coverage.
+- Live API, live scraping, and e2e markers are registered; fixture-backed e2e coverage now runs while live checks remain opt-in.
 - Provider failures have coherent result-envelope semantics and are visible as warnings/health records.
 - Documentation is updated when commands, configuration, behavior, or report structure changes.
 
-## Later V1 Acceptance Criteria
+## Phase 3 V1 Acceptance Criteria
 
 - Full fixture-backed report generation produces Markdown, JSON, and audit artifacts.
 - Live API and live scraping tests are opt-in, marked, and implemented by their provider/reliability lanes.
 - Provider failures degrade gracefully through actual provider adapters and are visible in reports or logs.
 - Recommendation scoring has fixture-backed no-trade, conflicting-evidence, and qualified-strategy outcomes.
+- CLI configuration, report quality, failure drills, and final clean-checkout verification meet
+  `plans/phase-3-integration-live-smoke.md`.
 
 ## Assumptions
 
-- The repo is greenfield, so the application structure can be created from scratch.
+- The repo began as a greenfield project, so the application structure was created from scratch.
 - The first complete version is a local Python CLI that runs manually.
 - Reports are written as Markdown plus structured JSON.
 - Recommendations may include stocks and defined-risk options.

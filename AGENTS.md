@@ -4,7 +4,7 @@
 
 This project is a TDD-first Python CLI application for generating a daily, evidence-grounded stock opportunity report for a retail trader with a small account.
 
-The app discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
+The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI path is deterministic and fixture-backed with `--offline`; live report orchestration remains disabled until explicitly enabled. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
 
 The project should favor correctness, traceability, and testability over speed of adding features. Any generated recommendation must preserve its source evidence, assumptions, risks, and confidence inputs.
 
@@ -12,15 +12,15 @@ See [docs/multi-milestone-plan.md](docs/multi-milestone-plan.md) for the product
 
 ## Common commands
 
-Use the repository's configured commands once the project scaffold exists. Expected commands are:
+Use the repository's configured commands. Expected commands are:
 
 ```sh
 python -m pytest
 ruff check .
-ruff format .
+ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 ```
 
 Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is introduced.
@@ -47,8 +47,11 @@ If the final project uses a task runner, keep this section updated with the cano
 - Unit test ticker extraction, ticker matching, evidence normalization, strategy extraction schema validation, clustering, scoring, and report rendering.
 - Use recorded fixtures for provider contract tests, plus separately marked live API and live scraping tests for dependency coverage.
 - Keep the default fast suite deterministic; run live dependency tests explicitly or in scheduled CI with the required credentials, network access, and quota controls.
-- End-to-end tests should include fixture-backed report generation and live smoke coverage when the needed external dependencies are configured.
-- Include negative tests for malformed HTML, duplicate tickers, missing provider data, joke/sarcasm risk, unsupported recommendations, and short ticker false positives.
+- End-to-end tests should include fixture-backed report generation plus separate opt-in live provider smoke coverage when the needed external dependencies are configured.
+- Include negative tests for malformed HTML, duplicate or insufficient tickers, missing provider
+  data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
+  recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
+  ticker false positives.
 - Any recommendation logic change must include tests for no-trade days, conflicting evidence, and at least one qualified strategy.
 
 ## Planning rules

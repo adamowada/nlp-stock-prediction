@@ -1,5 +1,7 @@
 # Phase 2 Lane F Reliability CI
 
+Status: complete. This is a historical Phase 2 lane plan.
+
 ## Goal
 
 Implement Lane F reliability, live-test gating, CI, and compliance guardrails without changing

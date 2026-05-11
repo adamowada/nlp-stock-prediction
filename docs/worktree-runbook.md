@@ -1,8 +1,9 @@
 # Git Worktree Runbook
 
-Use this runbook after Phase 1 contract tests are committed and the full contract gate is complete.
-Phase 1 is now complete on this branch; Phase 2 implementation lanes should start from the
-contract-gate commit.
+This is the historical Phase 2 worktree runbook. Phase 2 has already been integrated; keep this
+document as the reproducible procedure for the lane-based implementation model and for future
+parallel lane work. Phase 3 local V1 acceptance is complete; future live-provider orchestration
+should use a new active plan.
 
 ## Frozen Contract Ref
 
@@ -77,7 +78,7 @@ Live checks stay opt-in and must not be required for default lane handoff.
    - Lane E: report rendering, audit artifacts, and CLI orchestration.
    - Lane F: reliability, observability, CI, and live smoke.
 5. Open one final PR from `codex/integration-v1` to `main` after fixture-backed e2e report
-   generation is green.
+   generation is green. This happened for the Phase 2 integration branch before Phase 3 began.
 
 ## PR Strategy
 

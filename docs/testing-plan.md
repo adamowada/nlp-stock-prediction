@@ -2,7 +2,9 @@
 
 ## Summary
 
-This project should test both deterministic application logic and the live external dependencies that make the report useful. Fixture-based tests provide fast feedback and reproducibility; live API and scraping tests verify that Reddit, X/Twitter, news, market-data, fundamentals, macro, and HTML extraction integrations still work against real services.
+This project should test both deterministic application logic and the live external dependencies
+that make the report useful. Fixture-based tests provide fast feedback and reproducibility; live
+API and scraping tests verify that selected provider edges still work against real services.
 
 Live dependency tests are part of the testing strategy, but they should be explicitly marked because they can require credentials, internet access, paid/free quota, and resilient handling of upstream changes.
 The default test harness blocks network access. Live tests must use the appropriate live marker and
@@ -14,7 +16,10 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 
 - Validate pure functions and small modules without network access.
 - Cover ticker extraction, ticker matching, evidence normalization, clustering, technical indicators, scoring rules, risk gates, and report rendering helpers.
-- Include negative cases for malformed HTML, duplicate tickers, missing provider data, short ticker false positives, unsupported recommendations, and joke/sarcasm risk.
+- Include negative cases for malformed HTML, duplicate or insufficient tickers, missing provider
+  data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
+  recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
+  ticker false positives.
 
 ### 2. Schema and model tests
 
@@ -31,7 +36,9 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 
 ### 4. Live API integration tests
 
-- Verify real provider access for Reddit, X/Twitter, news, market data, fundamentals, SEC EDGAR, FRED, and any LLM provider.
+- Current Phase 3 live API coverage verifies the SEC company tickers endpoint and keeps a reserved
+  LLM smoke gate explicit. Future live provider coverage should extend to Reddit, X/Twitter, news,
+  market data, fundamentals, FRED, and any enabled LLM provider.
 - Require explicit environment variables for credentials and opt-in execution.
 - Check authentication failures, quota/rate-limit responses, malformed upstream responses, and stale data behavior.
 - Mark these tests separately from fast local tests, for example:
@@ -43,7 +50,9 @@ python -m pytest -m live_api
 ### 5. Live scraping tests
 
 - Verify that permitted public HTML scraping fallbacks still locate expected page sections and fail clearly when markup changes.
-- Keep scraping tests narrow: assert the presence and parseability of required structures rather than broad page content.
+- Keep scraping tests narrow: assert configured expected text, selectors, or parseable required
+  structures rather than broad page content. Current Phase 3 coverage uses a configured public URL
+  and literal expected text.
 - Include alerts or failure messages that explain which selector, subtree, or regex no longer matches.
 - Mark scraping tests separately, for example:
 
@@ -56,7 +65,9 @@ python -m pytest -m live_scraping
 - Use frozen prompt inputs and expected schema-shaped outputs for deterministic validation.
 - Test that unsupported strategies are rejected when evidence is missing.
 - Test clustering behavior for near-duplicates such as "buy calls," "weekly calls," and "calls into earnings."
-- For live LLM smoke tests, validate schema compliance and evidence preservation rather than exact wording.
+- For future live LLM smoke tests, validate schema compliance and evidence preservation rather than
+  exact wording. The current V1 CLI does not enable a live LLM adapter; LLM validation is
+  fixture-backed.
 
 ### 7. End-to-end report tests
 
@@ -82,7 +93,7 @@ python -m pytest -m live_scraping
 
 ## Expected commands
 
-Initial command targets can be refined once the package is scaffolded:
+Canonical command targets:
 
 ```sh
 python -m pytest
@@ -95,14 +106,20 @@ ruff format --check .
 mypy .
 ```
 
-During Phase 1, the live and e2e marker commands select skipped placeholders so the command surface
-is stable before those lanes implement real coverage.
+Fixture-backed e2e coverage now exercises offline CLI report generation. Live API and live scraping
+checks remain opt-in, and live LLM checks are reserved until a live adapter and credential contract
+exist. See `docs/configuration.md` for the current live-smoke environment variables and `.env`
+guidance.
+
+Stage 5 failure drills are represented across parser, provider-adapter, extraction/clustering,
+scoring, report-rendering, and CLI e2e tests. The matrix covers malformed Reddit ticker-card HTML,
+duplicate/insufficient tickers, missing provider data, rate-limit and unavailable-provider
+envelopes, stale market or macro data, unsupported recommendations, conflicting evidence,
+joke/sarcasm risk, and no qualified strategies.
 
 ## CI expectations
 
 - Pull-request CI should run fast unit, schema, contract, integration, and fixture-backed end-to-end tests.
-- Until fixture-backed end-to-end tests exist, CI may run the e2e marker command against skipped
-  placeholders.
 - Live API and live scraping tests should run manually or on a scheduled workflow with required secrets and quota controls.
 - Scheduled live tests should produce actionable failure messages when an upstream API, auth token, rate limit, or page structure changes.
 - Failures from live dependencies should distinguish app regressions from upstream/provider availability issues.
@@ -110,8 +127,10 @@ is stable before those lanes implement real coverage.
 ## Acceptance criteria
 
 - Core logic is covered by fast deterministic tests.
-- Each provider adapter has fixture-backed contract tests and live opt-in tests.
+- Each provider adapter has fixture-backed contract tests; live opt-in tests are added as each live
+  provider path is enabled.
 - Scraping fallbacks have narrow live tests that detect markup drift.
 - The full report can be generated from fixtures.
-- The full report can be smoke-tested against live dependencies when credentials and network access are available.
+- Selected live provider edges can be smoke-tested when credentials/configuration and network access
+  are available; full live report orchestration remains disabled until explicitly enabled.
 - Recommendation scoring has tests for both confident-trade and no-trade outcomes.

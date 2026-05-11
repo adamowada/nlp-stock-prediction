@@ -1,5 +1,8 @@
 # Phase 0 Contract Settlement
 
+Status: complete. This is a historical Phase 0 plan; Phase 1, Phase 2, and Phase 3 local V1
+acceptance have since been completed.
+
 ## Goal
 
 Implement the Phase 0 contract surface so later Codex subagents can work in parallel from a
@@ -70,13 +73,13 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # exits 
 - 2026-05-11-12-46: Provider methods use a synchronous `ProviderResult[T]` envelope. Expected upstream failures are modeled as status/warnings instead of exceptions.
 - 2026-05-11-12-46: Phase 0 completion does not complete the full contract gate. Phase 1 contract tests remain required before parallel implementation worktrees begin.
 - 2026-05-11-13-05: Provider contracts return normalized provider facts only; analysis outputs are owned by Lane D and are not provider protocol return types.
-- 2026-05-11-13-05: The worktree operating procedure is documented in `docs/worktree-runbook.md`; Phase 2 remains blocked until Phase 1 is complete.
+- 2026-05-11-13-05: The worktree operating procedure is documented in `docs/worktree-runbook.md`; at the time, Phase 2 remained blocked until Phase 1 was complete.
 
 ## Progress Log
 
 - 2026-05-11-12-46: Reviewed roadmap, testing plan, README, and planning template; confirmed the repo started with planning documents only.
 - 2026-05-11-12-46: Coordinated read-only subagent reviews for architecture, provider semantics, packaging, reporting contracts, and phase-status documentation.
 - 2026-05-11-12-46: Added minimal package scaffold, public contracts, fixture contract, contract docs, and Phase 0 smoke tests.
-- 2026-05-11-12-46: Recorded that Phase 1 comprehensive contract harness and parallel implementation lanes remain pending.
+- 2026-05-11-12-46: Recorded that the then-future Phase 1 comprehensive contract harness and parallel implementation lanes remained pending.
 - 2026-05-11-13-05: Tightened provider-result, JSON metadata, and ticker-discovery invariants based on Phase 0 review findings.
 - 2026-05-11-13-05: Added a concrete git worktree runbook with branch names, commands, handoff template, verification commands, and merge protocol.

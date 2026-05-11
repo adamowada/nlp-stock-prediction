@@ -22,6 +22,7 @@ from nlp_stock_prediction.contracts.base import (
 )
 from nlp_stock_prediction.contracts.discovery import TickerDiscoveryResult
 from nlp_stock_prediction.contracts.enums import RiskProfile
+from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.extraction import StrategyCluster
 from nlp_stock_prediction.contracts.provenance import (
     DataReference,
@@ -194,6 +195,7 @@ class DailyReport(ContractModel):
     ticker_discovery: TickerDiscoveryResult
     data_freshness: DataFreshnessSummary
     provider_health: tuple[ProviderHealth, ...] = Field(default_factory=tuple)
+    evidence_sources: tuple[SourceEvidence, ...] = Field(default_factory=tuple)
     ticker_sections: tuple[TickerReportSection, ...]
     trade_candidates: tuple[TradeCandidate, ...] = Field(default_factory=tuple)
     no_trade_summary: str | None = None
@@ -211,9 +213,26 @@ class DailyReport(ContractModel):
         candidate_ids = tuple(candidate.candidate_id for candidate in self.trade_candidates)
         if len(set(candidate_ids)) != len(candidate_ids):
             raise ValueError("trade candidate ids must be unique")
+        source_evidence_ids = tuple(evidence.evidence_id for evidence in self.evidence_sources)
+        if len(set(source_evidence_ids)) != len(source_evidence_ids):
+            raise ValueError("report evidence_sources ids must be unique")
         candidate_by_id = {candidate.candidate_id: candidate for candidate in self.trade_candidates}
         section_references: dict[str, TickerSymbol] = {}
+        cited_evidence_ids: set[str] = set()
         for section in self.ticker_sections:
+            cited_evidence_ids.update(reference.evidence_id for reference in section.evidence)
+            for cluster in section.strategy_clusters:
+                cited_evidence_ids.update(reference.evidence_id for reference in cluster.evidence)
+            for component in (
+                section.technical_analysis,
+                section.fundamental_analysis,
+                section.sector_context,
+                section.macro_context,
+            ):
+                if component is not None:
+                    cited_evidence_ids.update(
+                        reference.evidence_id for reference in component.evidence
+                    )
             for recommendation_id in section.recommendation_ids:
                 if recommendation_id not in candidate_by_id:
                     raise ValueError("ticker section recommendation_ids must reference candidates")
@@ -231,6 +250,15 @@ class DailyReport(ContractModel):
                 raise ValueError("trade candidates must be referenced by a ticker section")
             if section_references[candidate.candidate_id] != candidate.ticker:
                 raise ValueError("ticker section recommendation_ids must match candidate ticker")
+            cited_evidence_ids.update(reference.evidence_id for reference in candidate.evidence)
+            for score_component in (*candidate.score.components, *candidate.score.penalties):
+                cited_evidence_ids.update(
+                    reference.evidence_id for reference in score_component.evidence
+                )
+        if self.evidence_sources:
+            missing_evidence_ids = cited_evidence_ids.difference(source_evidence_ids)
+            if missing_evidence_ids:
+                raise ValueError("report evidence_sources must include every cited evidence_id")
         return self
 
 

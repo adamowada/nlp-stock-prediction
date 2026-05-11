@@ -13,6 +13,11 @@ from nlp_stock_prediction.reporting.fixtures import build_offline_fixture_bundle
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 
+LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
+    "Live-provider report orchestration is not enabled yet; pass --offline to generate "
+    "the deterministic fixture-backed report bundle."
+)
+
 
 @dataclass(frozen=True)
 class ReportBundle:
@@ -27,10 +32,7 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
     """Generate a deterministic report bundle for the configured run."""
 
     if not config.offline:
-        raise ValueError(
-            "Phase 2 report generation is fixture-backed only; pass --offline to make that "
-            "constraint explicit."
-        )
+        raise ValueError(LIVE_ORCHESTRATION_DISABLED_MESSAGE)
 
     fixture_bundle = build_offline_fixture_bundle(config)
     report = fixture_bundle.report
@@ -66,4 +68,4 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
     )
 
 
-__all__ = ["ReportBundle", "generate_daily_report"]
+__all__ = ["LIVE_ORCHESTRATION_DISABLED_MESSAGE", "ReportBundle", "generate_daily_report"]

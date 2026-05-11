@@ -162,12 +162,14 @@ def build_offline_fixture_bundle(config: RunConfig) -> OfflineFixtureBundle:
             as_of=generated_at,
             summary=(
                 "Deterministic offline fixture data is fresh for Reddit/news context; "
-                "market data includes one stale fixture warning."
+                "market data includes one stale fixture warning and supplemental SEC filing "
+                "coverage is unconfigured."
             ),
             stale_provider_names=("fixture-market-data",),
-            missing_provider_names=(),
+            missing_provider_names=("fixture-sec-edgar",),
         ),
         provider_health=provider_health,
+        evidence_sources=evidence_records,
         ticker_sections=ticker_sections,
         trade_candidates=trade_candidates,
         no_trade_summary=(
@@ -534,13 +536,21 @@ def _ticker_sections(
                 data_quality={
                     "freshness": "fresh_with_stale_market_warning",
                     "evidence_count": 1,
+                    "evidence_ids": [evidence_refs[ticker].evidence_id],
+                    "evidence_freshness": FreshnessStatus.FRESH.value,
                     "provider_names": [
                         "fixture-reddit",
                         "fixture-news",
                         "fixture-market-data",
                         "fixture-macro",
                     ],
-                    "raw_snapshot_ids": [f"raw-reddit-card-{run_date.isoformat()}"],
+                    "provider_metadata": {"fixture": True, "offline": True},
+                    "raw_snapshot_ids": [
+                        f"raw-reddit-card-{run_date.isoformat()}",
+                        f"raw-reddit-discussion-{run_date.isoformat()}",
+                        f"raw-market-data-{run_date.isoformat()}",
+                    ],
+                    "warning_ids": ["fixture-market-data:stale_data"],
                     "confidence": 0.74 if ticker == "TSLA" else 0.58,
                 },
             )
@@ -561,6 +571,16 @@ def _provider_health(run_date: date, generated_at: datetime) -> tuple[ProviderHe
         source_url="https://market.example/fixture",
         metadata={"fallback": "offline_fixture", "stale_seconds": 900},
     )
+    missing_warning = ProviderWarning(
+        code=WarningCode.MISSING_CREDENTIALS,
+        severity=WarningSeverity.ERROR,
+        message="Offline SEC filing supplement is not configured for this fixture run.",
+        provider_name="fixture-sec-edgar",
+        retryable=False,
+        occurred_at=generated_at,
+        source_url="https://www.sec.gov/edgar/search/",
+        metadata={"fallback": "offline_fixture", "credential_state": "missing"},
+    )
     return (
         ProviderHealth(
             provider_name="fixture-reddit",
@@ -579,6 +599,14 @@ def _provider_health(run_date: date, generated_at: datetime) -> tuple[ProviderHe
             latency_ms=0,
             last_success_at=generated_at,
             warnings=(stale_warning,),
+        ),
+        ProviderHealth(
+            provider_name="fixture-sec-edgar",
+            status=ProviderStatus.UNCONFIGURED,
+            checked_at=generated_at,
+            credential_state=CredentialState.MISSING,
+            latency_ms=0,
+            warnings=(missing_warning,),
         ),
         ProviderHealth(
             provider_name="fixture-news",
@@ -800,6 +828,7 @@ def _audit_manifest(
         provider_run_ids=(
             f"fixture-reddit-{config.run_date.isoformat()}",
             f"fixture-market-data-{config.run_date.isoformat()}",
+            f"fixture-sec-edgar-{config.run_date.isoformat()}",
             f"fixture-news-{config.run_date.isoformat()}",
             f"fixture-macro-{config.run_date.isoformat()}",
         ),

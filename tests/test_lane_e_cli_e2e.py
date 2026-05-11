@@ -6,15 +6,32 @@ import subprocess
 import sys
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from nlp_stock_prediction.cli import CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
-from nlp_stock_prediction.contracts import DailyReport, RiskProfile, RunConfig
+from nlp_stock_prediction.contracts import (
+    AuditManifest,
+    DailyReport,
+    JsonObject,
+    RiskProfile,
+    RunConfig,
+)
 from nlp_stock_prediction.pipeline import generate_daily_report
+from nlp_stock_prediction.reporting.audit import json_payload_sha256
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
+EXPECTED_AUDIT_FILES = {
+    "raw-snapshots.json",
+    "normalized-evidence.json",
+    "extracted-strategies.json",
+    "analysis-contexts.json",
+    "scoring-inputs.json",
+    "final-reports.json",
+    "audit-manifest.json",
+}
 
 
 def _module_env() -> dict[str, str]:
@@ -24,6 +41,19 @@ def _module_env() -> dict[str, str]:
         str(SRC_DIR) if not existing_pythonpath else f"{SRC_DIR}{os.pathsep}{existing_pythonpath}"
     )
     return env
+
+
+def _read_json_object(path: Path) -> JsonObject:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    return cast(JsonObject, payload)
+
+
+def _json_records(payload: JsonObject) -> list[JsonObject]:
+    records = payload["records"]
+    assert isinstance(records, list)
+    assert all(isinstance(record, dict) for record in records)
+    return cast(list[JsonObject], records)
 
 
 @pytest.mark.e2e
@@ -48,17 +78,10 @@ def test_generate_daily_report_writes_markdown_json_and_audit_artifacts(tmp_path
     assert bundle.audit_dir == audit_dir
     assert bundle.markdown_path.exists()
     assert bundle.json_path.exists()
+    assert bundle.audit_manifest_path == audit_dir / "audit-manifest.json"
+    assert bundle.audit_manifest_path.exists()
 
-    expected_audit_files = {
-        "raw-snapshots.json",
-        "normalized-evidence.json",
-        "extracted-strategies.json",
-        "analysis-contexts.json",
-        "scoring-inputs.json",
-        "final-reports.json",
-        "audit-manifest.json",
-    }
-    assert expected_audit_files.issubset({path.name for path in audit_dir.iterdir()})
+    assert {path.name for path in audit_dir.iterdir()} == EXPECTED_AUDIT_FILES
 
     report = DailyReport.model_validate_json(bundle.json_path.read_text(encoding="utf-8"))
     assert report.report_date == date(2026, 5, 11)
@@ -71,11 +94,30 @@ def test_generate_daily_report_writes_markdown_json_and_audit_artifacts(tmp_path
         "SPY",
     )
     assert report.trade_candidates[0].candidate_id == "candidate-tsla-shares-swing"
-    assert report.audit_manifest is not None
+    assert isinstance(report.audit_manifest, AuditManifest)
+    assert len(report.evidence_sources) == 6
+    assert report.evidence_sources[0].evidence_id == "evidence-tsla-reddit-1"
+    assert report.evidence_sources[0].provenance.provider_name == "fixture-reddit"
+    assert report.evidence_sources[0].provenance.freshness_status.value == "fresh"
+    assert report.evidence_sources[0].provenance.provider_metadata == {
+        "fixture": True,
+        "offline": True,
+    }
+    assert report.data_freshness.missing_provider_names == ("fixture-sec-edgar",)
 
-    audit_manifest = json.loads((audit_dir / "audit-manifest.json").read_text(encoding="utf-8"))
-    artifact_types = {artifact["artifact_type"] for artifact in audit_manifest["artifacts"]}
-    assert {
+    manifest = AuditManifest.model_validate(_read_json_object(bundle.audit_manifest_path))
+    assert manifest == report.audit_manifest
+    artifacts_by_id = {artifact.artifact_id: artifact for artifact in manifest.artifacts}
+    assert set(artifacts_by_id) == {
+        "raw-snapshots",
+        "normalized-evidence",
+        "extracted-strategies",
+        "analysis-contexts",
+        "scoring-inputs",
+        "markdown-report",
+        "json-report",
+    }
+    assert {artifact.artifact_type for artifact in manifest.artifacts} == {
         "raw_snapshot",
         "normalized_evidence",
         "extraction_output",
@@ -83,12 +125,102 @@ def test_generate_daily_report_writes_markdown_json_and_audit_artifacts(tmp_path
         "scoring_input",
         "markdown_report",
         "json_report",
-    }.issubset(artifact_types)
+    }
 
-    normalized = json.loads((audit_dir / "normalized-evidence.json").read_text(encoding="utf-8"))
-    assert normalized["records"][0]["evidence_id"] == "evidence-tsla-reddit-1"
-    assert normalized["records"][0]["provenance"]["raw_identifier"] == "reddit-comment-tsla-1"
-    assert normalized["records"][0]["provenance"]["provider_metadata"]["fixture"] is True
+    audit_payload_ids = {
+        "raw-snapshots": "raw-snapshots.json",
+        "normalized-evidence": "normalized-evidence.json",
+        "extracted-strategies": "extracted-strategies.json",
+        "analysis-contexts": "analysis-contexts.json",
+        "scoring-inputs": "scoring-inputs.json",
+    }
+    for artifact_id, filename in audit_payload_ids.items():
+        artifact = artifacts_by_id[artifact_id]
+        artifact_path = audit_dir / filename
+        payload = _read_json_object(artifact_path)
+        records = _json_records(payload)
+
+        assert Path(artifact.path) == artifact_path
+        assert artifact_path.exists()
+        assert artifact.record_count == len(records)
+        assert artifact.sha256 == json_payload_sha256(payload)
+
+    assert Path(artifacts_by_id["markdown-report"].path) == bundle.markdown_path
+    assert Path(artifacts_by_id["json-report"].path) == bundle.json_path
+    assert artifacts_by_id["markdown-report"].record_count == 1
+    assert artifacts_by_id["json-report"].record_count == 1
+
+    final_report_records = _json_records(_read_json_object(audit_dir / "final-reports.json"))
+    assert final_report_records == [
+        {
+            "artifact_id": "markdown-report",
+            "path": bundle.markdown_path.as_posix(),
+            "content_type": "text/markdown",
+        },
+        {
+            "artifact_id": "json-report",
+            "path": bundle.json_path.as_posix(),
+            "content_type": "application/json",
+        },
+    ]
+
+    raw_records = _json_records(_read_json_object(audit_dir / "raw-snapshots.json"))
+    assert [record["source_kind"] for record in raw_records] == [
+        "reddit_ticker_card",
+        "reddit_comment",
+        "market_data",
+    ]
+    assert all(
+        cast(JsonObject, record["provider_metadata"])["fixture"] is True for record in raw_records
+    )
+
+    normalized_records = _json_records(_read_json_object(audit_dir / "normalized-evidence.json"))
+    first_normalized = normalized_records[0]
+    first_provenance = cast(JsonObject, first_normalized["provenance"])
+    first_provider_metadata = cast(JsonObject, first_provenance["provider_metadata"])
+    assert first_normalized["evidence_id"] == "evidence-tsla-reddit-1"
+    assert first_provenance["raw_identifier"] == "reddit-comment-tsla-1"
+    assert first_provider_metadata["fixture"] is True
+
+    extracted_records = _json_records(_read_json_object(audit_dir / "extracted-strategies.json"))
+    assert len(extracted_records) == 6
+    assert {record["ticker"] for record in extracted_records} == set(
+        report.ticker_discovery.tickers
+    )
+    for record in extracted_records:
+        evidence = record["evidence"]
+        assert isinstance(evidence, list)
+        assert evidence
+        assert all(isinstance(reference, dict) for reference in evidence)
+
+    analysis_records = _json_records(_read_json_object(audit_dir / "analysis-contexts.json"))
+    assert len(analysis_records) == 6
+    for record in analysis_records:
+        assert record["ticker"] in report.ticker_discovery.tickers
+        assert isinstance(record["technical"], dict)
+        assert isinstance(record["fundamental"], dict)
+        assert isinstance(record["sector"], dict)
+        assert isinstance(record["macro"], dict)
+
+    scoring_records = _json_records(_read_json_object(audit_dir / "scoring-inputs.json"))
+    assert scoring_records == [
+        {
+            "scoring_input_id": "scoring-input-tsla",
+            "candidate_id": "candidate-tsla-shares-swing",
+            "ticker": "TSLA",
+            "score": cast(JsonObject, report.trade_candidates[0].score.model_dump(mode="json")),
+            "risk_plan": cast(
+                JsonObject,
+                report.trade_candidates[0].risk_plan.model_dump(mode="json"),
+            ),
+            "evidence_ids": ["evidence-tsla-reddit-1"],
+            "confidence_inputs": {
+                "reddit_strategy_confidence": 0.78,
+                "technical_alignment": 0.72,
+                "freshness_penalty": 0.05,
+            },
+        }
+    ]
 
 
 @pytest.mark.e2e
@@ -116,13 +248,73 @@ def test_cli_offline_run_writes_report_bundle(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert "report.md" in result.stdout
+    assert "Wrote audit artifacts:" in result.stdout
     assert result.stderr == ""
-    assert (output_dir / "2026-05-11" / "report.md").exists()
-    assert (output_dir / "2026-05-11" / "report.json").exists()
+
+    report_dir = output_dir / "2026-05-11"
+    audit_dir = report_dir / "audit"
+    markdown_path = report_dir / "report.md"
+    json_path = report_dir / "report.json"
+    manifest_path = audit_dir / "audit-manifest.json"
+
+    assert markdown_path.exists()
+    assert json_path.exists()
+    assert audit_dir.is_dir()
+    assert {path.name for path in audit_dir.iterdir()} == EXPECTED_AUDIT_FILES
+
+    report = DailyReport.model_validate_json(json_path.read_text(encoding="utf-8"))
+    assert isinstance(report.audit_manifest, AuditManifest)
+    assert AuditManifest.model_validate(_read_json_object(manifest_path)) == report.audit_manifest
 
 
 @pytest.mark.e2e
-def test_cli_run_requires_offline_for_fixture_backed_phase2(tmp_path: Path) -> None:
+def test_cli_offline_run_represents_no_trade_day(tmp_path: Path) -> None:
+    output_dir = tmp_path / "reports"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nlp_stock_prediction",
+            "run",
+            "--date",
+            "2026-05-11",
+            "--output",
+            str(output_dir),
+            "--capital",
+            "0",
+            "--offline",
+        ],
+        cwd=PROJECT_ROOT,
+        env=_module_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    report_dir = output_dir / "2026-05-11"
+    audit_dir = report_dir / "audit"
+    markdown = (report_dir / "report.md").read_text(encoding="utf-8")
+    report = DailyReport.model_validate_json(
+        (report_dir / "report.json").read_text(encoding="utf-8")
+    )
+
+    assert "### No-Trade Summary" in markdown
+    assert "### Qualified Trading Strategies" not in markdown
+    assert "No qualified trades passed the offline fixture risk gates." in markdown
+    assert report.trade_candidates == ()
+    assert report.no_trade_summary == "No qualified trades passed the offline fixture risk gates."
+    assert report.audit_manifest is not None
+    scoring_records = _json_records(_read_json_object(audit_dir / "scoring-inputs.json"))
+    risk_plan = cast(JsonObject, scoring_records[0]["risk_plan"])
+    assert risk_plan["passed"] is False
+    assert risk_plan["failed_gates"] == ["account-capital-must-be-positive"]
+
+
+@pytest.mark.e2e
+def test_cli_run_requires_offline_until_live_orchestration_is_enabled(tmp_path: Path) -> None:
     output_dir = tmp_path / "reports"
 
     result = subprocess.run(
@@ -144,6 +336,6 @@ def test_cli_run_requires_offline_for_fixture_backed_phase2(tmp_path: Path) -> N
     )
 
     assert result.returncode == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
-    assert "fixture-backed only" in result.stderr
+    assert "Live-provider report orchestration is not enabled yet" in result.stderr
     assert result.stdout == ""
     assert not output_dir.exists()

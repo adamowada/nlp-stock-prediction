@@ -1,5 +1,8 @@
 # Phase 1 Contract Test Harness
 
+Status: complete. This is a historical Phase 1 plan; Phase 2 integration and Phase 3 local V1
+acceptance have since been completed.
+
 ## Goal
 
 Complete the Phase 1 contract gate by adding deterministic tests for public schema behavior,
@@ -52,7 +55,8 @@ shape.
 - Changes: update status docs, fixture README, and this plan's progress/decision log.
 - Files likely affected: `docs/multi-milestone-plan.md`, `docs/contracts.md`,
   `tests/fixtures/README.md`, `README.md`, this plan.
-- Verification: docs align with the implemented test gate and Phase 2 remains a separate next step.
+- Verification: docs align with the implemented test gate and, at the time, Phase 2 remains a
+  separate next step.
 
 ## Acceptance Criteria
 
@@ -68,8 +72,8 @@ shape.
 - [x] Default tests do not require network access or credentials.
 - [x] `python -m pytest`, `ruff check .`, `ruff format --check .`, `mypy .`, and canonical CLI checks
       pass.
-- [x] Documentation states Phase 1 is complete and Phase 2 implementation worktrees are the next
-      milestone.
+- [x] Documentation stated Phase 1 was complete and Phase 2 implementation worktrees were the next
+      milestone at the time of Phase 1 completion.
 
 ## Verification Commands
 

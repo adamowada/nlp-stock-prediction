@@ -578,6 +578,7 @@ def transport_error_result(
         fetched_at=fetched_at,
         credential_state=health_credential_state,
         warnings=(warning,),
+        rate_limit_remaining=0 if status == ProviderStatus.RATE_LIMITED else None,
     )
 
 
