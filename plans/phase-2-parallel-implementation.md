@@ -125,3 +125,9 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   focused CLI/report tests reported 28 passed; e2e selection reported 2 passed and 1 expected
   legacy placeholder skip; `ruff check .`, `ruff format --check .`, and `mypy .` passed. Lane E is
   ready to merge after Lane D.
+- 2026-05-11-14-48: Merged Lane A into `codex/integration-v1`; post-merge
+  `python -m pytest -m "not live_api and not live_scraping"` reported 180 passed, 1 expected skip,
+  and 2 deselected; `ruff check .` passed.
+- 2026-05-11-14-51: Lane B returned patched commit `c25f4ba` for malformed FRED series mapping.
+  Coordinator verified focused provider tests reported 13 passed; `ruff check .`,
+  `ruff format --check .`, and `mypy .` passed. Lane B is ready to merge second.
