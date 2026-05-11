@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-Phase 1 contract test harness is implemented. The project now has frozen public contracts plus deterministic schema, import, CLI, provider, fixture, and report-shape tests. Phase 2 implementation worktrees are the next milestone. See `AGENTS.md` for project conventions, `docs/contracts.md` for the frozen contract gate, `docs/worktree-runbook.md` for the parallel worktree procedure, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 1 contract test harness is implemented. The project now has frozen public contracts plus deterministic schema, import, CLI, provider, fixture, and report-shape tests. In the Lane E Phase 2 worktree, the CLI can generate a deterministic offline report bundle with Markdown, JSON, and audit artifacts while provider/extraction/scoring lanes are integrated separately. See `AGENTS.md` for project conventions, `docs/contracts.md` for the frozen contract gate, `docs/worktree-runbook.md` for the parallel worktree procedure, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 
@@ -27,9 +27,9 @@ ruff check .
 ruff format .
 mypy .
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 ```
 
 The canonical CLI invocation is the Python module form, `python -m nlp_stock_prediction`. If a console script is added later, it should remain a thin alias for that module command and the docs should be updated together.
 
-During the contract-gate phase, `run` validates the command contract and exits with code `3` because report generation is not implemented yet. The default test harness blocks network access; live tests require explicit opt-in.
+The Lane E offline run writes `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/` using deterministic fixture data. The default test harness blocks network access; live tests require explicit opt-in.
