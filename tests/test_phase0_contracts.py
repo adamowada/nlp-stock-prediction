@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from nlp_stock_prediction.cli import PHASE_0_NOT_IMPLEMENTED_EXIT_CODE, build_parser, main
 from nlp_stock_prediction.contracts import (
     CredentialState,
+    FreshnessStatus,
     ProviderHealth,
     ProviderMetric,
     ProviderRequest,
@@ -36,6 +37,10 @@ def test_ticker_discovery_contract_requires_six_unique_tickers_for_valid_status(
         source_kind=SourceKind.REDDIT_TICKER_CARD,
         retrieval_method=RetrievalMethod.FIXTURE,
         fetched_at=_fetched_at(),
+        source_url="https://reddit.test/r/wallstreetbets",
+        raw_identifier="ticker-card-2026-05-11",
+        raw_snapshot_id="raw-reddit-card-2026-05-11",
+        freshness_status=FreshnessStatus.FRESH,
     )
     tickers = ("TSLA", "NVDA", "AMD", "AAPL", "MU", "SPY")
     candidates = tuple(
@@ -83,6 +88,10 @@ def test_valid_ticker_discovery_requires_candidates_and_raw_snapshot() -> None:
         source_kind=SourceKind.REDDIT_TICKER_CARD,
         retrieval_method=RetrievalMethod.FIXTURE,
         fetched_at=_fetched_at(),
+        source_url="https://reddit.test/r/wallstreetbets",
+        raw_identifier="ticker-card-2026-05-11",
+        raw_snapshot_id="raw-reddit-card-2026-05-11",
+        freshness_status=FreshnessStatus.FRESH,
     )
     candidates = tuple(
         TickerCandidate(

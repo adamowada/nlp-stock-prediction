@@ -5,6 +5,8 @@
 This project should test both deterministic application logic and the live external dependencies that make the report useful. Fixture-based tests provide fast feedback and reproducibility; live API and scraping tests verify that Reddit, X/Twitter, news, market-data, fundamentals, macro, and HTML extraction integrations still work against real services.
 
 Live dependency tests are part of the testing strategy, but they should be explicitly marked because they can require credentials, internet access, paid/free quota, and resilient handling of upstream changes.
+The default test harness blocks network access. Live tests must use the appropriate live marker and
+set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 
 ## Test layers
 
@@ -93,9 +95,14 @@ ruff format --check .
 mypy .
 ```
 
+During Phase 1, the live and e2e marker commands select skipped placeholders so the command surface
+is stable before those lanes implement real coverage.
+
 ## CI expectations
 
 - Pull-request CI should run fast unit, schema, contract, integration, and fixture-backed end-to-end tests.
+- Until fixture-backed end-to-end tests exist, CI may run the e2e marker command against skipped
+  placeholders.
 - Live API and live scraping tests should run manually or on a scheduled workflow with required secrets and quota controls.
 - Scheduled live tests should produce actionable failure messages when an upstream API, auth token, rate limit, or page structure changes.
 - Failures from live dependencies should distinguish app regressions from upstream/provider availability issues.

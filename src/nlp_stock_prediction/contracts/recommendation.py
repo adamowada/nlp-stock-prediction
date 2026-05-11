@@ -51,6 +51,12 @@ class ScoreBreakdown(ContractModel):
     penalties: tuple[ScoreComponent, ...] = Field(default_factory=tuple)
     failed_gates: tuple[str, ...] = Field(default_factory=tuple)
 
+    @model_validator(mode="after")
+    def require_components(self) -> ScoreBreakdown:
+        if not self.components:
+            raise ValueError("score breakdowns must include at least one component")
+        return self
+
 
 class RiskAssessment(ContractModel):
     """Risk and sizing constraints independent of recommendation score."""
@@ -97,6 +103,15 @@ class TradeCandidate(ContractModel):
     def require_evidence_for_actionable_candidates(self) -> TradeCandidate:
         if self.action != RecommendationAction.NO_TRADE and not self.evidence:
             raise ValueError("actionable trade candidates must cite evidence")
+        if self.action == RecommendationAction.QUALIFIED:
+            if not self.risk_plan.passed:
+                raise ValueError("qualified trade candidates must pass risk gates")
+            if self.risk_plan.failed_gates:
+                raise ValueError("qualified trade candidates must not include failed risk gates")
+            if self.score.failed_gates:
+                raise ValueError("qualified trade candidates must not include failed score gates")
+            if self.score.overall_score < self.score.threshold:
+                raise ValueError("qualified trade candidates must meet score threshold")
         return self
 
 

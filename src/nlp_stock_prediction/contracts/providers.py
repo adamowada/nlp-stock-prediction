@@ -9,9 +9,20 @@ from typing import Protocol
 
 from pydantic import Field, model_validator
 
-from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr, TickerSymbol
+from nlp_stock_prediction.contracts.base import (
+    AwareDatetime,
+    ContractModel,
+    JsonObject,
+    NonEmptyStr,
+    TickerSymbol,
+)
 from nlp_stock_prediction.contracts.discovery import TickerDiscoveryResult
-from nlp_stock_prediction.contracts.enums import ProviderStatus, RiskProfile, TimeHorizon
+from nlp_stock_prediction.contracts.enums import (
+    ProviderStatus,
+    RiskProfile,
+    TimeHorizon,
+    WarningCode,
+)
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.extraction import StrategyExtraction
 from nlp_stock_prediction.contracts.provenance import ProviderHealth, ProviderWarning
@@ -20,6 +31,18 @@ from nlp_stock_prediction.contracts.provenance import ProviderHealth, ProviderWa
 class DateWindow(ContractModel):
     start: date | datetime
     end: date | datetime
+
+    @model_validator(mode="after")
+    def validate_order(self) -> DateWindow:
+        if isinstance(self.start, datetime) and isinstance(self.end, datetime):
+            if self.end < self.start:
+                raise ValueError("date window end must be greater than or equal to start")
+            return self
+        start_date = self.start.date() if isinstance(self.start, datetime) else self.start
+        end_date = self.end.date() if isinstance(self.end, datetime) else self.end
+        if end_date < start_date:
+            raise ValueError("date window end must be greater than or equal to start")
+        return self
 
 
 class ProviderRequest(ContractModel):
@@ -44,7 +67,7 @@ class ProviderResult[T](ContractModel):
     provider_name: NonEmptyStr
     status: ProviderStatus
     request: ProviderRequest
-    fetched_at: datetime
+    fetched_at: AwareDatetime
     data: T | None = None
     warnings: tuple[ProviderWarning, ...] = Field(default_factory=tuple)
     health: ProviderHealth
@@ -61,6 +84,15 @@ class ProviderResult[T](ContractModel):
             raise ValueError("ok provider results must include data")
         if self.status != ProviderStatus.OK and not self.warnings:
             raise ValueError("non-ok provider results must include at least one warning")
+        if self.status == ProviderStatus.EMPTY and self.data is not None:
+            raise ValueError("empty provider results must not include data")
+        if self.status == ProviderStatus.EMPTY and all(
+            warning.code != WarningCode.NO_DATA for warning in self.warnings
+        ):
+            raise ValueError("empty provider results must include a no_data warning")
+        for warning in self.warnings:
+            if warning.provider_name is not None and warning.provider_name != self.provider_name:
+                raise ValueError("provider result warnings must match provider_name")
         if (
             self.status
             in {
@@ -119,7 +151,7 @@ class ExtractionRequest(ProviderRequest):
 
 class PriceBar(ContractModel):
     ticker: TickerSymbol
-    timestamp: date | datetime
+    timestamp: date | AwareDatetime
     open: Decimal
     high: Decimal
     low: Decimal
