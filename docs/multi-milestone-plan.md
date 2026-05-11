@@ -12,19 +12,23 @@ The v1 posture is exploratory but auditable. The app may surface speculative sto
 
 - Create a Python package with a CLI entrypoint, typed modules, config loading, logging, and test scaffolding.
 - Add core developer tooling: `pytest`, `ruff`, `mypy`, and deterministic fixtures.
-- Define provider interfaces before implementation: Reddit, X/Twitter news, market data, fundamentals, macro data, LLM extraction, and report writing.
-- Establish initial CLI shape:
+- Define provider interfaces before implementation: Reddit, X/Twitter/social, news, market data, fundamentals, macro data, LLM extraction, and report writing.
+- Establish initial CLI shape using the Python module name `nlp_stock_prediction`:
 
 ```sh
-nlp-stock-report run --date 2026-05-11 --output reports/
-nlp-stock-report run --capital 1000 --risk-profile exploratory
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
+python -m nlp_stock_prediction run --capital 1000 --risk-profile exploratory
 ```
+
+If a console script is added later, it should remain a thin alias for the module command and be documented alongside it.
 
 ## Milestone 2: Reddit WSB ticker discovery
 
 - Fetch the public r/wallstreetbets page or current sticky post.
 - Scope parsing to the Devvit ticker table subtree before extracting ticker symbols.
-- Extract exactly six tickers from `ticker-container-*` identifiers while preserving order and removing duplicates.
+- Extract ticker candidates from `ticker-container-*` identifiers while preserving raw order and identifiers.
+- Normalize to unique tickers by first-seen order; discovery succeeds only when exactly six unique tickers remain.
+- Treat malformed HTML, duplicate-only shortages, or unexpected extra unique ticker candidates as explicit discovery validation warnings/errors rather than silently guessing.
 - Store raw HTML/API snapshots for auditability and fixture regeneration.
 
 ## Milestone 3: Reddit discussion retrieval and filtering
@@ -41,9 +45,10 @@ nlp-stock-report run --capital 1000 --risk-profile exploratory
 - Reject unsupported claims: every extracted strategy must cite one or more normalized evidence records.
 - Cluster near-duplicates by ticker, direction, instrument, time horizon, and catalyst.
 
-## Milestone 5: News, market, fundamental, and macro data
+## Milestone 5: Social, news, market, fundamental, and macro data
 
-- Query X/Twitter recent search for cashtags and ticker terms, prioritizing queries such as `$TSLA lang:en`.
+- Query X/Twitter recent search for cashtags and ticker terms as a social/catalyst signal, prioritizing queries such as `$TSLA lang:en`.
+- Query a configured public news provider for recent company or ticker headlines/articles; if no news provider is configured or available, emit an explicit provider warning instead of treating X/Twitter as news.
 - Pull daily candle data and company overview/fundamental fields from free official providers where available.
 - Use SEC EDGAR APIs as a supplemental source for filings and company facts.
 - Use FRED for macro series such as rates, CPI, unemployment, GDP, and yield-curve indicators.
@@ -58,7 +63,7 @@ nlp-stock-report run --capital 1000 --risk-profile exploratory
 
 ## Milestone 7: Recommendation scoring
 
-- Score each candidate strategy across Reddit strength, X/news catalyst strength, technical alignment, company fundamentals, sector context, macro context, liquidity/risk suitability, and contradiction penalties.
+- Score each candidate strategy across Reddit strength, social/news catalyst strength, technical alignment, company fundamentals, sector context, macro context, liquidity/risk suitability, and contradiction penalties.
 - Use an exploratory default: surface high-upside ideas when evidence is interesting, but clearly mark speculative ideas when fundamentals, macro, or technicals conflict.
 - Emit zero or more confident strategies. A strategy qualifies only if it has a clear thesis, instrument, timeframe, entry logic, invalidation level, max-loss estimate, and enough evidence to exceed the configured confidence threshold.
 - Default risk controls: no margin, no naked options, long shares or defined-risk options only, max 1% account risk per idea when account capital is provided, and percentage-only sizing when capital is omitted.
@@ -69,7 +74,7 @@ nlp-stock-report run --capital 1000 --risk-profile exploratory
 - Markdown structure:
   - Header with date, data freshness, provider warnings, and disclaimer.
   - Six ticker sections.
-  - Each section includes Reddit strategies, X/news summary, technical analysis, company fundamentals, sector fundamentals, macro context, and per-ticker opportunity notes.
+  - Each section includes Reddit strategies, social/news summary, technical analysis, company fundamentals, sector fundamentals, macro context, and per-ticker opportunity notes.
   - Final section lists confident trading strategies or explicitly states that none qualified.
 - JSON structure mirrors the report and preserves raw evidence IDs, confidence scores, provider metadata, and recommendation inputs.
 
@@ -95,7 +100,8 @@ nlp-stock-report run --capital 1000 --risk-profile exploratory
   - `DailyReport`
 - Provider adapters:
   - `RedditProvider`
-  - `XNewsProvider`
+  - `XProvider`
+  - `NewsProvider`
   - `MarketDataProvider`
   - `FundamentalsProvider`
   - `MacroProvider`

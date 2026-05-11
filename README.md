@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-This repository is in early planning and scaffolding. See `AGENTS.md` for project conventions and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+This repository is in early planning; no Python package has been scaffolded yet. See `AGENTS.md` for project conventions and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 
@@ -26,4 +26,7 @@ ruff check .
 ruff format .
 mypy .
 python -m nlp_stock_prediction --help
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
 ```
+
+The canonical CLI invocation is the Python module form, `python -m nlp_stock_prediction`. If a console script is added later, it should remain a thin alias for that module command and the docs should be updated together.

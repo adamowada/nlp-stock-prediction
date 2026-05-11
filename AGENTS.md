@@ -23,6 +23,8 @@ python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
 ```
 
+Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is introduced.
+
 If the final project uses a task runner, keep this section updated with the canonical commands.
 
 ## Coding rules

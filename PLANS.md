@@ -53,10 +53,11 @@ Include relevant files, modules, APIs, constraints, and existing behavior.
 ## Verification commands
 
 ```sh
-pnpm test
-pnpm lint
-pnpm typecheck
-pnpm build
+python -m pytest
+python -m pytest -m "not live_api and not live_scraping"
+ruff check .
+ruff format --check .
+mypy .
 ```
 
 ## Decision log
