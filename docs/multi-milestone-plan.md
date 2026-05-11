@@ -10,7 +10,14 @@ The v1 posture is exploratory but auditable. The app may surface speculative sto
 
 This roadmap is organized for git worktrees and Codex subagents. Contracts are settled single-threaded first; implementation happens second in parallel lanes from the same frozen contract commit.
 
-Current state: this repository is still planning-only. Phase 0 has not started.
+Current state: Phase 0 contract settlement is implemented. Phase 1 contract test harness has not started. Parallel implementation worktrees/subagents remain blocked until Phase 1 contract tests are committed and the full contract gate is complete.
+
+## Phase Status
+
+- **Phase 0:** Complete. Public contracts are implemented under `src/nlp_stock_prediction/contracts/` and documented in `docs/contracts.md`.
+- **Phase 1:** Pending. The comprehensive schema, import, CLI, provider-contract, and report-shape test harness still needs to be built.
+- **Phase 2:** Blocked. Parallel implementation worktrees and lane subagents must not begin until Phase 1 is complete.
+- **Phase 3:** Blocked. Integration and live smoke checks wait for lane implementation.
 
 ## Delivery Strategy
 
@@ -227,7 +234,7 @@ ruff check .
 ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # exits 3 in Phase 0
 ```
 
 ## Acceptance Criteria
