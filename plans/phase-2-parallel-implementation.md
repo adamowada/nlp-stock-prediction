@@ -134,3 +134,6 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 - 2026-05-11-14-52: Merged Lane B into `codex/integration-v1`; post-merge
   `python -m pytest -m "not live_api and not live_scraping"` reported 193 passed, 1 expected skip,
   and 2 deselected; `ruff check .` passed.
+- 2026-05-11-14-53: Merged Lane C into `codex/integration-v1`; post-merge
+  `python -m pytest -m "not live_api and not live_scraping"` reported 202 passed, 1 expected skip,
+  and 3 deselected; `ruff check .` passed.
