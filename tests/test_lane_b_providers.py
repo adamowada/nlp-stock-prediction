@@ -341,6 +341,58 @@ def test_fred_macro_provider_maps_series_and_emits_stale_warning() -> None:
 
 
 @pytest.mark.contract
+def test_fred_macro_provider_converts_mapping_failures_to_partial_warning() -> None:
+    transport = _FakeJsonTransport(
+        {
+            "series_id=FEDFUNDS": JsonResponse(payload=_fixture("fred", "fedfunds_stale.json")),
+            "series_id=UNRATE": JsonResponse(payload={"observations": {"not": "a list"}}),
+        }
+    )
+    provider = FredMacroProvider(
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+        stale_after_days=365,
+    )
+    request = MacroRequest(
+        request_id="fred-partial-malformed-2026-05-11",
+        run_date=RUN_DATE,
+        series_ids=("FEDFUNDS", "UNRATE"),
+    )
+
+    result = provider.fetch_macro(request)
+
+    assert result.status == ProviderStatus.PARTIAL
+    assert result.data is not None
+    assert [series.series_id for series in result.data.series] == ["FEDFUNDS"]
+    assert len(result.warnings) == 1
+    assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
+    assert result.warnings[0].metadata["series_id"] == "UNRATE"
+
+
+@pytest.mark.contract
+def test_fred_macro_provider_returns_warning_result_when_all_mapping_fails() -> None:
+    transport = _FakeJsonTransport({"series_id=UNRATE": JsonResponse(payload={"observations": []})})
+    provider = FredMacroProvider(
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = MacroRequest(
+        request_id="fred-malformed-2026-05-11",
+        run_date=RUN_DATE,
+        series_ids=("UNRATE",),
+    )
+
+    result = provider.fetch_macro(request)
+
+    assert result.status == ProviderStatus.FAILED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
+    assert result.warnings[0].metadata["series_id"] == "UNRATE"
+
+
+@pytest.mark.contract
 def test_fred_macro_provider_returns_missing_credentials_warning() -> None:
     provider = FredMacroProvider(transport=_FakeJsonTransport({}), now=lambda: FETCHED_AT)
     request = MacroRequest(

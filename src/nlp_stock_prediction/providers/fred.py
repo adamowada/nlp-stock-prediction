@@ -112,7 +112,11 @@ class FredMacroProvider:
                 continue
             raw_snapshot_ids.append(result.raw_snapshot_id)
             cache_keys.append(result.cache_key)
-            mapped_series, stale_warning = self._map_series(series_id, result, request.run_date)
+            try:
+                mapped_series, stale_warning = self._map_series(series_id, result, request.run_date)
+            except MalformedProviderResponse as exc:
+                warnings.append(self._mapping_warning(series_id, result, exc, fetched_at))
+                continue
             series.append(mapped_series)
             if stale_warning is not None:
                 warnings.append(stale_warning)
@@ -235,6 +239,28 @@ class FredMacroProvider:
                 cache_key=cache_key,
             )
             return malformed_envelope.warnings[0]
+
+    def _mapping_warning(
+        self,
+        series_id: str,
+        fetched: JsonFetch,
+        error: MalformedProviderResponse,
+        fetched_at: datetime,
+    ) -> ProviderWarning:
+        normalized_series_id = series_id.upper()
+        return provider_warning(
+            provider_name=self.provider_name,
+            code=WarningCode.MALFORMED_RESPONSE,
+            severity=WarningSeverity.ERROR,
+            message=f"FRED series {normalized_series_id} could not be mapped: {error}",
+            occurred_at=fetched_at,
+            provider_error_type="malformed_response",
+            raw_snapshot_id=fetched.raw_snapshot_id,
+            metadata={
+                "series_id": normalized_series_id,
+                "cache_key": fetched.cache_key,
+            },
+        )
 
     def _map_series(
         self,
