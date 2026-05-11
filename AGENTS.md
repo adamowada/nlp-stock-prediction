@@ -17,10 +17,10 @@ Use the repository's configured commands once the project scaffold exists. Expec
 ```sh
 python -m pytest
 ruff check .
-ruff format .
+ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 ```
 
 Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is introduced.

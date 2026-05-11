@@ -28,8 +28,8 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
 
     if not config.offline:
         raise ValueError(
-            "Phase 2 report generation is fixture-backed only; pass --offline to make that "
-            "constraint explicit."
+            "Live-provider report orchestration is not enabled yet; pass --offline to generate "
+            "the deterministic fixture-backed report bundle."
         )
 
     fixture_bundle = build_offline_fixture_bundle(config)

@@ -1,4 +1,4 @@
-"""Contracts-only CLI surface for the contract gate."""
+"""CLI surface for daily report generation."""
 
 from __future__ import annotations
 

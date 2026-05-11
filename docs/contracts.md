@@ -1,8 +1,10 @@
 # Frozen Contract Gate
 
 Phase 0 settled the public contract surface and Phase 1 added the deterministic test harness for
-later worktree lanes. Concrete providers, analysis formulas, report rendering, and live integrations
-are intentionally out of scope until later phases.
+later worktree lanes. Phase 2 integrated concrete providers, analysis helpers, scoring, report
+rendering, audit writing, reliability helpers, and opt-in live smoke scaffolding against those
+contracts. Phase 3 owns hardening the integrated CLI and live smoke surface without weakening the
+frozen contract invariants.
 
 ## Python Package And CLI
 
@@ -10,8 +12,8 @@ are intentionally out of scope until later phases.
 - Canonical invocation: `python -m nlp_stock_prediction`.
 - `run` accepts `--date`, `--output`, `--capital`, `--risk-profile`, `--fixture-dir`,
   `--cache-dir`, and `--offline`.
-- During the contract-gate phase, `run` validates the command shape and exits with code `3` because
-  report generation is not implemented yet.
+- With `--offline`, `run` writes a deterministic fixture-backed report bundle. Without `--offline`,
+  it currently exits with code `3` because live-provider report orchestration is not enabled yet.
 - No console script is frozen in the contract gate.
 
 ## Contract Modules
@@ -132,6 +134,6 @@ Core scenario names to use first:
 
 ## Phase Boundary
 
-Phase 0 and Phase 1 are complete on this branch. Phase 2 parallel implementation lanes should start
-from the Phase 1 contract-gate commit and treat the shared contracts as frozen unless a
-single-threaded contract revision is recorded.
+Phase 0 and Phase 1 are complete, and Phase 2 implementation lanes have been integrated. Phase 3 is
+active on `feature/integration-and-hardening` and should treat shared public contracts as frozen
+unless a single-threaded contract revision is recorded in the active Phase 3 plan.

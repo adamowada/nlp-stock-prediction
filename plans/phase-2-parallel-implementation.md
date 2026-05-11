@@ -6,6 +6,8 @@ Implement the Phase 2 application lanes from the frozen `phase-1-contract-gate` 
 through `codex/integration-v1` into a fixture-backed CLI that can generate evidence-grounded Markdown,
 JSON, and audit reports.
 
+Status: complete. This plan is retained as the historical Phase 2 source of truth.
+
 ## Non-goals
 
 - Do not change frozen public contracts unless a blocker is escalated and recorded first.
@@ -53,23 +55,23 @@ JSON, and audit reports.
 
 ### Milestone 4: Fixture-Backed Report Generation
 
-- Changes: Verify `python -m nlp_stock_prediction run --date 2026-05-11 --output reports/` writes
-  Markdown, JSON, and audit artifacts from deterministic fixtures/offline providers.
+- Changes: Verify `python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline`
+  writes Markdown, JSON, and audit artifacts from deterministic fixtures/offline providers.
 - Files likely affected: CLI orchestration, report rendering, fixtures, e2e tests.
 - Verification: `python -m pytest -m e2e` and direct CLI smoke run.
 
 ## Acceptance criteria
 
-- [ ] Six lane worktrees and branches are created from `phase-1-contract-gate`.
-- [ ] Each lane has tests covering its implemented behavior.
-- [ ] Shared contracts are not modified without an explicit decision log entry.
-- [ ] Lane handoffs list changed files, tests, verification, known gaps, and contract issues.
-- [ ] Reviews are completed before integration merges.
-- [ ] Lanes are merged into `codex/integration-v1` in dependency order.
-- [ ] Default deterministic tests pass on the integration branch.
-- [ ] `ruff check .`, `ruff format --check .`, and `mypy .` pass on the integration branch.
-- [ ] Fixture-backed report generation produces Markdown, JSON, and audit artifacts.
-- [ ] Documentation is updated for behavior, configuration, commands, or report structure changes.
+- [x] Six lane worktrees and branches are created from `phase-1-contract-gate`.
+- [x] Each lane has tests covering its implemented behavior.
+- [x] Shared contracts are not modified without an explicit decision log entry.
+- [x] Lane handoffs list changed files, tests, verification, known gaps, and contract issues.
+- [x] Reviews are completed before integration merges.
+- [x] Lanes are merged into `codex/integration-v1` in dependency order.
+- [x] Default deterministic tests pass on the integration branch.
+- [x] `ruff check .`, `ruff format --check .`, and `mypy .` pass on the integration branch.
+- [x] Fixture-backed report generation produces Markdown, JSON, and audit artifacts.
+- [x] Documentation is updated for behavior, configuration, commands, or report structure changes.
 
 ## Verification commands
 

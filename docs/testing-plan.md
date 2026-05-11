@@ -82,7 +82,7 @@ python -m pytest -m live_scraping
 
 ## Expected commands
 
-Initial command targets can be refined once the package is scaffolded:
+Canonical command targets:
 
 ```sh
 python -m pytest
@@ -95,14 +95,13 @@ ruff format --check .
 mypy .
 ```
 
-During Phase 1, the live and e2e marker commands select skipped placeholders so the command surface
-is stable before those lanes implement real coverage.
+Fixture-backed e2e coverage now exercises offline CLI report generation. Live API, live scraping,
+and live LLM checks remain opt-in and may skip when the required environment variables or
+credentials are absent.
 
 ## CI expectations
 
 - Pull-request CI should run fast unit, schema, contract, integration, and fixture-backed end-to-end tests.
-- Until fixture-backed end-to-end tests exist, CI may run the e2e marker command against skipped
-  placeholders.
 - Live API and live scraping tests should run manually or on a scheduled workflow with required secrets and quota controls.
 - Scheduled live tests should produce actionable failure messages when an upstream API, auth token, rate limit, or page structure changes.
 - Failures from live dependencies should distinguish app regressions from upstream/provider availability issues.

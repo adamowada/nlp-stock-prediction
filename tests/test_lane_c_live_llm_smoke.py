@@ -26,7 +26,7 @@ def test_live_llm_smoke_scaffold_requires_explicit_opt_in() -> None:
         pytest.skip("Set NLP_STOCK_PREDICTION_LIVE_LLM_SMOKE=1 to run live LLM smoke checks.")
 
     pytest.fail(
-        "Live LLM adapter wiring is intentionally not implemented in Lane C yet; "
+        "Live LLM adapter wiring is intentionally not enabled for the V1 CLI yet; "
         "this scaffold documents the opt-in marker and fixture validation shape."
     )
 

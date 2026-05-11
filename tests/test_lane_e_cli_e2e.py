@@ -122,7 +122,7 @@ def test_cli_offline_run_writes_report_bundle(tmp_path: Path) -> None:
 
 
 @pytest.mark.e2e
-def test_cli_run_requires_offline_for_fixture_backed_phase2(tmp_path: Path) -> None:
+def test_cli_run_requires_offline_until_live_orchestration_is_enabled(tmp_path: Path) -> None:
     output_dir = tmp_path / "reports"
 
     result = subprocess.run(
@@ -144,6 +144,6 @@ def test_cli_run_requires_offline_for_fixture_backed_phase2(tmp_path: Path) -> N
     )
 
     assert result.returncode == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
-    assert "fixture-backed only" in result.stderr
+    assert "Live-provider report orchestration is not enabled yet" in result.stderr
     assert result.stdout == ""
     assert not output_dir.exists()

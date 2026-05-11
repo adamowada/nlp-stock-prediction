@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-Phase 1 contract test harness is implemented. The project now has frozen public contracts plus deterministic schema, import, CLI, provider, fixture, and report-shape tests. In the Lane E Phase 2 worktree, the CLI can generate a deterministic offline report bundle with Markdown, JSON, and audit artifacts while provider/extraction/scoring lanes are integrated separately. See `AGENTS.md` for project conventions, `docs/contracts.md` for the frozen contract gate, `docs/worktree-runbook.md` for the parallel worktree procedure, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 2 implementation is integrated. The current CLI can generate a deterministic offline report bundle with Markdown, JSON, and audit artifacts, and the provider, extraction, analysis, scoring, reporting, reliability, and compliance lanes are present in the main application surface. Phase 3 is now focused on integration hardening, live smoke readiness, CLI/configuration polish, and final V1 acceptance. See `plans/phase-3-integration-live-smoke.md` for the active Phase 3 plan, `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 
@@ -18,13 +18,13 @@ Phase 1 contract test harness is implemented. The project now has frozen public 
 
 ## Development
 
-Expected commands once the Python package is scaffolded:
+Canonical local commands:
 
 ```sh
 python -m pytest
 python -m pytest -m "not live_api and not live_scraping"
 ruff check .
-ruff format .
+ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
@@ -32,4 +32,4 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 
 The canonical CLI invocation is the Python module form, `python -m nlp_stock_prediction`. If a console script is added later, it should remain a thin alias for that module command and the docs should be updated together.
 
-The Lane E offline run writes `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/` using deterministic fixture data. The default test harness blocks network access; live tests require explicit opt-in.
+The offline run writes `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/` using deterministic fixture data. Non-offline report orchestration is intentionally blocked until Phase 3 hardens live provider configuration. The default test harness blocks network access; live tests require explicit opt-in environment variables and, for provider-specific checks, credentials or configured URLs.
