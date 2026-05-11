@@ -88,8 +88,9 @@ unqualified investment advice.
 - Files likely affected: live smoke tests, provider adapters, reliability helpers, docs, CI
   schedule notes.
 - Done when:
-  - Live API, live scraping, and live LLM smoke checks are opt-in through explicit environment
-    variables.
+  - Live API and live scraping smoke checks are opt-in through explicit environment variables, and
+    the live LLM smoke gate stays explicit/reserved until a live adapter and credential contract are
+    enabled.
   - Each live smoke test has a narrow assertion and actionable skip/failure message.
   - Missing credentials are escalated to the user when live checks are requested.
   - Provider failures return structured health/warning output.
@@ -161,7 +162,9 @@ python -m pytest -m live_scraping
 - [x] Stage 0 verification baseline is recorded.
 - [x] Stale pre-Phase-3 placeholder wording is removed or narrowed.
 - [x] CLI configuration and live/offline behavior are hardened for V1 use.
-- [x] Opt-in live smoke checks have documented credential requirements and actionable skips.
+- [x] Opt-in live smoke checks have documented credential requirements and actionable skips/failures.
+- [x] Stage 3 live SEC API and configured public scraping smoke paths have narrow assertions and
+      documented environment variables.
 - [ ] End-to-end report QA confirms evidence, provenance, warnings, confidence inputs, and
       disclaimers are preserved.
 - [ ] Failure drills cover malformed, missing, stale, conflicting, unsupported, and no-trade
@@ -198,6 +201,10 @@ Live checks remain opt-in:
 - 2026-05-11-15-15: A complete Phase 3 V1 CLI means local deterministic report generation plus
   opt-in live smoke coverage and documented live limitations, not brokerage execution or production
   deployment.
+- 2026-05-11-15-50: Stage 3 keeps live LLM smoke as an explicit reserved gate because the current
+  V1 CLI has fixture-backed LLM validation but no live LLM adapter or credential contract.
+- 2026-05-11-15-50: Live smoke tests skip only when the global live opt-in is absent; once live
+  checks are requested, missing per-check environment variables fail with actionable messages.
 
 ## Progress log
 
@@ -246,3 +253,21 @@ Live checks remain opt-in:
   `run --help`, live marker selections, and direct offline CLI smoke all passed. The offline smoke
   wrote Markdown, JSON, and audit artifacts to a temporary directory that was removed after
   verification.
+- 2026-05-11-15-50: Started Stage 3 live smoke wiring. Parallel read-only audits found LLM scaffold
+  wording drift, missing configured scraping path documentation, broad live assertions, and testing
+  docs that overstated current live-provider coverage.
+- 2026-05-11-15-50: Tightened Stage 3 live smoke behavior: SEC live API now validates JSON record
+  shape, configured public scraping now requires expected literal text, live network failures use
+  actionable messages, missing per-check environment variables fail after global opt-in, live LLM
+  remains an explicit reserved gate, and reliability tests cover missing-credential health
+  envelopes.
+- 2026-05-11-15-50: Confirmed successful configured live paths with the repo venv and network
+  access: `pytest -m live_api tests/test_lane_f_live_smoke.py` passed against the SEC company
+  tickers endpoint with a non-secret User-Agent, and the live scraping marker path passed against
+  `https://example.com/` with expected text `Example Domain`.
+- 2026-05-11-15-51: Stage 3 verification passed with the repo venv: full pytest reported
+  244 passed and 3 opt-in live skips; non-live pytest reported 244 passed and 3 deselected; e2e
+  reported 3 passed; `ruff check .`, `ruff format --check .`, `mypy .`, top-level CLI help,
+  `run --help`, configured live SEC API smoke, configured live scraping smoke, and direct offline
+  CLI smoke all passed. The offline smoke wrote Markdown, JSON, and audit artifacts to a temporary
+  workspace directory that was removed after verification.

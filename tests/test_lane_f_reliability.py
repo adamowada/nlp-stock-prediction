@@ -13,6 +13,7 @@ from nlp_stock_prediction.contracts import (
     WarningSeverity,
 )
 from nlp_stock_prediction.reliability import (
+    ProviderConfigurationError,
     ProviderRateLimitError,
     ProviderTimeoutError,
     ProviderUpstreamError,
@@ -154,6 +155,24 @@ def test_result_from_exception_creates_contract_compliant_failure_envelope() -> 
     assert result.warnings[0].code == WarningCode.UPSTREAM_UNAVAILABLE
     assert result.health.status == result.status
     assert result.health.warnings == result.warnings
+
+
+def test_result_from_configuration_exception_creates_missing_credentials_envelope() -> None:
+    exception = ProviderConfigurationError("fixture API key is not configured")
+
+    result = result_from_exception(
+        provider_name="fixture-provider",
+        request=REQUEST,
+        exception=exception,
+        occurred_at=FETCHED_AT,
+    )
+
+    assert result.status == ProviderStatus.UNCONFIGURED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.MISSING_CREDENTIALS
+    assert result.health.status == result.status
+    assert result.health.credential_state == CredentialState.MISSING
+    assert "credentials: missing" in format_provider_health_message(result.health)
 
 
 def test_retry_policy_validates_attempt_and_delay_values() -> None:

@@ -14,8 +14,8 @@ This writes:
 - `reports/YYYY-MM-DD/report.json`
 - `reports/YYYY-MM-DD/audit/`
 
-`--offline` is required for report generation during Phase 3 Stage 2. If it is omitted, the CLI
-exits with code `3` and explains that live-provider report orchestration is not enabled yet.
+`--offline` is required for report generation in the current Phase 3 CLI. If it is omitted, the
+CLI exits with code `3` and explains that live-provider report orchestration is not enabled yet.
 
 ## CLI Options
 
@@ -40,6 +40,7 @@ access. Live smoke checks are explicit opt-in:
 | `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS` | Enables live API/scraping tests when set to `1`. | Running `pytest -m live_api` or `pytest -m live_scraping` against real services. |
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | Identifies SEC live API smoke requests. | Running the SEC live API smoke test. |
 | `NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL` | Narrow URL for the public scraping smoke test. | Running the live scraping smoke test. |
+| `NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT` | Literal text expected in the configured scraping smoke response. | Running the live scraping smoke test. |
 | `NLP_STOCK_PREDICTION_LIVE_LLM_SMOKE` | Reserved for future live LLM smoke wiring. | Leave unset or `0` until live LLM adapter wiring is enabled. |
 
 Provider adapters already return structured `missing_credentials` warnings when keys are absent.
@@ -61,13 +62,32 @@ commit.
 The app does not automatically load `.env` files yet. For now, either set environment variables in
 your shell or load a local `.env` with your own shell tooling before running live smoke checks.
 
+## Configured Live Smoke Paths
+
+The current checked live API path is the SEC company tickers JSON endpoint. It does not require an
+API key, but SEC requests must include a contact-oriented User-Agent.
+
 PowerShell example:
 
 ```powershell
 $env:NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS = "1"
 $env:NLP_STOCK_PREDICTION_LIVE_USER_AGENT = "your-name your-email@example.com"
-python -m pytest -m live_api
+python -m pytest -m live_api tests/test_lane_f_live_smoke.py
 ```
+
+The current checked live scraping path is deliberately configurable so it can point at a narrow
+public page the project is allowed to fetch. A known-good low-risk smoke configuration is:
+
+```powershell
+$env:NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS = "1"
+$env:NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL = "https://example.com/"
+$env:NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT = "Example Domain"
+python -m pytest -m live_scraping tests/test_lane_f_live_smoke.py
+```
+
+Live LLM smoke remains a reserved gate in Stage 3. The V1 CLI currently validates LLM extraction
+through deterministic fixture-backed schema tests; no live LLM adapter or credential contract is
+enabled yet.
 
 ## Missing Credentials
 
@@ -79,5 +99,7 @@ adapters should return `ProviderResult` envelopes with:
 - `credential_state=missing`
 - `data=None`
 
-Live tests that need external configuration skip with actionable messages when their required
-environment variables are absent.
+Live tests skip cleanly when `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS` is not set. Once live tests are
+explicitly requested with that opt-in flag, missing per-test configuration fails with an actionable
+message naming the required environment variable. Network, quota, HTTP, and upstream availability
+failures also fail with provider-specific context instead of raw socket tracebacks.
