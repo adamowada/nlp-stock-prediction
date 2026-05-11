@@ -1,0 +1,21 @@
+{
+  "Symbol": "TSLA",
+  "AssetType": "Common Stock",
+  "Name": "Tesla, Inc.",
+  "Description": "Fixture company overview.",
+  "CIK": "1318605",
+  "Exchange": "NASDAQ",
+  "Currency": "USD",
+  "Country": "USA",
+  "Sector": "Consumer Cyclical",
+  "Industry": "Auto Manufacturers",
+  "MarketCapitalization": "575000000000",
+  "PERatio": "48.5",
+  "ForwardPE": "42.1",
+  "EPS": "3.75",
+  "RevenueTTM": "97000000000",
+  "ProfitMargin": "0.141",
+  "QuarterlyRevenueGrowthYOY": "0.084",
+  "QuarterlyEarningsGrowthYOY": "0.037",
+  "LatestQuarter": "2026-03-31"
+}
