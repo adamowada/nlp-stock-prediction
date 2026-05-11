@@ -10,10 +10,14 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, StringConstr
 
 
 def _normalize_ticker(value: object) -> str:
+    if value is None:
+        raise ValueError("ticker symbol cannot be null")
     return str(value).strip().upper()
 
 
 def _normalize_non_empty(value: object) -> str:
+    if value is None:
+        raise ValueError("value cannot be null")
     return str(value).strip()
 
 

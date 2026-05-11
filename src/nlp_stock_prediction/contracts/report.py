@@ -36,6 +36,16 @@ class Disclaimer(ContractModel):
     no_auto_trading: bool = True
     applies_to: tuple[str, ...] = ("report", "trade_candidates")
 
+    @model_validator(mode="after")
+    def validate_v1_guardrails(self) -> Disclaimer:
+        if not self.educational_only:
+            raise ValueError("v1 disclaimers must be educational_only")
+        if not self.not_financial_advice:
+            raise ValueError("v1 disclaimers must be not_financial_advice")
+        if not self.no_auto_trading:
+            raise ValueError("v1 disclaimers must prohibit auto-trading")
+        return self
+
 
 class DataFreshnessSummary(ContractModel):
     """Freshness summary shown in report headers and JSON."""

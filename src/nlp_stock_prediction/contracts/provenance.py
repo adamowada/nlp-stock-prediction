@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr
 from nlp_stock_prediction.contracts.enums import (
@@ -81,6 +81,16 @@ class EvidenceReference(ContractModel):
     start_char: int | None = Field(default=None, ge=0)
     end_char: int | None = Field(default=None, ge=0)
     relevance: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_span_order(self) -> EvidenceReference:
+        if (
+            self.start_char is not None
+            and self.end_char is not None
+            and self.end_char < self.start_char
+        ):
+            raise ValueError("end_char must be greater than or equal to start_char")
+        return self
 
 
 class DataReference(ContractModel):

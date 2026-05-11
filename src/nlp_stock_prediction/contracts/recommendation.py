@@ -51,6 +51,12 @@ class ScoreBreakdown(ContractModel):
     penalties: tuple[ScoreComponent, ...] = Field(default_factory=tuple)
     failed_gates: tuple[str, ...] = Field(default_factory=tuple)
 
+    @model_validator(mode="after")
+    def require_components(self) -> ScoreBreakdown:
+        if not self.components:
+            raise ValueError("score breakdowns must include at least one component")
+        return self
+
 
 class RiskAssessment(ContractModel):
     """Risk and sizing constraints independent of recommendation score."""
