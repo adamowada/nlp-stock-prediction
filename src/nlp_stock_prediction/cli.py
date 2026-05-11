@@ -12,6 +12,7 @@ from pathlib import Path
 
 from nlp_stock_prediction.contracts.enums import RiskProfile
 from nlp_stock_prediction.contracts.providers import RunConfig
+from nlp_stock_prediction.pipeline import generate_daily_report
 
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 PHASE_0_NOT_IMPLEMENTED_EXIT_CODE = CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
@@ -87,13 +88,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.command == "run":
-        build_run_config(args)
-        print(
-            "The run command contract is available, but report generation starts after "
-            "the Phase 1 contract gate.",
-            file=sys.stderr,
-        )
-        return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
+        try:
+            bundle = generate_daily_report(build_run_config(args))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
+        print(f"Wrote Markdown report: {bundle.markdown_path}")
+        print(f"Wrote JSON report: {bundle.json_path}")
+        print(f"Wrote audit artifacts: {bundle.audit_dir}")
+        return 0
     parser.error(f"unknown command: {args.command}")
 
 

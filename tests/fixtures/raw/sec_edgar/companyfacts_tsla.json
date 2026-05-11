@@ -1,0 +1,34 @@
+{
+  "cik": 1318605,
+  "entityName": "Tesla, Inc.",
+  "facts": {
+    "us-gaap": {
+      "Revenues": {
+        "label": "Revenues",
+        "description": "Revenue from contracts with customers.",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 96773000000,
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "accn": "0001628280-26-001111"
+            },
+            {
+              "end": "2026-03-31",
+              "val": 21301000000,
+              "fy": 2026,
+              "fp": "Q1",
+              "form": "10-Q",
+              "filed": "2026-04-23",
+              "accn": "0001628280-26-012345"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "cik": "0001318605",
+  "name": "Tesla, Inc.",
+  "filings": {
+    "recent": {
+      "accessionNumber": [
+        "0001628280-26-012345"
+      ],
+      "filingDate": [
+        "2026-04-23"
+      ],
+      "reportDate": [
+        "2026-03-31"
+      ],
+      "form": [
+        "10-Q"
+      ],
+      "primaryDocument": [
+        "tsla-20260331.htm"
+      ]
+    }
+  }
+}

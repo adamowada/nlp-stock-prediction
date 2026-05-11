@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from nlp_stock_prediction.cli import PHASE_0_NOT_IMPLEMENTED_EXIT_CODE, build_parser, main
+from nlp_stock_prediction.cli import build_parser, main
 from nlp_stock_prediction.contracts import (
     CredentialState,
     FreshnessStatus,
@@ -213,7 +214,10 @@ def test_json_contracts_reject_non_serializable_metadata() -> None:
 
 
 @pytest.mark.unit
-def test_cli_run_contract_parses_canonical_options_without_generating_report() -> None:
+def test_cli_run_contract_parses_canonical_options_and_generates_report(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output_dir = tmp_path / "reports"
     parser = build_parser()
     args = parser.parse_args(
         [
@@ -221,26 +225,32 @@ def test_cli_run_contract_parses_canonical_options_without_generating_report() -
             "--date",
             "2026-05-11",
             "--output",
-            "reports/",
+            str(output_dir),
             "--capital",
             "1000",
             "--risk-profile",
             "exploratory",
+            "--offline",
         ]
     )
 
     assert args.run_date == date(2026, 5, 11)
-    assert (
-        main(
-            [
-                "run",
-                "--date",
-                "2026-05-11",
-                "--output",
-                "reports/",
-                "--capital",
-                "1000",
-            ]
-        )
-        == PHASE_0_NOT_IMPLEMENTED_EXIT_CODE
+    exit_code = main(
+        [
+            "run",
+            "--date",
+            "2026-05-11",
+            "--output",
+            str(output_dir),
+            "--capital",
+            "1000",
+            "--offline",
+        ]
     )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "report.md" in captured.out
+    assert captured.err == ""
+    assert (output_dir / "2026-05-11" / "report.md").exists()
+    assert (output_dir / "2026-05-11" / "report.json").exists()
