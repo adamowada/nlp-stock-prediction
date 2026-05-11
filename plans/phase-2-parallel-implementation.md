@@ -124,8 +124,8 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   test before integration.
 - 2026-05-11-14-46: Lane E handoff received on `codex/lane-e-report-cli` at commit `1cc1907`.
   Coordinator review found no contract drift or ownership issue. Independent checks passed:
-  focused CLI/report tests reported 28 passed; e2e selection reported 2 passed and 1 expected
-  legacy placeholder skip; `ruff check .`, `ruff format --check .`, and `mypy .` passed. Lane E is
+  focused CLI/report tests reported 28 passed; at that time, e2e selection reported 2 passed and 1
+  expected historical skip; `ruff check .`, `ruff format --check .`, and `mypy .` passed. Lane E is
   ready to merge after Lane D.
 - 2026-05-11-14-48: Merged Lane A into `codex/integration-v1`; post-merge
   `python -m pytest -m "not live_api and not live_scraping"` reported 180 passed, 1 expected skip,
@@ -149,8 +149,9 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 - 2026-05-11-15-00: Final integration verification passed: `python -m pytest` reported
   230 passed and 6 expected skips; `python -m pytest -m "not live_api and not live_scraping"`
   reported 230 passed, 1 expected skip, and 5 deselected; `python -m pytest -m e2e` reported
-  2 passed, 1 expected legacy placeholder skip, and 233 deselected; `python -m pytest -m live_api`
-  and `python -m pytest -m live_scraping` selected only opt-in skipped smoke placeholders.
+  2 passed, 1 expected historical skip, and 233 deselected; at that time,
+  `python -m pytest -m live_api` and `python -m pytest -m live_scraping` selected only opt-in
+  skipped live-smoke scaffold tests.
   `ruff check .`, `ruff format --check .`, `mypy .`, and `python -m nlp_stock_prediction --help`
   passed. Direct offline CLI smoke wrote `report.md`, `report.json`, and audit artifacts, then the
   temporary output directory was removed.

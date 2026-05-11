@@ -1,5 +1,9 @@
 # Lane E Report CLI
 
+Status: complete. This is a historical Phase 2 lane plan; the integrated application now supports
+deterministic offline report generation through `run --offline`, and Phase 3 owns live-provider
+hardening.
+
 ## Goal
 
 Implement the Phase 2 Lane E surface so `python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline` produces a deterministic daily report bundle with `report.md`, `report.json`, and audit artifacts while preserving the frozen report contracts.
@@ -13,7 +17,7 @@ Implement the Phase 2 Lane E surface so `python -m nlp_stock_prediction run --da
 
 ## Context
 
-Lane E owns CLI command wiring, Markdown and JSON rendering, audit artifact writing, and fixture-backed end-to-end report generation. The Phase 1 branch starts from tag `phase-1-contract-gate` and currently exits with code `3` for `run`. The reporting implementation must build against frozen contracts and deterministic offline data because other Phase 2 lane implementations are not visible in this worktree.
+Lane E owned CLI command wiring, Markdown and JSON rendering, audit artifact writing, and fixture-backed end-to-end report generation. It started from tag `phase-1-contract-gate` in its own Phase 2 worktree, before the other Phase 2 lane implementations were integrated.
 
 Relevant files:
 

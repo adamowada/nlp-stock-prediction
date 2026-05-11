@@ -1,5 +1,7 @@
 # Phase 2 Lane D Analysis Scoring
 
+Status: complete. This is a historical Phase 2 lane plan.
+
 ## Goal
 
 Implement deterministic technical analysis, fundamental/sector/macro context synthesis, retail risk
@@ -78,7 +80,7 @@ mypy .
 ## Progress log
 
 - 2026-05-11-14-19: Read AGENTS, roadmap, testing plan, frozen contracts, worktree runbook, and
-  contract modules. Next step is to add lane D tests before implementation.
+  contract modules; the next step at that point was to add lane D tests before implementation.
 - 2026-05-11-14-30: Added deterministic lane D analysis and scoring tests, implemented analysis,
   risk, and scoring modules without contract edits, and verified the requested default suites with
   the shared Phase 2 virtual environment.

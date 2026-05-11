@@ -212,3 +212,20 @@ Live checks remain opt-in:
   reported 3 passed; `ruff check .`, `ruff format --check .`, `mypy .`, CLI help, live marker
   selections, and offline CLI smoke all passed. The offline smoke wrote Markdown, JSON, and audit
   artifacts to a temporary directory that was removed after verification.
+- 2026-05-11-15-26: Started Stage 1 deterministic integration baseline. Read-only audits found that
+  the pipeline-level report test covered most artifact requirements, while the subprocess CLI smoke
+  needed stronger report-contract and audit-manifest assertions. Also found a few historical
+  phase/lane plans whose old "next step" wording could be mistaken for current status.
+- 2026-05-11-15-26: Strengthened `tests/test_lane_e_cli_e2e.py` so deterministic e2e coverage checks
+  exact audit file coverage, validates `report.json` and `audit-manifest.json`, verifies manifest
+  artifact IDs/types/paths/record counts/checksums, confirms final report references, checks core
+  raw/evidence/extraction/analysis/scoring payload semantics, and applies report/audit validation
+  to the actual subprocess CLI run.
+- 2026-05-11-15-26: Completed Stage 1 doc drift cleanup by marking older Phase 0, Phase 1, Lane E,
+  and Lane D plans as historical where their original "next step" wording could conflict with the
+  current Phase 3 source of truth. No `.env` or API key blocker was encountered for Stage 1.
+- 2026-05-11-15-26: Stage 1 verification passed with the repo venv: full pytest reported
+  235 passed and 3 opt-in live skips; non-live pytest reported 235 passed and 3 deselected; e2e
+  reported 3 passed; `ruff check .`, `ruff format --check .`, `mypy .`, CLI help, live marker
+  selections, and direct offline CLI smoke all passed. The offline smoke wrote Markdown, JSON, and
+  audit artifacts to a temporary directory that was removed after verification.
