@@ -1,4 +1,4 @@
-"""Contracts-only CLI surface for Phase 0."""
+"""Contracts-only CLI surface for the contract gate."""
 
 from __future__ import annotations
 
@@ -12,7 +12,8 @@ from pathlib import Path
 from nlp_stock_prediction.contracts.enums import RiskProfile
 from nlp_stock_prediction.contracts.providers import RunConfig
 
-PHASE_0_NOT_IMPLEMENTED_EXIT_CODE = 3
+CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
+PHASE_0_NOT_IMPLEMENTED_EXIT_CODE = CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
 
 
 def _parse_date(value: str) -> date:
@@ -84,11 +85,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         build_run_config(args)
         print(
             "The run command contract is available, but report generation starts after "
-            "Phase 0 contract settlement.",
+            "the Phase 1 contract gate.",
             file=sys.stderr,
         )
-        return PHASE_0_NOT_IMPLEMENTED_EXIT_CODE
+        return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
     parser.error(f"unknown command: {args.command}")
 
 
-__all__ = ["PHASE_0_NOT_IMPLEMENTED_EXIT_CODE", "build_parser", "build_run_config", "main"]
+__all__ = [
+    "CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE",
+    "PHASE_0_NOT_IMPLEMENTED_EXIT_CODE",
+    "build_parser",
+    "build_run_config",
+    "main",
+]

@@ -1,7 +1,8 @@
 # Git Worktree Runbook
 
 Use this runbook after Phase 1 contract tests are committed and the full contract gate is complete.
-Phase 0 alone does not unblock parallel implementation lanes.
+Phase 1 is now complete on this branch; Phase 2 implementation lanes should start from the
+contract-gate commit.
 
 ## Frozen Contract Ref
 
@@ -9,8 +10,8 @@ Phase 0 alone does not unblock parallel implementation lanes.
 2. Tag it:
 
 ```sh
-git tag phase-0-contracts <contract-commit-sha>
-git push origin phase-0-contracts
+git tag phase-1-contract-gate <contract-commit-sha>
+git push origin phase-1-contract-gate
 ```
 
 If contracts change later, do not move the tag silently. Create a new contract revision commit,
@@ -21,15 +22,15 @@ record the decision, and rebase affected worktrees.
 Use one integration branch and one worktree per lane:
 
 ```sh
-git switch -c codex/integration-v1 phase-0-contracts
+git switch -c codex/integration-v1 phase-1-contract-gate
 git push -u origin codex/integration-v1
 
-git worktree add ..\nlp-stock-prediction-lane-a -b codex/lane-a-reddit-evidence phase-0-contracts
-git worktree add ..\nlp-stock-prediction-lane-b -b codex/lane-b-providers phase-0-contracts
-git worktree add ..\nlp-stock-prediction-lane-c -b codex/lane-c-extraction phase-0-contracts
-git worktree add ..\nlp-stock-prediction-lane-d -b codex/lane-d-analysis-scoring phase-0-contracts
-git worktree add ..\nlp-stock-prediction-lane-e -b codex/lane-e-report-cli phase-0-contracts
-git worktree add ..\nlp-stock-prediction-lane-f -b codex/lane-f-reliability-ci phase-0-contracts
+git worktree add ..\nlp-stock-prediction-lane-a -b codex/lane-a-reddit-evidence phase-1-contract-gate
+git worktree add ..\nlp-stock-prediction-lane-b -b codex/lane-b-providers phase-1-contract-gate
+git worktree add ..\nlp-stock-prediction-lane-c -b codex/lane-c-extraction phase-1-contract-gate
+git worktree add ..\nlp-stock-prediction-lane-d -b codex/lane-d-analysis-scoring phase-1-contract-gate
+git worktree add ..\nlp-stock-prediction-lane-e -b codex/lane-e-report-cli phase-1-contract-gate
+git worktree add ..\nlp-stock-prediction-lane-f -b codex/lane-f-reliability-ci phase-1-contract-gate
 ```
 
 Each Codex subagent owns exactly one lane branch and must treat `src/nlp_stock_prediction/contracts/`

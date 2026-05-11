@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from nlp_stock_prediction.cli import (
-    PHASE_0_NOT_IMPLEMENTED_EXIT_CODE,
+    CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE,
     build_parser,
     build_run_config,
     main,
@@ -94,7 +94,7 @@ def test_run_command_phase1_exit_behavior_after_contract_validation(
     )
 
     captured = capsys.readouterr()
-    assert exit_code == PHASE_0_NOT_IMPLEMENTED_EXIT_CODE
+    assert exit_code == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
     assert captured.out == ""
     assert "run command contract is available" in captured.err
     assert not output_dir.exists()

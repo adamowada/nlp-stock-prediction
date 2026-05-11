@@ -1,8 +1,8 @@
-# Frozen Phase 0 Contracts
+# Frozen Contract Gate
 
-Phase 0 settles the public contract surface for later worktree lanes. Concrete providers,
-analysis formulas, report rendering, and live integrations are intentionally out of scope until
-later phases.
+Phase 0 settled the public contract surface and Phase 1 added the deterministic test harness for
+later worktree lanes. Concrete providers, analysis formulas, report rendering, and live integrations
+are intentionally out of scope until later phases.
 
 ## Python Package And CLI
 
@@ -10,9 +10,9 @@ later phases.
 - Canonical invocation: `python -m nlp_stock_prediction`.
 - `run` accepts `--date`, `--output`, `--capital`, `--risk-profile`, `--fixture-dir`,
   `--cache-dir`, and `--offline`.
-- During Phase 0, `run` validates the command shape and exits with code `3` because report
-  generation is not implemented yet.
-- No console script is frozen in Phase 0.
+- During the contract-gate phase, `run` validates the command shape and exits with code `3` because
+  report generation is not implemented yet.
+- No console script is frozen in the contract gate.
 
 ## Contract Modules
 
@@ -71,11 +71,28 @@ Frozen warning codes are:
 - Valid ticker discovery requires exactly six unique tickers in first-seen order.
 - Invalid ticker discovery results must include warnings.
 - Strategy extractions and clusters must cite normalized evidence.
+- Evidence quote spans must be monotonic when both start and end offsets are provided.
+- Score breakdowns must include at least one component.
 - Actionable trade candidates must cite evidence and include score, risk, invalidation, and
   disclaimer references.
+- V1 disclaimers must remain educational-only, not financial advice, and no-auto-trading.
 - Reports must include exactly six ticker sections matching ticker discovery order.
 - Reports without trade candidates must include a no-trade summary.
 - Valid ticker discovery must include candidate records and a raw snapshot ID.
+
+## Phase 1 Contract Harness
+
+The Phase 1 harness covers:
+
+- Public contract imports and `__all__` re-export stability.
+- Pydantic schema invariants for provenance, evidence, extraction, analysis, scoring,
+  recommendations, reports, and fixture manifests.
+- CLI parser and module-entrypoint behavior for the canonical `python -m nlp_stock_prediction`
+  invocation.
+- Deterministic fake-provider protocol behavior for Reddit, X/social, news, market data,
+  fundamentals, macro, and LLM extraction adapters.
+- Daily report shape, including six ticker sections, no-trade summaries, provider health, data
+  freshness, disclaimers, audit manifests, and JSON round trips.
 
 ## Fixture Shape
 
@@ -101,6 +118,6 @@ Core scenario names to use first:
 
 ## Phase Boundary
 
-Phase 0 is complete when this contract surface exists and imports. Phase 1 remains responsible for
-the comprehensive schema, provider-contract, CLI, and report-shape test harness. Parallel
-implementation lanes remain blocked until Phase 1 is complete and the full contract gate is met.
+Phase 0 and Phase 1 are complete on this branch. Phase 2 parallel implementation lanes should start
+from the Phase 1 contract-gate commit and treat the shared contracts as frozen unless a
+single-threaded contract revision is recorded.

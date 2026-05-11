@@ -59,7 +59,7 @@ ruff check .
 ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # exits 3 in Phase 0
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # exits 3 during the contract gate
 ```
 
 ## Decision Log

@@ -56,18 +56,18 @@ shape.
 
 ## Acceptance Criteria
 
-- [ ] Import/export tests cover the public `nlp_stock_prediction.contracts` namespace.
-- [ ] Schema tests cover key invariants for evidence, extraction, analysis, recommendations, reports,
+- [x] Import/export tests cover the public `nlp_stock_prediction.contracts` namespace.
+- [x] Schema tests cover key invariants for evidence, extraction, analysis, recommendations, reports,
       provider health, and fixture manifests.
-- [ ] CLI tests cover help, valid run parsing, invalid dates/capital, offline/fixture/cache options,
+- [x] CLI tests cover help, valid run parsing, invalid dates/capital, offline/fixture/cache options,
       and Phase 1's intentional run exit code.
-- [ ] Provider contract tests use deterministic fake providers and verify graceful failure envelopes.
-- [ ] Report-shape tests verify exactly six ticker sections, no-trade summaries, disclaimer fields,
+- [x] Provider contract tests use deterministic fake providers and verify graceful failure envelopes.
+- [x] Report-shape tests verify exactly six ticker sections, no-trade summaries, disclaimer fields,
       provider health, data freshness, and audit manifest serialization.
-- [ ] Default tests do not require network access or credentials.
-- [ ] `python -m pytest`, `ruff check .`, `ruff format --check .`, `mypy .`, and canonical CLI checks
+- [x] Default tests do not require network access or credentials.
+- [x] `python -m pytest`, `ruff check .`, `ruff format --check .`, `mypy .`, and canonical CLI checks
       pass.
-- [ ] Documentation states Phase 1 is complete and Phase 2 implementation worktrees are the next
+- [x] Documentation states Phase 1 is complete and Phase 2 implementation worktrees are the next
       milestone.
 
 ## Verification Commands
@@ -90,8 +90,21 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
 - 2026-05-11-13-16: The six subagents are assigned to disjoint contract-harness files instead of
   product implementation worktrees, preserving the roadmap rule that Phase 2 lanes start only after
   the contract gate is complete.
+- 2026-05-11-13-23: Phase 1 includes a small single-threaded contract revision for discovered
+  guardrail gaps: `None` is no longer coerced into strings/tickers, evidence reference spans must be
+  monotonic, score breakdowns require components, and v1 disclaimers must keep educational,
+  not-financial-advice, and no-auto-trading flags enabled.
 
 ## Progress Log
 
 - 2026-05-11-13-16: Reviewed Phase 0 contracts, roadmap, testing plan, and runbook; started the Phase
   1 execution plan.
+- 2026-05-11-13-17: Committed ACP `689c3fe` with the Phase 1 execution plan.
+- 2026-05-11-13-21: Integrated six subagent slices for import, schema, provider, fixture, CLI, and
+  report contract harness coverage.
+- 2026-05-11-13-22: Committed ACP `298e9a4` with Phase 1 tests and contract guardrail fixes after
+  `python -m pytest` passed with 153 tests.
+- 2026-05-11-13-23: Updated README, contracts docs, roadmap, and worktree runbook to mark Phase 1
+  complete and Phase 2 ready.
+- 2026-05-11-13-24: Verified the final tree with the default suite, non-live suite, ruff, format
+  check, mypy, CLI help, and the expected contract-gate `run` exit code.

@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-Phase 0 contract settlement is implemented as a minimal Python package with frozen public contracts. Phase 1 contract test harness is next, and parallel implementation worktrees/subagents remain blocked until the full contract gate is complete. See `AGENTS.md` for project conventions, `docs/contracts.md` for the frozen Phase 0 contracts, `docs/worktree-runbook.md` for the later parallel worktree procedure, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 1 contract test harness is implemented. The project now has frozen public contracts plus deterministic schema, import, CLI, provider, fixture, and report-shape tests. Phase 2 implementation worktrees are the next milestone. See `AGENTS.md` for project conventions, `docs/contracts.md` for the frozen contract gate, `docs/worktree-runbook.md` for the parallel worktree procedure, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 
@@ -31,4 +31,4 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
 
 The canonical CLI invocation is the Python module form, `python -m nlp_stock_prediction`. If a console script is added later, it should remain a thin alias for that module command and the docs should be updated together.
 
-During Phase 0, `run` validates the command contract and exits with code `3` because report generation is not implemented yet.
+During the contract-gate phase, `run` validates the command contract and exits with code `3` because report generation is not implemented yet.

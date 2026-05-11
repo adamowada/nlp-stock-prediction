@@ -1,4 +1,4 @@
-"""Frozen public contracts for Phase 0."""
+"""Frozen public contracts for the Phase 1 contract gate."""
 
 from nlp_stock_prediction.contracts.analysis import (
     AnalysisBundle,
