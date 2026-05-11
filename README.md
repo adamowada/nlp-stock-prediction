@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-Phase 0 contract settlement is implemented as a minimal Python package with frozen public contracts. Phase 1 contract test harness is next, and parallel implementation worktrees/subagents remain blocked until the full contract gate is complete. See `AGENTS.md` for project conventions, `docs/contracts.md` for the frozen Phase 0 contracts, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 0 contract settlement is implemented as a minimal Python package with frozen public contracts. Phase 1 contract test harness is next, and parallel implementation worktrees/subagents remain blocked until the full contract gate is complete. See `AGENTS.md` for project conventions, `docs/contracts.md` for the frozen Phase 0 contracts, `docs/worktree-runbook.md` for the later parallel worktree procedure, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 

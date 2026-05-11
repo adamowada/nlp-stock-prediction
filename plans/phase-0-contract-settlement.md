@@ -47,6 +47,7 @@ stable, shared Python package contract.
 - [x] Report, audit, fixture, provider health, warning, and CLI contracts are documented.
 - [x] Test marker taxonomy is registered in project configuration.
 - [x] Phase 0 status is recorded without claiming Phase 1 or parallel lanes have started.
+- [x] Worktree usage is documented in a runbook for the later parallel implementation phase.
 - [ ] Comprehensive contract tests are added in Phase 1.
 
 ## Verification Commands
@@ -68,6 +69,8 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # exits 
 - 2026-05-11-12-46: CLI uses stdlib `argparse` and the canonical module invocation; no console script is frozen in Phase 0.
 - 2026-05-11-12-46: Provider methods use a synchronous `ProviderResult[T]` envelope. Expected upstream failures are modeled as status/warnings instead of exceptions.
 - 2026-05-11-12-46: Phase 0 completion does not complete the full contract gate. Phase 1 contract tests remain required before parallel implementation worktrees begin.
+- 2026-05-11-13-05: Provider contracts return normalized provider facts only; analysis outputs are owned by Lane D and are not provider protocol return types.
+- 2026-05-11-13-05: The worktree operating procedure is documented in `docs/worktree-runbook.md`; Phase 2 remains blocked until Phase 1 is complete.
 
 ## Progress Log
 
@@ -75,3 +78,5 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # exits 
 - 2026-05-11-12-46: Coordinated read-only subagent reviews for architecture, provider semantics, packaging, reporting contracts, and phase-status documentation.
 - 2026-05-11-12-46: Added minimal package scaffold, public contracts, fixture contract, contract docs, and Phase 0 smoke tests.
 - 2026-05-11-12-46: Recorded that Phase 1 comprehensive contract harness and parallel implementation lanes remain pending.
+- 2026-05-11-13-05: Tightened provider-result, JSON metadata, and ticker-discovery invariants based on Phase 0 review findings.
+- 2026-05-11-13-05: Added a concrete git worktree runbook with branch names, commands, handoff template, verification commands, and merge protocol.

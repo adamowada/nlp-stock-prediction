@@ -36,9 +36,17 @@ Every provider method returns `ProviderResult[T]`. Expected provider or upstream
 be represented as `ProviderStatus`, `ProviderWarning`, and nullable `data`, not raised exceptions.
 Exceptions are reserved for programmer errors or invalid contract usage.
 
+Provider contracts return normalized facts, evidence, candles, metrics, and series only. They do
+not return `TechnicalAnalysis`, `FundamentalAnalysis`, `SectorContext`, `MacroContext`, or other
+Lane D analysis outputs.
+
+`ProviderResult[T]` requires the result provider/status to match its `ProviderHealth`, requires data
+for `ok` results, and requires at least one warning for non-`ok` results.
+
 All normalized external data carries `SourceProvenance` with provider name, source kind,
 retrieval method, fetched timestamp, source URL or permalink when available, raw identifier,
 raw snapshot ID, freshness status, cache key, query, and provider metadata.
+Metadata fields must be JSON-serializable.
 
 Frozen warning codes are:
 
@@ -67,6 +75,7 @@ Frozen warning codes are:
   disclaimer references.
 - Reports must include exactly six ticker sections matching ticker discovery order.
 - Reports without trade candidates must include a no-trade summary.
+- Valid ticker discovery must include candidate records and a raw snapshot ID.
 
 ## Fixture Shape
 

@@ -7,15 +7,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Protocol
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
-from nlp_stock_prediction.contracts.analysis import (
-    FundamentalAnalysis,
-    MacroContext,
-    MetricValue,
-    SectorContext,
-    TechnicalAnalysis,
-)
 from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr, TickerSymbol
 from nlp_stock_prediction.contracts.discovery import TickerDiscoveryResult
 from nlp_stock_prediction.contracts.enums import ProviderStatus, RiskProfile, TimeHorizon
@@ -57,6 +50,30 @@ class ProviderResult[T](ContractModel):
     health: ProviderHealth
     raw_snapshot_id: str | None = None
     cache_key: str | None = None
+
+    @model_validator(mode="after")
+    def validate_provider_result_consistency(self) -> ProviderResult[T]:
+        if self.provider_name != self.health.provider_name:
+            raise ValueError("provider result and health provider_name must match")
+        if self.status != self.health.status:
+            raise ValueError("provider result status must match health status")
+        if self.status == ProviderStatus.OK and self.data is None:
+            raise ValueError("ok provider results must include data")
+        if self.status != ProviderStatus.OK and not self.warnings:
+            raise ValueError("non-ok provider results must include at least one warning")
+        if (
+            self.status
+            in {
+                ProviderStatus.FAILED,
+                ProviderStatus.UNCONFIGURED,
+                ProviderStatus.UNAUTHORIZED,
+                ProviderStatus.RATE_LIMITED,
+                ProviderStatus.MALFORMED,
+            }
+            and self.data is not None
+        ):
+            raise ValueError("hard provider failures must not include data")
+        return self
 
 
 class RunConfig(ContractModel):
@@ -111,28 +128,36 @@ class PriceBar(ContractModel):
     adjusted_close: Decimal | None = None
 
 
-class MarketSnapshot(ContractModel):
-    ticker: TickerSymbol
-    bars: tuple[PriceBar, ...] = Field(default_factory=tuple)
-    liquidity_metrics: tuple[MetricValue, ...] = Field(default_factory=tuple)
+class ProviderMetric(ContractModel):
+    """Provider-supplied fact before analysis lanes interpret it."""
+
+    name: NonEmptyStr
+    value: Decimal | float | int | str | None
+    unit: str | None = None
+    as_of: date | datetime | None = None
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class FundamentalsSnapshot(ContractModel):
     ticker: TickerSymbol
     company_name: str | None = None
-    metrics: tuple[MetricValue, ...] = Field(default_factory=tuple)
-    analysis_seed: FundamentalAnalysis | None = None
+    metrics: tuple[ProviderMetric, ...] = Field(default_factory=tuple)
+
+
+class MarketSnapshot(ContractModel):
+    ticker: TickerSymbol
+    bars: tuple[PriceBar, ...] = Field(default_factory=tuple)
+    liquidity_metrics: tuple[ProviderMetric, ...] = Field(default_factory=tuple)
 
 
 class MacroSeries(ContractModel):
     series_id: NonEmptyStr
     name: NonEmptyStr
-    values: tuple[MetricValue, ...] = Field(default_factory=tuple)
+    values: tuple[ProviderMetric, ...] = Field(default_factory=tuple)
 
 
 class MacroSnapshot(ContractModel):
     series: tuple[MacroSeries, ...] = Field(default_factory=tuple)
-    context_seed: MacroContext | None = None
 
 
 class RedditProvider(Protocol):
@@ -174,10 +199,6 @@ class MarketDataProvider(Protocol):
 
     def fetch_daily_candles(self, request: MarketDataRequest) -> ProviderResult[MarketSnapshot]: ...
 
-    def build_technical_seed(
-        self, request: MarketDataRequest
-    ) -> ProviderResult[TechnicalAnalysis | None]: ...
-
     def health(self) -> ProviderHealth: ...
 
 
@@ -187,10 +208,6 @@ class FundamentalsProvider(Protocol):
     def fetch_fundamentals(
         self, request: FundamentalsRequest
     ) -> ProviderResult[FundamentalsSnapshot]: ...
-
-    def build_sector_context(
-        self, request: FundamentalsRequest
-    ) -> ProviderResult[SectorContext | None]: ...
 
     def health(self) -> ProviderHealth: ...
 
@@ -230,6 +247,7 @@ __all__ = [
     "MarketSnapshot",
     "NewsProvider",
     "PriceBar",
+    "ProviderMetric",
     "ProviderRequest",
     "ProviderResult",
     "RedditProvider",

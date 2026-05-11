@@ -16,7 +16,7 @@ Current state: Phase 0 contract settlement is implemented. Phase 1 contract test
 
 - **Phase 0:** Complete. Public contracts are implemented under `src/nlp_stock_prediction/contracts/` and documented in `docs/contracts.md`.
 - **Phase 1:** Pending. The comprehensive schema, import, CLI, provider-contract, and report-shape test harness still needs to be built.
-- **Phase 2:** Blocked. Parallel implementation worktrees and lane subagents must not begin until Phase 1 is complete.
+- **Phase 2:** Blocked. Parallel implementation worktrees and lane subagents must not begin until Phase 1 is complete. Use `docs/worktree-runbook.md` when this phase opens.
 - **Phase 3:** Blocked. Integration and live smoke checks wait for lane implementation.
 
 ## Delivery Strategy

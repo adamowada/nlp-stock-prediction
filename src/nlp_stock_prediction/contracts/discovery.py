@@ -39,6 +39,14 @@ class TickerDiscoveryResult(ContractModel):
             raise ValueError("TickerDiscoveryResult.tickers must already be unique")
         if self.status == TickerDiscoveryStatus.VALID and len(self.tickers) != 6:
             raise ValueError("valid ticker discovery requires exactly six unique tickers")
+        if self.status == TickerDiscoveryStatus.VALID and not self.raw_snapshot_id:
+            raise ValueError("valid ticker discovery requires raw_snapshot_id")
+        if self.status == TickerDiscoveryStatus.VALID:
+            candidate_tickers = tuple(
+                dict.fromkeys(candidate.symbol for candidate in self.candidates)
+            )
+            if candidate_tickers != self.tickers:
+                raise ValueError("valid ticker discovery candidates must match tickers in order")
         if self.status != TickerDiscoveryStatus.VALID and not self.warnings:
             raise ValueError("invalid ticker discovery must include at least one warning")
         return self
