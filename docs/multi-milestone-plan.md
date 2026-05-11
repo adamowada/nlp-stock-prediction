@@ -10,14 +10,14 @@ The v1 posture is exploratory but auditable. The app may surface speculative sto
 
 This roadmap is organized for git worktrees and Codex subagents. Contracts were settled single-threaded first; implementation then happened in parallel lanes from the same frozen contract commit; Phase 3 now returns to a coordinated integration and hardening flow.
 
-Current state: Phase 0 contract settlement, Phase 1 contract test harness, and Phase 2 parallel implementation are implemented and integrated. Phase 3 is active on `feature/integration-and-hardening`; see `plans/phase-3-integration-live-smoke.md` for the current execution plan.
+Current state: Phase 0 contract settlement, Phase 1 contract test harness, and Phase 2 parallel implementation are implemented and integrated. Phase 3 is active on `feature/integration-and-hardening`; Stages 0-4 are complete, with failure drills and final V1 acceptance still pending. See `plans/phase-3-integration-live-smoke.md` for the current execution plan.
 
 ## Phase Status
 
 - **Phase 0:** Complete. Public contracts are implemented under `src/nlp_stock_prediction/contracts/` and documented in `docs/contracts.md`.
 - **Phase 1:** Complete. Comprehensive schema, import, CLI, provider-contract, fixture, and report-shape tests are implemented.
 - **Phase 2:** Complete. Lanes A-F are merged and verified with deterministic tests, lint, format check, typecheck, CLI help, and offline report smoke coverage.
-- **Phase 3:** Active. Integration hardening, live smoke readiness, CLI/configuration polish, report QA, and final V1 acceptance are in progress.
+- **Phase 3:** Active. Integration hardening, CLI/configuration polish, live smoke readiness, and report QA are complete through Stage 4; failure drills and final V1 acceptance are still pending.
 
 ## Delivery Strategy
 

@@ -29,6 +29,7 @@ from nlp_stock_prediction.contracts import (
     RiskProfile,
     ScoreBreakdown,
     ScoreComponent,
+    SourceEvidence,
     SourceKind,
     SourceProvenance,
     StrategyCluster,
@@ -102,6 +103,32 @@ def _evidence_ref(ticker: str) -> EvidenceReference:
         start_char=12,
         end_char=48,
         relevance=0.82,
+    )
+
+
+def _source_evidence(ticker: str) -> SourceEvidence:
+    return SourceEvidence(
+        evidence_id=f"reddit-{ticker.lower()}-comment-1",
+        source_kind=SourceKind.REDDIT_COMMENT,
+        ticker=ticker,
+        title=f"{ticker} fixture discussion",
+        text=f"${ticker} momentum setup discussed in fixture comments",
+        permalink=f"https://reddit.example/wsb/comments/{ticker.lower()}",
+        matched_tickers=(ticker,),
+        provenance=SourceProvenance(
+            provider_name="fixture-reddit",
+            source_kind=SourceKind.REDDIT_COMMENT,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=_timestamp(),
+            permalink=f"https://reddit.example/wsb/comments/{ticker.lower()}",
+            raw_identifier=f"comment-{ticker.lower()}",
+            raw_snapshot_id="raw-reddit-comments-2026-05-11",
+            query=f"{ticker} fixture discussion",
+            cache_key=f"fixture:reddit-comments:{ticker.lower()}",
+            freshness_status=FreshnessStatus.FRESH,
+            freshness_seconds=300,
+            provider_metadata={"fixture": True, "offline": True},
+        ),
     )
 
 
@@ -295,6 +322,7 @@ def _daily_report(
     *,
     ticker_sections: tuple[TickerReportSection, ...] | None = None,
     trade_candidates: tuple[TradeCandidate, ...] = (),
+    evidence_sources: tuple[SourceEvidence, ...] = (),
     no_trade_summary: str | None = "No qualified trades passed the fixture evidence gates.",
     audit_manifest: AuditManifest | DataReference | None = None,
 ) -> DailyReport:
@@ -314,6 +342,7 @@ def _daily_report(
         ticker_discovery=_ticker_discovery(),
         data_freshness=_data_freshness(),
         provider_health=_provider_health(),
+        evidence_sources=evidence_sources,
         ticker_sections=ticker_sections or _ticker_sections(),
         trade_candidates=trade_candidates,
         no_trade_summary=no_trade_summary,
@@ -425,6 +454,34 @@ def test_daily_report_validates_candidate_section_and_disclaimer_links() -> None
                 *_ticker_sections(TICKERS[2:]),
             ),
             trade_candidates=(candidate, candidate),
+            no_trade_summary=None,
+        )
+
+
+@pytest.mark.schema
+def test_daily_report_evidence_sources_resolve_cited_evidence_ids() -> None:
+    evidence_sources = tuple(_source_evidence(ticker) for ticker in TICKERS)
+    report = _daily_report(
+        ticker_sections=_ticker_sections(include_candidate_links=True),
+        trade_candidates=(_trade_candidate(),),
+        evidence_sources=evidence_sources,
+        no_trade_summary=None,
+    )
+    round_tripped = DailyReport.model_validate_json(report.model_dump_json())
+    first_source = round_tripped.evidence_sources[0]
+
+    assert first_source.evidence_id == "reddit-tsla-comment-1"
+    assert first_source.provenance.provider_name == "fixture-reddit"
+    assert first_source.provenance.provider_metadata == {
+        "fixture": True,
+        "offline": True,
+    }
+
+    with pytest.raises(ValidationError, match="evidence_sources must include every cited"):
+        _daily_report(
+            ticker_sections=_ticker_sections(include_candidate_links=True),
+            trade_candidates=(_trade_candidate(),),
+            evidence_sources=evidence_sources[1:],
             no_trade_summary=None,
         )
 

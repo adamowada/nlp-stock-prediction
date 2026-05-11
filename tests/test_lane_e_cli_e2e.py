@@ -95,6 +95,15 @@ def test_generate_daily_report_writes_markdown_json_and_audit_artifacts(tmp_path
     )
     assert report.trade_candidates[0].candidate_id == "candidate-tsla-shares-swing"
     assert isinstance(report.audit_manifest, AuditManifest)
+    assert len(report.evidence_sources) == 6
+    assert report.evidence_sources[0].evidence_id == "evidence-tsla-reddit-1"
+    assert report.evidence_sources[0].provenance.provider_name == "fixture-reddit"
+    assert report.evidence_sources[0].provenance.freshness_status.value == "fresh"
+    assert report.evidence_sources[0].provenance.provider_metadata == {
+        "fixture": True,
+        "offline": True,
+    }
+    assert report.data_freshness.missing_provider_names == ("fixture-sec-edgar",)
 
     manifest = AuditManifest.model_validate(_read_json_object(bundle.audit_manifest_path))
     assert manifest == report.audit_manifest
@@ -256,6 +265,52 @@ def test_cli_offline_run_writes_report_bundle(tmp_path: Path) -> None:
     report = DailyReport.model_validate_json(json_path.read_text(encoding="utf-8"))
     assert isinstance(report.audit_manifest, AuditManifest)
     assert AuditManifest.model_validate(_read_json_object(manifest_path)) == report.audit_manifest
+
+
+@pytest.mark.e2e
+def test_cli_offline_run_represents_no_trade_day(tmp_path: Path) -> None:
+    output_dir = tmp_path / "reports"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nlp_stock_prediction",
+            "run",
+            "--date",
+            "2026-05-11",
+            "--output",
+            str(output_dir),
+            "--capital",
+            "0",
+            "--offline",
+        ],
+        cwd=PROJECT_ROOT,
+        env=_module_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+    report_dir = output_dir / "2026-05-11"
+    audit_dir = report_dir / "audit"
+    markdown = (report_dir / "report.md").read_text(encoding="utf-8")
+    report = DailyReport.model_validate_json(
+        (report_dir / "report.json").read_text(encoding="utf-8")
+    )
+
+    assert "### No-Trade Summary" in markdown
+    assert "### Qualified Trading Strategies" not in markdown
+    assert "No qualified trades passed the offline fixture risk gates." in markdown
+    assert report.trade_candidates == ()
+    assert report.no_trade_summary == "No qualified trades passed the offline fixture risk gates."
+    assert report.audit_manifest is not None
+    scoring_records = _json_records(_read_json_object(audit_dir / "scoring-inputs.json"))
+    risk_plan = cast(JsonObject, scoring_records[0]["risk_plan"])
+    assert risk_plan["passed"] is False
+    assert risk_plan["failed_gates"] == ["account-capital-must-be-positive"]
 
 
 @pytest.mark.e2e

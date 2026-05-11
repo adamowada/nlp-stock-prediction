@@ -30,7 +30,8 @@ frozen contract invariants.
 - `contracts.extraction`: evidence-backed strategy extractions and clusters.
 - `contracts.analysis`: technical, fundamental, sector, macro, and combined analysis contracts.
 - `contracts.recommendation`: score, risk, and `TradeCandidate` contracts.
-- `contracts.report`: Markdown/JSON report spine and audit manifest contracts.
+- `contracts.report`: Markdown/JSON report spine, report evidence-source map, and audit manifest
+  contracts.
 - `contracts.providers`: provider request/result envelopes and provider protocols only.
 - `contracts.fixtures`: raw and normalized fixture manifests.
 
@@ -88,6 +89,9 @@ Frozen warning codes are:
   exceed the configured score threshold.
 - V1 disclaimers must remain educational-only, not financial advice, and no-auto-trading.
 - Reports must include exactly six ticker sections matching ticker discovery order.
+- Reports may include `evidence_sources`; when present, every cited evidence ID in ticker sections,
+  strategy clusters, analysis components, trade candidates, and score inputs must resolve to a
+  normalized evidence source with provenance.
 - Reports without trade candidates must include a no-trade summary.
 - Report trade candidates must use discovered tickers, have unique candidate IDs, match the report
   disclaimer, and be referenced by exactly one matching ticker section.
@@ -137,5 +141,6 @@ Core scenario names to use first:
 ## Phase Boundary
 
 Phase 0 and Phase 1 are complete, and Phase 2 implementation lanes have been integrated. Phase 3 is
-active on `feature/integration-and-hardening` and should treat shared public contracts as frozen
-unless a single-threaded contract revision is recorded in the active Phase 3 plan.
+active on `feature/integration-and-hardening`; Stages 0-4 are complete, with failure drills and
+final V1 acceptance still pending. Shared public contracts should stay stable unless a
+single-threaded contract revision is recorded in the active Phase 3 plan.

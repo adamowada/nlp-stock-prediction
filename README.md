@@ -2,11 +2,11 @@
 
 A TDD-first Python project for generating a daily, evidence-grounded stock opportunity report for retail traders.
 
-The app will discover the six tickers highlighted by r/wallstreetbets' daily Devvit ticker card, collect recent public discussion and news, extract discussed trading strategies with source evidence, and combine that signal with technical, fundamental, sector, and macro analysis. The final output is intended to be a Markdown report plus structured JSON for auditability.
+The app will discover the six tickers highlighted by r/wallstreetbets' daily Devvit ticker card, collect recent public discussion and news, extract discussed trading strategies with source evidence, and combine that signal with technical, fundamental, sector, and macro analysis. The final output is intended to be a Markdown report plus structured JSON and audit artifacts for traceability.
 
 ## Current status
 
-Phase 2 implementation is integrated. The current CLI can generate a deterministic offline report bundle with Markdown, JSON, and audit artifacts, and the provider, extraction, analysis, scoring, reporting, reliability, and compliance lanes are present in the main application surface. Phase 3 is now focused on integration hardening, live smoke readiness, CLI/configuration polish, and final V1 acceptance. See `plans/phase-3-integration-live-smoke.md` for the active Phase 3 plan, `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 2 implementation is integrated. Phase 3 Stages 0-4 are complete on `feature/integration-and-hardening`; failure drills and final V1 acceptance still pending. The current CLI can generate a deterministic offline report bundle with Markdown, JSON, and audit artifacts, and the provider, extraction, analysis, scoring, reporting, reliability, and compliance lanes are present in the main application surface. See `plans/phase-3-integration-live-smoke.md` for the active Phase 3 plan, `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 
@@ -14,7 +14,7 @@ Phase 2 implementation is integrated. The current CLI can generate a determinist
 2. Retrieve recent WSB posts and daily-thread comments for each ticker.
 3. Use evidence-grounded NLP/LLM extraction to identify discussed strategies.
 4. Gather public market, news, fundamental, sector, and macro data.
-5. Generate one daily report with ticker sections and any qualified trading ideas.
+5. Generate one daily report with ticker sections, qualified trading ideas or a clear no-trade summary, provider warnings, freshness, evidence, and disclaimers.
 
 ## Development
 

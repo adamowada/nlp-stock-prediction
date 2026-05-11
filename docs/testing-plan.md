@@ -122,5 +122,6 @@ guidance.
   provider path is enabled.
 - Scraping fallbacks have narrow live tests that detect markup drift.
 - The full report can be generated from fixtures.
-- The full report can be smoke-tested against live dependencies when credentials and network access are available.
+- Selected live provider edges can be smoke-tested when credentials/configuration and network access
+  are available; full live report orchestration remains disabled until explicitly enabled.
 - Recommendation scoring has tests for both confident-trade and no-trade outcomes.

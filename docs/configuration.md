@@ -85,9 +85,9 @@ $env:NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT = "Example Domain"
 python -m pytest -m live_scraping tests/test_lane_f_live_smoke.py
 ```
 
-Live LLM smoke remains a reserved gate in Stage 3. The V1 CLI currently validates LLM extraction
-through deterministic fixture-backed schema tests; no live LLM adapter or credential contract is
-enabled yet.
+After Stage 3, live LLM smoke remains a reserved gate. The V1 CLI currently validates LLM
+extraction through deterministic fixture-backed schema tests; no live LLM adapter or credential
+contract is enabled yet.
 
 ## Missing Credentials
 

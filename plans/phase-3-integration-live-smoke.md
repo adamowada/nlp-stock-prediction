@@ -165,7 +165,7 @@ python -m pytest -m live_scraping
 - [x] Opt-in live smoke checks have documented credential requirements and actionable skips/failures.
 - [x] Stage 3 live SEC API and configured public scraping smoke paths have narrow assertions and
       documented environment variables.
-- [ ] End-to-end report QA confirms evidence, provenance, warnings, confidence inputs, and
+- [x] End-to-end report QA confirms evidence, provenance, warnings, confidence inputs, and
       disclaimers are preserved.
 - [ ] Failure drills cover malformed, missing, stale, conflicting, unsupported, and no-trade
       scenarios.
@@ -205,6 +205,11 @@ Live checks remain opt-in:
   V1 CLI has fixture-backed LLM validation but no live LLM adapter or credential contract.
 - 2026-05-11-15-50: Live smoke tests skip only when the global live opt-in is absent; once live
   checks are requested, missing per-check environment variables fail with actionable messages.
+- 2026-05-11-16-00: Stage 4 report JSON includes `evidence_sources` so every cited evidence ID can
+  resolve to normalized evidence provenance, provider metadata, raw snapshot IDs, and freshness.
+- 2026-05-11-16-00: Markdown report recommendations should show the same practical QA inputs as
+  JSON: catalysts, risks, assumptions, contradictions, confidence inputs, risk controls, score
+  components, penalties, evidence IDs, and score input IDs.
 
 ## Progress log
 
@@ -271,3 +276,18 @@ Live checks remain opt-in:
   `run --help`, configured live SEC API smoke, configured live scraping smoke, and direct offline
   CLI smoke all passed. The offline smoke wrote Markdown, JSON, and audit artifacts to a temporary
   workspace directory that was removed after verification.
+- 2026-05-11-16-00: Started Stage 4 report quality pass. Parallel read-only audits found report JSON
+  evidence-reference provenance gaps, no-trade CLI coverage gaps, loose per-ticker Markdown section
+  assertions, missing/degraded provider visibility under-test, and doc drift that still described
+  Stage 3 as active.
+- 2026-05-11-16-00: Added `DailyReport.evidence_sources` with contract validation that cited
+  evidence IDs resolve when the source map is present; expanded offline fixture report JSON with
+  normalized evidence provenance; made degraded provider visibility include stale market data and an
+  unconfigured supplemental SEC provider; expanded Markdown candidate detail; added scoped
+  per-ticker Markdown assertions and CLI no-trade coverage.
+- 2026-05-11-16-01: Stage 4 verification passed with the repo venv: full pytest reported
+  247 passed and 3 opt-in live skips; non-live pytest reported 247 passed and 3 deselected; e2e
+  reported 4 passed; `ruff check .`, `ruff format --check .`, `mypy .`, top-level CLI help,
+  `run --help`, live marker selections, configured live SEC API smoke, configured live scraping
+  smoke, and direct offline CLI smoke all passed. The offline smoke wrote Markdown, JSON, and audit
+  artifacts to a temporary workspace directory that was removed after verification.
