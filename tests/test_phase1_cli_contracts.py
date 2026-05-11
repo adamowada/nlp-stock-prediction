@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from nlp_stock_prediction.cli import (
-    CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE,
     build_parser,
     build_run_config,
     main,
@@ -76,7 +75,7 @@ def test_module_help_subprocess_exposes_canonical_cli() -> None:
 
 
 @pytest.mark.unit
-def test_run_command_phase1_exit_behavior_after_contract_validation(
+def test_run_command_generates_offline_report_after_contract_validation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     output_dir = tmp_path / "reports"
@@ -90,14 +89,16 @@ def test_run_command_phase1_exit_behavior_after_contract_validation(
             str(output_dir),
             "--capital",
             "1000",
+            "--offline",
         ]
     )
 
     captured = capsys.readouterr()
-    assert exit_code == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
-    assert captured.out == ""
-    assert "run command contract is available" in captured.err
-    assert not output_dir.exists()
+    assert exit_code == 0
+    assert "report.md" in captured.out
+    assert captured.err == ""
+    assert (output_dir / "2026-05-11" / "report.md").exists()
+    assert (output_dir / "2026-05-11" / "report.json").exists()
 
 
 @pytest.mark.unit
