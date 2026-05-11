@@ -160,8 +160,8 @@ python -m pytest -m live_scraping
 - [x] Phase 2 integration status is reflected in current source-of-truth docs.
 - [x] Stage 0 verification baseline is recorded.
 - [x] Stale pre-Phase-3 placeholder wording is removed or narrowed.
-- [ ] CLI configuration and live/offline behavior are hardened for V1 use.
-- [ ] Opt-in live smoke checks have documented credential requirements and actionable skips.
+- [x] CLI configuration and live/offline behavior are hardened for V1 use.
+- [x] Opt-in live smoke checks have documented credential requirements and actionable skips.
 - [ ] End-to-end report QA confirms evidence, provenance, warnings, confidence inputs, and
       disclaimers are preserved.
 - [ ] Failure drills cover malformed, missing, stale, conflicting, unsupported, and no-trade
@@ -229,3 +229,20 @@ Live checks remain opt-in:
   reported 3 passed; `ruff check .`, `ruff format --check .`, `mypy .`, CLI help, live marker
   selections, and direct offline CLI smoke all passed. The offline smoke wrote Markdown, JSON, and
   audit artifacts to a temporary directory that was removed after verification.
+- 2026-05-11-15-35: Started Stage 2 CLI/configuration hardening. Read-only audits found sparse
+  `run --help` text, undocumented env/.env conventions, missing Alpha Vantage credential-absence
+  coverage, a non-offline example in the roadmap, and older Phase 2 lane plans without historical
+  status headers.
+- 2026-05-11-15-35: Hardened `run --help` for date/output/capital/risk-profile/fixture/cache/offline
+  behavior and live-provider limitations, added `docs/configuration.md` and `.env.example`,
+  documented live-smoke and provider credential conventions without secrets, clarified that
+  `--fixture-dir` and `--cache-dir` are metadata/reserved in current offline runs, added Alpha
+  Vantage missing-credential tests, and aligned drift in README, contracts, testing, roadmap, AGENTS,
+  live LLM skip text, and historical Phase 2 lane plans. No blocker requiring user-supplied
+  credentials was encountered.
+- 2026-05-11-15-36: Stage 2 verification passed with the repo venv: full pytest reported
+  239 passed and 3 opt-in live skips; non-live pytest reported 239 passed and 3 deselected; e2e
+  reported 3 passed; `ruff check .`, `ruff format --check .`, `mypy .`, top-level CLI help,
+  `run --help`, live marker selections, and direct offline CLI smoke all passed. The offline smoke
+  wrote Markdown, JSON, and audit artifacts to a temporary directory that was removed after
+  verification.

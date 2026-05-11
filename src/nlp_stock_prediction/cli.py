@@ -16,6 +16,18 @@ from nlp_stock_prediction.pipeline import generate_daily_report
 
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 PHASE_0_NOT_IMPLEMENTED_EXIT_CODE = CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
+_CLI_EPILOG = """Examples:
+  python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+  python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ \\
+    --capital 1000 --risk-profile exploratory --offline
+
+Configuration:
+  Offline runs are deterministic and do not use network providers.
+  Live-provider report orchestration is not enabled yet.
+  Pass --offline to generate the deterministic fixture-backed report bundle.
+  Keep provider credentials in environment variables or ignored local .env files;
+  see docs/configuration.md.
+"""
 
 
 def _parse_date(value: str) -> date:
@@ -43,28 +55,67 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m nlp_stock_prediction",
         description="Generate an evidence-grounded daily stock opportunity report.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_CLI_EPILOG,
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    run_parser = subparsers.add_parser("run", help="Generate a daily report.")
-    run_parser.add_argument("--date", dest="run_date", required=True, type=_parse_date)
-    run_parser.add_argument("--output", dest="output_dir", required=True, type=Path)
-    run_parser.add_argument("--capital", dest="capital", type=_parse_decimal)
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Generate a daily report.",
+        description=(
+            "Generate one Markdown report, one JSON report, and audit artifacts under "
+            "<output>/<YYYY-MM-DD>/."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_CLI_EPILOG,
+    )
+    run_parser.add_argument(
+        "--date",
+        dest="run_date",
+        required=True,
+        type=_parse_date,
+        help="Report date in YYYY-MM-DD format.",
+    )
+    run_parser.add_argument(
+        "--output",
+        dest="output_dir",
+        required=True,
+        type=Path,
+        help="Base output directory; files are written under <output>/<YYYY-MM-DD>/.",
+    )
+    run_parser.add_argument(
+        "--capital",
+        dest="capital",
+        type=_parse_decimal,
+        help="Optional account capital for risk gates; must be a non-negative decimal.",
+    )
     run_parser.add_argument(
         "--risk-profile",
         choices=tuple(profile.value for profile in RiskProfile),
         default=RiskProfile.EXPLORATORY.value,
+        help="Risk profile for scoring and report context. Default: exploratory.",
     )
     run_parser.add_argument(
         "--fixture-dir",
         type=Path,
-        help="Read deterministic provider fixtures instead of live providers.",
+        help=(
+            "Optional fixture root for future external fixtures; current offline runs record "
+            "this path in command metadata and use built-in deterministic fixtures."
+        ),
     )
-    run_parser.add_argument("--cache-dir", type=Path, help="Read/write provider response cache.")
+    run_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help=(
+            "Optional provider cache directory for future live/provider runs; current offline "
+            "runs record this path in command metadata."
+        ),
+    )
     run_parser.add_argument(
         "--offline",
         action="store_true",
-        help="Disallow live network providers; intended for deterministic runs.",
+        help="Required for the current V1 report path; disallows live network providers.",
     )
     return parser
 

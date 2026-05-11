@@ -12,7 +12,7 @@ See [docs/multi-milestone-plan.md](docs/multi-milestone-plan.md) for the product
 
 ## Common commands
 
-Use the repository's configured commands once the project scaffold exists. Expected commands are:
+Use the repository's configured commands. Expected commands are:
 
 ```sh
 python -m pytest

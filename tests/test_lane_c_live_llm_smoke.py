@@ -23,7 +23,10 @@ from nlp_stock_prediction.extraction import (
 @pytest.mark.llm
 def test_live_llm_smoke_scaffold_requires_explicit_opt_in() -> None:
     if os.environ.get("NLP_STOCK_PREDICTION_LIVE_LLM_SMOKE") != "1":
-        pytest.skip("Set NLP_STOCK_PREDICTION_LIVE_LLM_SMOKE=1 to run live LLM smoke checks.")
+        pytest.skip(
+            "Live LLM smoke is scaffolded only; leave NLP_STOCK_PREDICTION_LIVE_LLM_SMOKE "
+            "unset until live LLM adapter wiring is enabled."
+        )
 
     pytest.fail(
         "Live LLM adapter wiring is intentionally not enabled for the V1 CLI yet; "

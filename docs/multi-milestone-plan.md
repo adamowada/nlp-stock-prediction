@@ -47,8 +47,8 @@ The contract gate requires:
 
 ```sh
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --capital 1000 --risk-profile exploratory
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --capital 1000 --risk-profile exploratory --offline
 ```
 
 - Public models defined at API boundaries with Pydantic or typed dataclasses where appropriate.
@@ -229,14 +229,19 @@ Canonical verification commands:
 ```sh
 python -m pytest
 python -m pytest -m "not live_api and not live_scraping"
-python -m pytest -m live_api
-python -m pytest -m live_scraping
 python -m pytest -m e2e
 ruff check .
 ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+```
+
+Opt-in live smoke selections:
+
+```sh
+python -m pytest -m live_api
+python -m pytest -m live_scraping
 ```
 
 ## Phase 1 Contract-Gate Acceptance Criteria
@@ -261,7 +266,7 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 
 ## Assumptions
 
-- The repo is greenfield, so the application structure can be created from scratch.
+- The repo began as a greenfield project, so the application structure was created from scratch.
 - The first complete version is a local Python CLI that runs manually.
 - Reports are written as Markdown plus structured JSON.
 - Recommendations may include stocks and defined-risk options.

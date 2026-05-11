@@ -1,5 +1,7 @@
 # Lane A Reddit Discovery And Evidence
 
+Status: complete. This is a historical Phase 2 lane plan.
+
 ## Goal
 
 Implement deterministic Reddit ticker-card discovery, Reddit post/comment evidence normalization,

@@ -1,5 +1,7 @@
 # Phase 2 Lane B Providers
 
+Status: complete. This is a historical Phase 2 lane plan.
+
 ## Goal
 
 Implement deterministic, fixture-testable provider adapters for X/social, public news, market data,

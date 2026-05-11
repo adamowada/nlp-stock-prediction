@@ -97,7 +97,8 @@ mypy .
 
 Fixture-backed e2e coverage now exercises offline CLI report generation. Live API, live scraping,
 and live LLM checks remain opt-in and may skip when the required environment variables or
-credentials are absent.
+credentials are absent. See `docs/configuration.md` for the current live-smoke environment
+variables and `.env` guidance.
 
 ## CI expectations
 

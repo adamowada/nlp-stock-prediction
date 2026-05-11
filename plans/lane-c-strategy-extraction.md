@@ -1,5 +1,7 @@
 # Lane C Strategy Extraction And Clustering
 
+Status: complete. This is a historical Phase 2 lane plan.
+
 ## Goal
 
 Implement deterministic, evidence-grounded strategy extraction helpers for Phase 2 Lane C. The lane should validate schema-shaped LLM output, reject unsupported or uncited claims, preserve quote provenance, cluster near-duplicate discussed strategies, and add fixture/live-smoke test scaffolding without changing frozen contracts.

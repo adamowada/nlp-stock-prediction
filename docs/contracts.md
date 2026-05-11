@@ -15,6 +15,8 @@ frozen contract invariants.
 - With `--offline`, `run` writes a deterministic fixture-backed report bundle. Without `--offline`,
   it currently exits with code `3` because live-provider report orchestration is not enabled yet.
 - No console script is frozen in the contract gate.
+- Environment variables and optional ignored `.env` files are documented in
+  `docs/configuration.md`; the default offline path does not require credentials or network access.
 
 ## Contract Modules
 

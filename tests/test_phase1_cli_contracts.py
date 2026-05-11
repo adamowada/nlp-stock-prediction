@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from nlp_stock_prediction.cli import (
+    CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE,
     build_parser,
     build_run_config,
     main,
@@ -72,6 +73,56 @@ def test_module_help_subprocess_exposes_canonical_cli() -> None:
     assert "Generate an evidence-grounded daily stock opportunity report." in result.stdout
     assert "run" in result.stdout
     assert result.stderr == ""
+
+
+@pytest.mark.unit
+def test_run_help_documents_stage2_configuration_surface() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "nlp_stock_prediction", "run", "--help"],
+        cwd=PROJECT_ROOT,
+        env=_module_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--date" in result.stdout
+    assert "YYYY-MM-DD" in result.stdout
+    assert "--output" in result.stdout
+    assert "<output>/<YYYY-MM-DD>" in result.stdout
+    assert "--capital" in result.stdout
+    assert "non-negative decimal" in result.stdout
+    assert "--risk-profile" in result.stdout
+    assert "Default:" in result.stdout
+    assert "exploratory." in result.stdout
+    assert "--fixture-dir" in result.stdout
+    assert "built-in deterministic fixtures" in result.stdout
+    assert "--cache-dir" in result.stdout
+    assert "future" in result.stdout
+    assert "live/provider runs" in result.stdout
+    assert "--offline" in result.stdout
+    assert "disallows" in result.stdout
+    assert "live network providers" in result.stdout
+    assert "Live-provider report orchestration is not enabled yet" in result.stdout
+    assert "docs/configuration.md" in result.stdout
+    assert result.stderr == ""
+
+
+@pytest.mark.unit
+def test_run_without_offline_fails_with_live_orchestration_guidance(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output_dir = tmp_path / "reports"
+
+    exit_code = main(["run", "--date", "2026-05-11", "--output", str(output_dir)])
+
+    captured = capsys.readouterr()
+    assert exit_code == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
+    assert "Live-provider report orchestration is not enabled yet" in captured.err
+    assert "--offline" in captured.err
+    assert captured.out == ""
+    assert not output_dir.exists()
 
 
 @pytest.mark.unit

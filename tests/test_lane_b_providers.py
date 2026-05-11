@@ -262,6 +262,27 @@ def test_alpha_vantage_daily_candles_reports_malformed_volume() -> None:
 
 
 @pytest.mark.contract
+def test_alpha_vantage_market_provider_returns_missing_credentials_warning() -> None:
+    provider = AlphaVantageMarketDataProvider(
+        transport=_FakeJsonTransport({}),
+        now=lambda: FETCHED_AT,
+    )
+    request = MarketDataRequest(
+        request_id="market-missing-key-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_daily_candles(request)
+
+    assert result.status == ProviderStatus.UNCONFIGURED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.MISSING_CREDENTIALS
+    assert result.warnings[0].metadata["credential_name"] == "Alpha Vantage API key"
+    assert result.health.credential_state == CredentialState.MISSING
+
+
+@pytest.mark.contract
 def test_alpha_vantage_company_overview_maps_fundamental_metrics() -> None:
     transport = _FakeJsonTransport(
         {"OVERVIEW": JsonResponse(payload=_fixture("alpha_vantage", "overview_tsla.json"))}
@@ -287,6 +308,27 @@ def test_alpha_vantage_company_overview_maps_fundamental_metrics() -> None:
     assert metrics["pe_ratio"].value == Decimal("48.5")
     assert metrics["sector"].value == "Consumer Cyclical"
     assert metrics["market_cap"].as_of == date(2026, 3, 31)
+
+
+@pytest.mark.contract
+def test_alpha_vantage_fundamentals_provider_returns_missing_credentials_warning() -> None:
+    provider = AlphaVantageFundamentalsProvider(
+        transport=_FakeJsonTransport({}),
+        now=lambda: FETCHED_AT,
+    )
+    request = FundamentalsRequest(
+        request_id="fundamentals-missing-key-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_fundamentals(request)
+
+    assert result.status == ProviderStatus.UNCONFIGURED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.MISSING_CREDENTIALS
+    assert result.warnings[0].metadata["credential_name"] == "Alpha Vantage API key"
+    assert result.health.credential_state == CredentialState.MISSING
 
 
 @pytest.mark.contract
