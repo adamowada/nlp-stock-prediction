@@ -179,7 +179,10 @@ def _created_at(record: Mapping[str, object]) -> datetime | None:
     if not created_at:
         return None
     normalized = created_at.replace("Z", "+00:00")
-    parsed = datetime.fromisoformat(normalized)
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)

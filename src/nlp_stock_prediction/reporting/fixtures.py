@@ -31,7 +31,6 @@ from nlp_stock_prediction.contracts import (
     ProviderWarning,
     RecommendationAction,
     RetrievalMethod,
-    RiskAssessment,
     ScoreBreakdown,
     ScoreComponent,
     SectorContext,
@@ -52,6 +51,7 @@ from nlp_stock_prediction.contracts import (
 )
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.reporting.audit import json_payload_sha256
+from nlp_stock_prediction.scoring.risk import assess_risk
 
 TICKERS: tuple[str, ...] = ("TSLA", "NVDA", "AMD", "AAPL", "MU", "SPY")
 
@@ -113,11 +113,15 @@ def build_offline_fixture_bundle(config: RunConfig) -> OfflineFixtureBundle:
     provider_health = _provider_health(config.run_date, generated_at)
 
     trade_candidate = _trade_candidate(config, evidence_refs["TSLA"])
+    trade_candidates = (
+        (trade_candidate,) if trade_candidate.action == RecommendationAction.QUALIFIED else ()
+    )
     ticker_sections = _ticker_sections(
         run_date=config.run_date,
         strategy_clusters=strategy_clusters,
         analysis_bundles=analysis_bundles,
         evidence_refs=evidence_refs,
+        recommendation_ids=tuple(candidate.candidate_id for candidate in trade_candidates),
     )
 
     audit_payloads = _audit_payloads(
@@ -137,7 +141,7 @@ def build_offline_fixture_bundle(config: RunConfig) -> OfflineFixtureBundle:
         report_dir=report_dir,
         generated_at=generated_at,
         audit_payloads=audit_payloads,
-        recommendation_trace_ids=(trade_candidate.candidate_id,),
+        recommendation_trace_ids=tuple(candidate.candidate_id for candidate in trade_candidates),
     )
 
     report = DailyReport(
@@ -165,8 +169,12 @@ def build_offline_fixture_bundle(config: RunConfig) -> OfflineFixtureBundle:
         ),
         provider_health=provider_health,
         ticker_sections=ticker_sections,
-        trade_candidates=(trade_candidate,),
-        no_trade_summary=None,
+        trade_candidates=trade_candidates,
+        no_trade_summary=(
+            None
+            if trade_candidates
+            else "No qualified trades passed the offline fixture risk gates."
+        ),
         audit_manifest=audit_manifest,
     )
     return OfflineFixtureBundle(report=report, audit_payloads=audit_payloads)
@@ -412,20 +420,12 @@ def _trade_candidate(config: RunConfig, evidence: EvidenceReference) -> TradeCan
         if account_capital is not None
         else None
     )
-    risk_plan = RiskAssessment(
+    risk_plan = assess_risk(
+        instrument=InstrumentType.SHARES,
+        position_type=PositionType.LONG,
         risk_profile=config.risk_profile,
-        defined_risk=True,
-        margin_required=False,
-        max_account_risk_pct=Decimal("0.01"),
         account_capital=account_capital,
         max_loss_estimate=max_loss,
-        position_size_pct=Decimal("0.01"),
-        passed=True,
-        sizing_basis=(
-            f"Maximum fixture loss is capped near 1% of ${_format_capital(account_capital)}."
-            if account_capital is not None
-            else "No account capital provided; show sizing as a maximum 1% risk budget."
-        ),
     )
     score_component = ScoreComponent(
         name="evidence_alignment",
@@ -457,10 +457,11 @@ def _trade_candidate(config: RunConfig, evidence: EvidenceReference) -> TradeCan
         evidence=(evidence,),
         warning_ids=("fixture-market-data:stale_data",),
     )
+    failed_score_gates = () if risk_plan.passed else ("risk-gates-failed",)
     return TradeCandidate(
         candidate_id="candidate-tsla-shares-swing",
         ticker="TSLA",
-        action=RecommendationAction.QUALIFIED,
+        action=(RecommendationAction.QUALIFIED if risk_plan.passed else RecommendationAction.AVOID),
         strategy_cluster_id="cluster-tsla-shares-swing",
         instrument=InstrumentType.SHARES,
         direction=Direction.BULLISH,
@@ -478,6 +479,7 @@ def _trade_candidate(config: RunConfig, evidence: EvidenceReference) -> TradeCan
             threshold=0.7,
             components=(score_component, technical_component),
             penalties=(freshness_penalty,),
+            failed_gates=failed_score_gates,
         ),
         assumptions=("Offline fixtures represent provider outputs until lanes A-D land.",),
         risks=("Retail discussion can be crowded, stale, sarcastic, or wrong.",),
@@ -502,6 +504,7 @@ def _ticker_sections(
     strategy_clusters: dict[str, StrategyCluster],
     analysis_bundles: dict[str, AnalysisBundle],
     evidence_refs: dict[str, EvidenceReference],
+    recommendation_ids: tuple[str, ...],
 ) -> tuple[TickerReportSection, ...]:
     sections: list[TickerReportSection] = []
     for ticker in TICKERS:
@@ -525,7 +528,7 @@ def _ticker_sections(
                 sector_context=bundle.sector,
                 macro_context=bundle.macro,
                 opportunity_notes=_opportunity_notes(ticker),
-                recommendation_ids=("candidate-tsla-shares-swing",) if ticker == "TSLA" else (),
+                recommendation_ids=recommendation_ids if ticker == "TSLA" else (),
                 evidence=(evidence_refs[ticker],),
                 warning_ids=("fixture-market-data:stale_data",),
                 data_quality={

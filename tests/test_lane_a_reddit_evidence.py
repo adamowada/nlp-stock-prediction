@@ -139,3 +139,29 @@ def test_reddit_evidence_skips_records_without_high_precision_ticker_matches() -
     )
 
     assert evidence == ()
+
+
+@pytest.mark.unit
+def test_reddit_evidence_with_invalid_created_at_uses_missing_freshness() -> None:
+    record = {
+        "kind": "comment",
+        "id": "t1_invalid_created_at",
+        "body": "$TSLA swing only if it clears the trigger.",
+        "created_at": "not-a-date",
+        "score": 12,
+        "permalink": "https://www.reddit.com/r/wallstreetbets/comments/test/comment/",
+    }
+
+    evidence = normalize_reddit_evidence(
+        [record],
+        request=_request(),
+        fetched_at=FETCHED_AT,
+        raw_snapshot_id="raw-reddit-discussion-invalid-created-at",
+        retrieval_method=RetrievalMethod.FIXTURE,
+    )
+
+    assert len(evidence) == 1
+    assert evidence[0].created_at is None
+    assert evidence[0].provenance.observed_at is None
+    assert evidence[0].provenance.freshness_status == FreshnessStatus.MISSING
+    assert evidence[0].provenance.freshness_seconds is None

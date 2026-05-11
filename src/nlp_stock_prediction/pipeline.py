@@ -26,6 +26,12 @@ class ReportBundle:
 def generate_daily_report(config: RunConfig) -> ReportBundle:
     """Generate a deterministic report bundle for the configured run."""
 
+    if not config.offline:
+        raise ValueError(
+            "Phase 2 report generation is fixture-backed only; pass --offline to make that "
+            "constraint explicit."
+        )
+
     fixture_bundle = build_offline_fixture_bundle(config)
     report = fixture_bundle.report
     report_dir = config.output_dir / config.run_date.isoformat()

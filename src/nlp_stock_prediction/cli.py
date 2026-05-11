@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -87,7 +88,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.command == "run":
-        bundle = generate_daily_report(build_run_config(args))
+        try:
+            bundle = generate_daily_report(build_run_config(args))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
         print(f"Wrote Markdown report: {bundle.markdown_path}")
         print(f"Wrote JSON report: {bundle.json_path}")
         print(f"Wrote audit artifacts: {bundle.audit_dir}")

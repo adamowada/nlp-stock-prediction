@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,6 +25,7 @@ from nlp_stock_prediction.contracts import (
 
 _IDENTIFIER_PREFIX = "ticker-container-"
 _DEFAULT_SOURCE_URL = "https://www.reddit.com/r/wallstreetbets/"
+_TICKER_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 
 
 @dataclass(slots=True)
@@ -38,17 +40,25 @@ class _ParsedTickerContainer:
         return normalized or None
 
 
+@dataclass(frozen=True, slots=True)
+class _ParsedTickerContainers:
+    candidates: tuple[_ParsedTickerContainer, ...]
+    invalid_identifiers: tuple[str, ...]
+
+
 class _TickerContainerHtmlParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.candidates: list[_ParsedTickerContainer] = []
+        self.invalid_identifiers: list[str] = []
         self._stack: list[tuple[str, tuple[int, ...]]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         indices: list[int] = []
         for raw_identifier in _extract_identifiers(attrs):
             symbol = raw_identifier.removeprefix(_IDENTIFIER_PREFIX).strip().upper()
-            if not symbol:
+            if not _is_valid_symbol(symbol):
+                self.invalid_identifiers.append(raw_identifier)
                 continue
             self.candidates.append(
                 _ParsedTickerContainer(raw_identifier=raw_identifier, symbol=symbol)
@@ -87,9 +97,27 @@ def discover_tickers_from_devvit_html(
 ) -> TickerDiscoveryResult:
     """Parse a Devvit ticker card into a frozen discovery contract."""
 
-    parsed_candidates = _parse_ticker_containers(html)
+    parsed = _parse_ticker_containers(html)
+    parsed_candidates = parsed.candidates
     source_url = request.source_url or _DEFAULT_SOURCE_URL
     warnings: list[ProviderWarning] = []
+
+    if parsed.invalid_identifiers:
+        warnings.append(
+            _warning(
+                provider_name=provider_name,
+                fetched_at=fetched_at,
+                raw_snapshot_id=raw_snapshot_id,
+                source_url=source_url,
+                severity=WarningSeverity.ERROR,
+                code=WarningCode.SCHEMA_MISMATCH,
+                message="Reddit Devvit ticker card contained invalid ticker-container identifiers.",
+                metadata={
+                    "validation": "invalid_ticker_container_identifiers",
+                    "invalid_identifiers": list(parsed.invalid_identifiers),
+                },
+            )
+        )
 
     if not parsed_candidates:
         warnings.append(
@@ -130,7 +158,11 @@ def discover_tickers_from_devvit_html(
             )
         )
 
-    status = TickerDiscoveryStatus.VALID
+    status = (
+        TickerDiscoveryStatus.MALFORMED_SOURCE
+        if parsed.invalid_identifiers
+        else TickerDiscoveryStatus.VALID
+    )
     if len(tickers) < 6:
         status = TickerDiscoveryStatus.TOO_FEW_UNIQUE
         warnings.append(
@@ -191,11 +223,18 @@ def discover_tickers_from_devvit_html(
     )
 
 
-def _parse_ticker_containers(html: str) -> tuple[_ParsedTickerContainer, ...]:
+def _parse_ticker_containers(html: str) -> _ParsedTickerContainers:
     parser = _TickerContainerHtmlParser()
     parser.feed(html)
     parser.close()
-    return tuple(parser.candidates)
+    return _ParsedTickerContainers(
+        candidates=tuple(parser.candidates),
+        invalid_identifiers=tuple(parser.invalid_identifiers),
+    )
+
+
+def _is_valid_symbol(symbol: str) -> bool:
+    return _TICKER_SYMBOL_RE.fullmatch(symbol) is not None
 
 
 def _extract_identifiers(attrs: list[tuple[str, str | None]]) -> tuple[str, ...]:

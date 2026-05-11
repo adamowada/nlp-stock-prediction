@@ -228,6 +228,40 @@ def test_alpha_vantage_daily_candles_map_and_reuse_cache(tmp_path: Path) -> None
 
 
 @pytest.mark.contract
+def test_alpha_vantage_daily_candles_reports_malformed_volume() -> None:
+    payload: dict[str, Any] = {
+        "Time Series (Daily)": {
+            "2026-05-11": {
+                "1. open": "181.00",
+                "2. high": "186.00",
+                "3. low": "180.50",
+                "4. close": "184.25",
+                "5. adjusted close": "184.25",
+                "6. volume": "not-a-number",
+            }
+        }
+    }
+    transport = _FakeJsonTransport({"TIME_SERIES_DAILY_ADJUSTED": JsonResponse(payload=payload)})
+    provider = AlphaVantageMarketDataProvider(
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = MarketDataRequest(
+        request_id="market-tsla-malformed-volume-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_daily_candles(request)
+
+    assert result.status == ProviderStatus.MALFORMED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
+    assert "invalid OHLCV" in result.warnings[0].message
+
+
+@pytest.mark.contract
 def test_alpha_vantage_company_overview_maps_fundamental_metrics() -> None:
     transport = _FakeJsonTransport(
         {"OVERVIEW": JsonResponse(payload=_fixture("alpha_vantage", "overview_tsla.json"))}

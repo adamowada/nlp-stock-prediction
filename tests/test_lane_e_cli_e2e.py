@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from nlp_stock_prediction.cli import CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
 from nlp_stock_prediction.contracts import DailyReport, RiskProfile, RunConfig
 from nlp_stock_prediction.pipeline import generate_daily_report
 
@@ -118,3 +119,31 @@ def test_cli_offline_run_writes_report_bundle(tmp_path: Path) -> None:
     assert result.stderr == ""
     assert (output_dir / "2026-05-11" / "report.md").exists()
     assert (output_dir / "2026-05-11" / "report.json").exists()
+
+
+@pytest.mark.e2e
+def test_cli_run_requires_offline_for_fixture_backed_phase2(tmp_path: Path) -> None:
+    output_dir = tmp_path / "reports"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nlp_stock_prediction",
+            "run",
+            "--date",
+            "2026-05-11",
+            "--output",
+            str(output_dir),
+        ],
+        cwd=PROJECT_ROOT,
+        env=_module_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
+    assert "fixture-backed only" in result.stderr
+    assert result.stdout == ""
+    assert not output_dir.exists()

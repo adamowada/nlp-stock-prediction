@@ -217,8 +217,11 @@ class AlphaVantageMarketDataProvider:
             close = parse_decimal(raw_bar.get("4. close"))
             adjusted_close = parse_decimal(raw_bar.get("5. adjusted close"))
             volume_text = raw_bar.get("6. volume")
-            if None in {open_price, high, low, close} or volume_text is None:
-                raise MalformedProviderResponse("Alpha Vantage daily bar missing OHLCV fields")
+            volume = _parse_volume(volume_text)
+            if None in {open_price, high, low, close} or volume is None:
+                raise MalformedProviderResponse(
+                    "Alpha Vantage daily bar has missing or invalid OHLCV fields"
+                )
             bars.append(
                 PriceBar(
                     ticker=ticker,
@@ -228,7 +231,7 @@ class AlphaVantageMarketDataProvider:
                     low=low or Decimal("0"),
                     close=close or Decimal("0"),
                     adjusted_close=adjusted_close,
-                    volume=int(str(volume_text).replace(",", "")),
+                    volume=volume,
                 )
             )
         return MarketSnapshot(
@@ -446,6 +449,16 @@ def _optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _parse_volume(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        volume = int(str(value).replace(",", ""))
+    except ValueError:
+        return None
+    return volume if volume >= 0 else None
 
 
 def _metric_value(value: object) -> Decimal | str | None:

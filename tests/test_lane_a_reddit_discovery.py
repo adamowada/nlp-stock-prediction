@@ -10,6 +10,7 @@ from nlp_stock_prediction.contracts import (
     RetrievalMethod,
     TickerDiscoveryRequest,
     TickerDiscoveryStatus,
+    WarningCode,
     WarningSeverity,
 )
 from nlp_stock_prediction.reddit.discovery import discover_tickers_from_devvit_html
@@ -155,6 +156,42 @@ def test_extra_unique_candidates_are_invalid_and_preserved_for_audit() -> None:
     assert result.tickers == ("TSLA", "NVDA", "AMD", "AI", "MU", "ON", "IT")
     assert result.warnings[0].severity == WarningSeverity.ERROR
     assert result.warnings[0].metadata["unique_ticker_count"] == 7
+
+
+@pytest.mark.unit
+def test_invalid_ticker_container_identifier_returns_malformed_warning() -> None:
+    html = """
+    <div id="ticker-container-$bad">$BAD</div>
+    <div id="ticker-container-tsla">TSLA</div>
+    <div id="ticker-container-nvda">NVDA</div>
+    <div id="ticker-container-amd">AMD</div>
+    <div id="ticker-container-ai">AI</div>
+    <div id="ticker-container-mu">MU</div>
+    <div id="ticker-container-on">ON</div>
+    """
+
+    result = discover_tickers_from_devvit_html(
+        html,
+        request=_request(),
+        fetched_at=FETCHED_AT,
+        raw_snapshot_id="raw-reddit-devvit-card-invalid-identifier",
+        retrieval_method=RetrievalMethod.FIXTURE,
+    )
+
+    assert result.status == TickerDiscoveryStatus.MALFORMED_SOURCE
+    assert result.tickers == ("TSLA", "NVDA", "AMD", "AI", "MU", "ON")
+    assert [candidate.symbol for candidate in result.candidates] == [
+        "TSLA",
+        "NVDA",
+        "AMD",
+        "AI",
+        "MU",
+        "ON",
+    ]
+    assert result.warnings[0].code == WarningCode.SCHEMA_MISMATCH
+    assert result.warnings[0].severity == WarningSeverity.ERROR
+    assert result.warnings[0].metadata["validation"] == ("invalid_ticker_container_identifiers")
+    assert result.warnings[0].metadata["invalid_identifiers"] == ["ticker-container-$bad"]
 
 
 @pytest.mark.unit
