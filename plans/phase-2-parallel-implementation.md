@@ -100,3 +100,28 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   `C:\Users\adams\projects\nlp-stock-prediction-phase2-venv` because the shell PATH pointed at an
   unrelated project venv. Baseline integration checks passed: `python -m pytest` reported
   166 passed and 3 expected skips; `ruff check .`, `ruff format --check .`, and `mypy .` passed.
+- 2026-05-11-14-28: Lane C handoff received on `codex/lane-c-extraction` at commit `4bcb742`.
+  Coordinator review found no contract drift or ownership issue. Independent checks passed:
+  focused Lane C tests reported 9 passed and 1 expected skip; `ruff check .`,
+  `ruff format --check .`, and `mypy .` passed. Lane C is ready to merge after lanes A and B.
+- 2026-05-11-14-34: Lane A handoff received on `codex/lane-a-reddit-evidence` at commit
+  `15319fa`. Coordinator review found no contract drift or ownership issue. Independent checks
+  passed: focused Lane A tests reported 14 passed; `ruff check .`, `ruff format --check .`, and
+  `mypy .` passed. Lane A is ready to merge first.
+- 2026-05-11-14-35: Lane F handoff received on `codex/lane-f-reliability-ci` at commit `f787ea8`.
+  Coordinator review found no contract drift or ownership issue. Independent checks passed:
+  focused Lane F tests reported 15 passed and 2 expected skips; `ruff check .`,
+  `ruff format --check .`, and `mypy .` passed. Lane F is ready to merge after lanes A-E.
+- 2026-05-11-14-39: Lane D handoff received on `codex/lane-d-analysis-scoring` at commit
+  `0c584cf`. Coordinator review found no contract drift or ownership issue. Independent checks
+  passed: focused Lane D tests reported 9 passed; `ruff check .`, `ruff format --check .`, and
+  `mypy .` passed. Lane D is ready to merge after Lane C.
+- 2026-05-11-14-43: Lane B handoff received on `codex/lane-b-providers` at commit `16795f2`.
+  Coordinator review found no contract drift, but found a FRED mapping exception path that could
+  escape instead of returning `ProviderResult` warnings. Sent Lane B back for a targeted patch and
+  test before integration.
+- 2026-05-11-14-46: Lane E handoff received on `codex/lane-e-report-cli` at commit `1cc1907`.
+  Coordinator review found no contract drift or ownership issue. Independent checks passed:
+  focused CLI/report tests reported 28 passed; e2e selection reported 2 passed and 1 expected
+  legacy placeholder skip; `ruff check .`, `ruff format --check .`, and `mypy .` passed. Lane E is
+  ready to merge after Lane D.
