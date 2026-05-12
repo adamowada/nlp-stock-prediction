@@ -43,13 +43,17 @@ def test_signal_funnel_stage0_dry_run_writes_manifest_and_leaderboard(tmp_path: 
 
     assert manifest["schema_version"] == "ml.timesfm.signal_funnel_manifest.v1"
     assert manifest["run_id"] == "stage0-dry-run"
-    assert manifest["implemented_stages"] == ["data_check"]
+    assert manifest["implemented_stages"] == ["data_check", "baseline_screen"]
     assert manifest["skipped_stages"][0]["reason"] == "stage_not_implemented"
+    assert len(leaderboard["rows"]) == 2
     assert leaderboard["rows"][0]["symbol"] == "MU"
     assert leaderboard["rows"][0]["status"] == "passed"
     assert leaderboard["rows"][0]["decision"] == "continue"
     assert leaderboard["rows"][0]["selected_for_next_stage"] is True
     assert leaderboard["rows"][0]["dataset_hash"] is None
+    assert leaderboard["rows"][1]["stage"] == "baseline_screen"
+    assert leaderboard["rows"][1]["status"] == "skipped"
+    assert leaderboard["rows"][1]["kill_reason"] == "dry_run_no_csv_loaded"
     assert csv_rows[0]["symbol"] == "MU"
     assert csv_rows[0]["status"] == "passed"
 
@@ -86,6 +90,8 @@ def test_signal_funnel_stage0_marks_limited_test_windows_research_only(
             "0",
             "--device",
             "cpu",
+            "--stop-after",
+            "data_check",
         ]
     )
 
@@ -134,6 +140,8 @@ def test_signal_funnel_stage0_records_dataset_validation_failure(
             "0",
             "--device",
             "cpu",
+            "--stop-after",
+            "data_check",
         ]
     )
 
@@ -147,6 +155,121 @@ def test_signal_funnel_stage0_records_dataset_validation_failure(
     assert row["latest_bar"] == "2026-05-11"
     assert "insufficient history" in row["kill_reason"]
     assert row["selected_for_next_stage"] is False
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage1_writes_baseline_and_technical_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage1-baselines",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+        ]
+    )
+
+    assert exit_code == 0
+    leaderboard = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))
+    records = leaderboard["rows"]
+    methods = {row["method"]: row for row in records}
+
+    assert len(records) == 4
+    assert records[0]["stage"] == "data_check"
+    assert {
+        "last_close_persistence",
+        "recent_mean_return",
+        "deterministic_technical_analysis",
+    } <= set(methods)
+    last_close = methods["last_close_persistence"]
+    recent_mean = methods["recent_mean_return"]
+    technical = methods["deterministic_technical_analysis"]
+
+    assert last_close["stage"] == "baseline_screen"
+    assert last_close["status"] == "passed"
+    assert last_close["decision"] == "continue"
+    assert last_close["max_windows"] == 16
+    assert last_close["rmse"] >= 0
+    assert last_close["best_baseline_rmse"] >= 0
+    assert last_close["directional_accuracy"] >= 0
+    assert last_close["best_baseline_directional_accuracy"] >= 0
+    assert "sample_count=16" in last_close["notes"]
+    assert recent_mean["rmse_ratio_vs_best_baseline"] is not None
+    assert technical["rmse"] is None
+    assert "signal=" in technical["notes"]
+    assert "trend=" in technical["notes"]
+    assert technical["selected_for_next_stage"] is True
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage1_skips_after_failed_data_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    csv_path = tmp_path / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=40)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage1-skip",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+        ]
+    )
+
+    assert exit_code == 1
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    assert records[0]["stage"] == "data_check"
+    assert records[0]["status"] == "failed"
+    assert records[1]["stage"] == "baseline_screen"
+    assert records[1]["status"] == "skipped"
+    assert records[1]["kill_reason"] == "data_check_failed"
 
 
 def _ohlcv_rows(last_day: str, *, count: int) -> list[dict[str, str]]:

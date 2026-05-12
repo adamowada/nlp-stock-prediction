@@ -12,8 +12,15 @@ from typing import Any, Literal, cast
 
 from pydantic import Field
 
+from nlp_stock_prediction.analysis.technical import analyze_technical_snapshot
+from nlp_stock_prediction.contracts import MarketSnapshot
 from nlp_stock_prediction.contracts.base import ContractModel, NonEmptyStr, TickerSymbol
-from nlp_stock_prediction.ml.timesfm.dataset import TimesFmDatasetConfig, build_timesfm_dataset
+from nlp_stock_prediction.ml.timesfm.dataset import (
+    TimesFmDataset,
+    TimesFmDatasetConfig,
+    TimesFmWindow,
+    build_timesfm_dataset,
+)
 from nlp_stock_prediction.ml.timesfm.focused_hpo import (
     DEFAULT_AS_OF,
     DEFAULT_SYMBOLS,
@@ -27,7 +34,7 @@ from nlp_stock_prediction.ml.train import load_price_bars_csv
 
 DEFAULT_OUTPUT_ROOT = Path("artifacts/ml/timesfm-funnel")
 DEFAULT_DATA_DIR = Path("data/ml/wsb_10y")
-IMPLEMENTED_STAGES = ("data_check",)
+IMPLEMENTED_STAGES = ("data_check", "baseline_screen")
 FUNNEL_STAGES = (
     "data_check",
     "baseline_screen",
@@ -125,6 +132,13 @@ class _WindowCounts(ContractModel):
     purged: int = Field(ge=0)
 
 
+class _BaselineMetrics(ContractModel):
+    name: NonEmptyStr
+    rmse: float = Field(ge=0.0)
+    directional_accuracy: float = Field(ge=0.0, le=1.0)
+    sample_count: int = Field(ge=0)
+
+
 def run_signal_funnel(args: argparse.Namespace) -> int:
     """Run the implemented signal-funnel stages and write manifest/leaderboard artifacts."""
 
@@ -182,6 +196,22 @@ def run_signal_funnel(args: argparse.Namespace) -> int:
         )
         rows.append(row)
         manifest["records"].append(row.model_dump(mode="json"))
+        _write_signal_funnel_outputs(output_root, manifest, rows)
+        if _should_stop_after("data_check", args.stop_after):
+            continue
+        print(f"{symbol}: baseline_screen")
+        baseline_rows = _run_baseline_screen(
+            symbol,
+            policy,
+            data_check_row=row,
+            args=args,
+            data_dir=data_dir,
+            as_of=as_of,
+            run_id=run_id,
+            created_at=created_at,
+        )
+        rows.extend(baseline_rows)
+        manifest["records"].extend(row.model_dump(mode="json") for row in baseline_rows)
         _write_signal_funnel_outputs(output_root, manifest, rows)
 
     return 0 if all(row.status != "failed" for row in rows) else 1
@@ -290,6 +320,249 @@ def _run_data_check(
         )
 
 
+def _run_baseline_screen(
+    symbol: str,
+    policy: TickerPolicy,
+    *,
+    data_check_row: SignalFunnelLeaderboardRow,
+    args: argparse.Namespace,
+    data_dir: Path,
+    as_of: date,
+    run_id: str,
+    created_at: str,
+) -> tuple[SignalFunnelLeaderboardRow, ...]:
+    started_at = time.perf_counter()
+    if data_check_row.status == "failed":
+        return (
+            _baseline_leaderboard_row(
+                run_id=run_id,
+                created_at=created_at,
+                as_of=as_of,
+                symbol=symbol,
+                policy=policy,
+                args=args,
+                data_check_row=data_check_row,
+                method="baseline_screen",
+                status="skipped",
+                decision="stop",
+                kill_reason="data_check_failed",
+                runtime_seconds=_elapsed_seconds(started_at),
+                notes="baseline_screen skipped because data_check failed",
+            ),
+        )
+    if args.dry_run:
+        return (
+            _baseline_leaderboard_row(
+                run_id=run_id,
+                created_at=created_at,
+                as_of=as_of,
+                symbol=symbol,
+                policy=policy,
+                args=args,
+                data_check_row=data_check_row,
+                method="baseline_screen",
+                status="skipped",
+                decision="audit_only",
+                kill_reason="dry_run_no_csv_loaded",
+                runtime_seconds=_elapsed_seconds(started_at),
+                notes="baseline_screen requires real OHLCV rows and is skipped during dry-run",
+            ),
+        )
+
+    try:
+        bars = load_price_bars_csv(data_dir / f"{symbol}.csv", ticker=symbol)
+        dataset = build_timesfm_dataset(
+            symbol,
+            bars,
+            config=TimesFmDatasetConfig(
+                context_length=args.context_length,
+                horizon_length=args.horizon_length,
+                target_field=args.target_field,
+                as_of=as_of,
+                max_latest_bar_age_days=args.max_latest_bar_age_days,
+            ),
+        )
+        windows = _screen_windows(dataset, max_windows=args.screen_max_windows)
+        baseline_metrics = _baseline_metrics(windows)
+        best_rmse = min(metric.rmse for metric in baseline_metrics)
+        best_directional_accuracy = max(metric.directional_accuracy for metric in baseline_metrics)
+        status: FunnelStatus = (
+            "research_only" if data_check_row.status == "research_only" else "passed"
+        )
+        decision: FunnelDecision = (
+            "audit_only" if data_check_row.status == "research_only" else "continue"
+        )
+        selected_for_next_stage = data_check_row.status == "passed"
+        runtime_seconds = _elapsed_seconds(started_at)
+        rows: list[SignalFunnelLeaderboardRow] = [
+            _baseline_leaderboard_row(
+                run_id=run_id,
+                created_at=created_at,
+                as_of=as_of,
+                symbol=symbol,
+                policy=policy,
+                args=args,
+                data_check_row=data_check_row,
+                method=metric.name,
+                status=status,
+                decision=decision,
+                kill_reason=data_check_row.kill_reason if status == "research_only" else None,
+                runtime_seconds=runtime_seconds,
+                rmse=metric.rmse,
+                best_baseline_rmse=best_rmse,
+                rmse_ratio_vs_best_baseline=_safe_ratio(metric.rmse, best_rmse),
+                directional_accuracy=metric.directional_accuracy,
+                best_baseline_directional_accuracy=best_directional_accuracy,
+                directional_delta_vs_best_baseline=round(
+                    metric.directional_accuracy - best_directional_accuracy,
+                    8,
+                ),
+                selected_for_next_stage=selected_for_next_stage,
+                notes=f"sample_count={metric.sample_count}",
+            )
+            for metric in baseline_metrics
+        ]
+        technical = analyze_technical_snapshot(
+            MarketSnapshot(ticker=symbol, bars=tuple(bars)),
+            as_of=as_of,
+        )
+        rows.append(
+            _baseline_leaderboard_row(
+                run_id=run_id,
+                created_at=created_at,
+                as_of=as_of,
+                symbol=symbol,
+                policy=policy,
+                args=args,
+                data_check_row=data_check_row,
+                method="deterministic_technical_analysis",
+                status=status,
+                decision=decision,
+                kill_reason=data_check_row.kill_reason if status == "research_only" else None,
+                runtime_seconds=runtime_seconds,
+                selected_for_next_stage=selected_for_next_stage,
+                notes=(
+                    f"signal={technical.signal.value}; trend={technical.trend}; "
+                    f"confidence={technical.confidence:.4f}; summary={technical.summary}"
+                ),
+            )
+        )
+        return tuple(rows)
+    except Exception as exc:
+        return (
+            _baseline_leaderboard_row(
+                run_id=run_id,
+                created_at=created_at,
+                as_of=as_of,
+                symbol=symbol,
+                policy=policy,
+                args=args,
+                data_check_row=data_check_row,
+                method="baseline_screen",
+                status="failed",
+                decision="stop",
+                kill_reason=str(exc),
+                runtime_seconds=_elapsed_seconds(started_at),
+                notes="baseline_screen failed before raw TimesFM screening could run",
+            ),
+        )
+
+
+def _screen_windows(dataset: TimesFmDataset, *, max_windows: int) -> tuple[TimesFmWindow, ...]:
+    windows = tuple(sorted(dataset.validation_windows, key=lambda window: window.context_end_index))
+    return windows[-max_windows:] if len(windows) > max_windows else windows
+
+
+def _baseline_metrics(windows: Sequence[TimesFmWindow]) -> tuple[_BaselineMetrics, ...]:
+    persistence_predictions: list[float] = []
+    persistence_returns: list[float] = []
+    recent_mean_predictions: list[float] = []
+    recent_mean_returns: list[float] = []
+    actual_values: list[float] = []
+    actual_returns: list[float] = []
+    for window in windows:
+        context_final = window.context_values[-1]
+        actual_final = window.future_values[-1]
+        recent_mean_final = _recent_mean_return_prediction(window)
+        actual_values.append(actual_final)
+        actual_returns.append(_safe_return(actual_final, context_final))
+        persistence_predictions.append(context_final)
+        persistence_returns.append(0.0)
+        recent_mean_predictions.append(recent_mean_final)
+        recent_mean_returns.append(_safe_return(recent_mean_final, context_final))
+    return (
+        _metric_summary(
+            "last_close_persistence",
+            predictions=persistence_predictions,
+            actual_values=actual_values,
+            predicted_returns=persistence_returns,
+            actual_returns=actual_returns,
+        ),
+        _metric_summary(
+            "recent_mean_return",
+            predictions=recent_mean_predictions,
+            actual_values=actual_values,
+            predicted_returns=recent_mean_returns,
+            actual_returns=actual_returns,
+        ),
+    )
+
+
+def _metric_summary(
+    name: str,
+    *,
+    predictions: Sequence[float],
+    actual_values: Sequence[float],
+    predicted_returns: Sequence[float],
+    actual_returns: Sequence[float],
+) -> _BaselineMetrics:
+    if not predictions:
+        return _BaselineMetrics(name=name, rmse=0.0, directional_accuracy=0.0, sample_count=0)
+    squared_errors = [
+        (prediction - actual) ** 2
+        for prediction, actual in zip(predictions, actual_values, strict=True)
+    ]
+    direction_hits = [
+        int(_direction(predicted) == _direction(actual))
+        for predicted, actual in zip(predicted_returns, actual_returns, strict=True)
+    ]
+    return _BaselineMetrics(
+        name=name,
+        rmse=round((sum(squared_errors) / len(squared_errors)) ** 0.5, 8),
+        directional_accuracy=round(sum(direction_hits) / len(direction_hits), 8),
+        sample_count=len(predictions),
+    )
+
+
+def _recent_mean_return_prediction(window: TimesFmWindow) -> float:
+    returns = [
+        _safe_return(current, previous)
+        for previous, current in zip(window.context_values, window.context_values[1:], strict=False)
+    ]
+    mean_return = sum(returns) / len(returns) if returns else 0.0
+    return window.context_values[-1] * ((1.0 + mean_return) ** window.horizon_length)
+
+
+def _safe_return(value: float, baseline: float) -> float:
+    if baseline == 0:
+        return 0.0
+    return (value / baseline) - 1.0
+
+
+def _direction(value: float) -> int:
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
+
+
+def _safe_ratio(value: float, baseline: float) -> float | None:
+    if baseline == 0.0:
+        return 0.0 if value == 0.0 else None
+    return round(value / baseline, 8)
+
+
 def _stage0_decision(
     counts: _WindowCounts,
     *,
@@ -387,6 +660,64 @@ def _leaderboard_row(
     )
 
 
+def _baseline_leaderboard_row(
+    *,
+    run_id: str,
+    created_at: str,
+    as_of: date,
+    symbol: str,
+    policy: TickerPolicy,
+    args: argparse.Namespace,
+    data_check_row: SignalFunnelLeaderboardRow,
+    method: str,
+    status: FunnelStatus,
+    decision: FunnelDecision,
+    kill_reason: str | None,
+    runtime_seconds: float,
+    notes: str | None,
+    rmse: float | None = None,
+    best_baseline_rmse: float | None = None,
+    rmse_ratio_vs_best_baseline: float | None = None,
+    directional_accuracy: float | None = None,
+    best_baseline_directional_accuracy: float | None = None,
+    directional_delta_vs_best_baseline: float | None = None,
+    selected_for_next_stage: bool = False,
+) -> SignalFunnelLeaderboardRow:
+    return SignalFunnelLeaderboardRow(
+        run_id=run_id,
+        created_at=created_at,
+        as_of=as_of.isoformat(),
+        symbol=symbol,
+        stage="baseline_screen",
+        method=method,
+        status=status,
+        kill_reason=kill_reason,
+        decision=decision,
+        asset_type=policy.asset_type,
+        history_start=data_check_row.history_start,
+        latest_bar=data_check_row.latest_bar,
+        bar_count=data_check_row.bar_count,
+        train_windows=data_check_row.train_windows,
+        validation_windows=data_check_row.validation_windows,
+        test_windows=data_check_row.test_windows,
+        context_length=args.context_length,
+        horizon_length=args.horizon_length,
+        max_windows=args.screen_max_windows,
+        runtime_seconds=runtime_seconds,
+        device=args.device,
+        dataset_hash=data_check_row.dataset_hash,
+        rmse=rmse,
+        best_baseline_rmse=best_baseline_rmse,
+        rmse_ratio_vs_best_baseline=rmse_ratio_vs_best_baseline,
+        directional_accuracy=directional_accuracy,
+        best_baseline_directional_accuracy=best_baseline_directional_accuracy,
+        directional_delta_vs_best_baseline=directional_delta_vs_best_baseline,
+        selected_for_next_stage=selected_for_next_stage,
+        promoted_for_scoring=False,
+        notes=notes,
+    )
+
+
 def _stage0_notes(data_record: dict[str, Any], counts: _WindowCounts) -> str:
     metadata = data_record.get("metadata")
     source = metadata.get("source") if isinstance(metadata, dict) else None
@@ -430,6 +761,10 @@ def _elapsed_seconds(started_at: float) -> float:
     return round(time.perf_counter() - started_at, 6)
 
 
+def _should_stop_after(completed_stage: FunnelStage, requested_stop_after: str) -> bool:
+    return FUNNEL_STAGES.index(completed_stage) >= FUNNEL_STAGES.index(requested_stop_after)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the signal-funnel CLI parser."""
 
@@ -449,8 +784,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--stop-after",
         choices=FUNNEL_STAGES,
-        default="data_check",
-        help="Only data_check is implemented in this stage-0 slice.",
+        default="baseline_screen",
+        help=(
+            "Stop after the named funnel stage; stages after baseline_screen are not "
+            "implemented yet."
+        ),
     )
     parser.add_argument("--context-length", type=int, default=128)
     parser.add_argument("--horizon-length", type=int, default=16)

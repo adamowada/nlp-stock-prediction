@@ -429,3 +429,8 @@ Optional CUDA verification:
 
 - 2026-05-12: Drafted the execution plan after reviewing the current focused HPO, TimesFM
   evaluation, and scoring guardrail workflow.
+- 2026-05-12: Implemented Stage 0 `data_check` with focused data reuse, dataset validation,
+  incremental manifest/leaderboard output, dry-run support, and unit coverage.
+- 2026-05-12: Implemented Stage 1 `baseline_screen` with cheap last-close and recent-mean-return
+  validation-window baselines plus deterministic technical-analysis snapshot rows, while keeping
+  dry-run and failed data checks auditable as skipped baseline rows.
