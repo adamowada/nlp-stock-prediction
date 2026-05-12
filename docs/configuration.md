@@ -136,11 +136,21 @@ Local training data and artifacts should stay outside git. The repo ignores `dat
 - `volume`
 - optional `adjusted_close`
 
+Use `--as-of` with `--max-latest-bar-age-days` when the training CSV is expected to be current.
+That gate rejects stale local data and bars dated after the as-of value, which protects local
+experiments from accidental lookahead leakage.
+
 Example CPU training command:
 
 ```sh
-python -m nlp_stock_prediction.ml.train --csv data/ml/TSLA.csv --ticker TSLA --output-dir artifacts/ml/TSLA --device cpu
+python -m nlp_stock_prediction.ml.train --csv data/ml/TSLA.csv --ticker TSLA --output-dir artifacts/ml/TSLA --device cpu --as-of 2026-05-11 --max-latest-bar-age-days 5
 ```
+
+Training writes `model.json`, `metrics.json`, and `metadata.json`. The metadata artifact records the
+seed, hyperparameters, temporal split, purged validation gap, train/validation metrics, dataset hash,
+model hash, model and metrics artifact SHA-256 hashes, Python/runtime metadata, execution backend,
+selected device, CUDA availability, GPU name when detected, and the usage limitation text. The CLI
+stdout also returns the metadata artifact SHA-256 hash for external run manifests.
 
 When running from an uninstalled source checkout, set `PYTHONPATH=src` or install the package in
 editable mode before using `python -m`.

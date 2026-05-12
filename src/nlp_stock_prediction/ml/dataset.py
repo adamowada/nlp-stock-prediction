@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from math import isfinite, sqrt
 
@@ -43,6 +43,16 @@ class TechnicalDatasetConfig(ContractModel):
     minimum_rows: int = Field(default=3, ge=1)
     split_like_move_threshold_pct: float = Field(default=0.40, gt=0.0, lt=1.0)
     adjustment_ratio_drift_threshold_pct: float = Field(default=0.05, gt=0.0, lt=1.0)
+    as_of: date | datetime | None = None
+    max_latest_bar_age_days: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_freshness_gate(self) -> TechnicalDatasetConfig:
+        if self.max_latest_bar_age_days is not None and self.as_of is None:
+            raise ValueError("max_latest_bar_age_days requires as_of")
+        if isinstance(self.as_of, datetime):
+            _require_aware_datetime(self.as_of, field_name="as_of")
+        return self
 
 
 class TechnicalFeatureRow(ContractModel):
@@ -163,6 +173,10 @@ def build_technical_dataset(
             "feature_window": settings.feature_window,
             "feature_policy": "features use current and historical bars only",
             "label_policy": "binary target is based on forward close return",
+            "latest_bar_timestamp": _timestamp_to_string(sorted_bars[-1].timestamp),
+            "as_of": _timestamp_to_string(settings.as_of) if settings.as_of is not None else None,
+            "max_latest_bar_age_days": settings.max_latest_bar_age_days,
+            "row_count": len(row_tuple),
             "not_advice": True,
         },
     )
@@ -203,12 +217,13 @@ def _validate_bars(
         raise DatasetValidationError(
             f"insufficient history: need at least {required_count} bars, got {len(bars)}"
         )
+    _validate_freshness(bars, config)
 
     timestamps: set[int] = set()
     adjusted_close_presence: list[bool] = []
     previous_close: Decimal | None = None
     previous_adjustment_ratio: Decimal | None = None
-    for index, bar in enumerate(bars):
+    for bar in bars:
         if bar.ticker != ticker.upper():
             raise DatasetValidationError("ticker mismatch between requested ticker and bars")
         timestamp_key = _timestamp_key(bar.timestamp)
@@ -241,14 +256,28 @@ def _validate_bars(
                 "split leakage: partial adjusted_close history can leak split adjustments"
             )
 
-        if (
-            index == len(bars) - 1
-            and any(adjusted_close_presence)
-            and not all(adjusted_close_presence)
-        ):
-            raise DatasetValidationError(
-                "split leakage: partial adjusted_close history can leak split adjustments"
-            )
+    if any(adjusted_close_presence) and not all(adjusted_close_presence):
+        raise DatasetValidationError(
+            "split leakage: partial adjusted_close history can leak split adjustments"
+        )
+
+
+def _validate_freshness(
+    bars: Sequence[PriceBar],
+    config: TechnicalDatasetConfig,
+) -> None:
+    if config.as_of is None:
+        return
+    latest_timestamp = bars[-1].timestamp
+    if _timestamp_after(latest_timestamp, config.as_of):
+        raise DatasetValidationError("lookahead leakage: latest bar is after dataset as_of")
+    if config.max_latest_bar_age_days is None:
+        return
+    age_days = (_calendar_date(config.as_of) - _calendar_date(latest_timestamp)).days
+    if age_days > config.max_latest_bar_age_days:
+        raise DatasetValidationError(
+            "stale data: latest bar is older than the configured freshness gate"
+        )
 
 
 def _validate_ohlcv_fields(bar: PriceBar) -> None:
@@ -331,7 +360,7 @@ def _hash_dataset(
 ) -> str:
     payload = {
         "ticker": ticker.upper(),
-        "config": config.model_dump(mode="json"),
+        "config": _feature_config_payload(config),
         "feature_names": tuple(feature_names),
         "rows": [
             {
@@ -348,6 +377,13 @@ def _hash_dataset(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _feature_config_payload(config: TechnicalDatasetConfig) -> dict[str, object]:
+    payload = config.model_dump(mode="json")
+    payload.pop("as_of", None)
+    payload.pop("max_latest_bar_age_days", None)
+    return payload
+
+
 def _timestamp_key(value: date | datetime) -> int:
     if isinstance(value, datetime):
         return int(value.timestamp())
@@ -356,6 +392,28 @@ def _timestamp_key(value: date | datetime) -> int:
 
 def _timestamp_to_string(value: date | datetime) -> str:
     return value.isoformat()
+
+
+def _calendar_date(value: date | datetime) -> date:
+    if isinstance(value, datetime):
+        return _utc_datetime(value).date()
+    return value
+
+
+def _timestamp_after(left: date | datetime, right: date | datetime) -> bool:
+    if isinstance(left, datetime) and isinstance(right, datetime):
+        return _utc_datetime(left) > _utc_datetime(right)
+    return _calendar_date(left) > _calendar_date(right)
+
+
+def _utc_datetime(value: datetime) -> datetime:
+    _require_aware_datetime(value, field_name="timestamp")
+    return value.astimezone(UTC)
+
+
+def _require_aware_datetime(value: datetime, *, field_name: str) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} datetime must include a timezone")
 
 
 def _as_decimal(value: object) -> Decimal:

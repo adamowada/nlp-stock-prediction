@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -59,6 +59,29 @@ def _bars(count: int = 17) -> tuple[PriceBar, ...]:
     return tuple(bars)
 
 
+def _replace_bar(
+    bar: PriceBar,
+    *,
+    timestamp: date | datetime | None = None,
+    close: Decimal | None = None,
+    volume: int | None = None,
+    adjusted_close: Decimal | None = None,
+) -> PriceBar:
+    new_close = close if close is not None else bar.close
+    high = max(bar.open, new_close, bar.high)
+    low = min(bar.open, new_close, bar.low)
+    return PriceBar(
+        ticker=bar.ticker,
+        timestamp=timestamp if timestamp is not None else bar.timestamp,
+        open=bar.open,
+        high=high,
+        low=low,
+        close=new_close,
+        volume=volume if volume is not None else bar.volume,
+        adjusted_close=adjusted_close,
+    )
+
+
 @pytest.mark.unit
 def test_build_technical_dataset_derives_features_and_forward_labels() -> None:
     config = TechnicalDatasetConfig(feature_window=4, label_horizon_sessions=2)
@@ -85,6 +108,43 @@ def test_build_technical_dataset_derives_features_and_forward_labels() -> None:
     assert first.forward_return == pytest.approx(expected_forward_return)
     assert first.target == int(expected_forward_return > 0.0)
     assert all(isinstance(value, float) for value in first.feature_values)
+
+
+@pytest.mark.unit
+def test_feature_rows_do_not_change_when_unseen_future_bars_change() -> None:
+    config = TechnicalDatasetConfig(feature_window=4, label_horizon_sessions=2)
+    base_bars = list(_bars(20))
+    altered_bars = list(base_bars)
+    sentinel_timestamp = altered_bars[14].timestamp
+    altered_bars[14] = _replace_bar(
+        altered_bars[14],
+        close=(altered_bars[14].close * Decimal("1.10")).quantize(Decimal("0.0001")),
+        volume=altered_bars[14].volume * 9,
+    )
+
+    base = build_technical_dataset("TSLA", base_bars, config=config)
+    altered = build_technical_dataset("TSLA", altered_bars, config=config)
+
+    unchanged_pairs = [
+        (base_row, altered_row)
+        for base_row, altered_row in zip(base.rows, altered.rows, strict=True)
+        if base_row.label_end < sentinel_timestamp
+    ]
+    changed_pairs = [
+        (base_row, altered_row)
+        for base_row, altered_row in zip(base.rows, altered.rows, strict=True)
+        if base_row.label_end == sentinel_timestamp
+    ]
+
+    assert unchanged_pairs
+    assert changed_pairs
+    for base_row, altered_row in unchanged_pairs:
+        assert altered_row.feature_values == base_row.feature_values
+        assert altered_row.forward_return == base_row.forward_return
+    assert any(
+        altered_row.forward_return != base_row.forward_return
+        for base_row, altered_row in changed_pairs
+    )
 
 
 @pytest.mark.unit
@@ -142,6 +202,81 @@ def test_dataset_rejects_split_like_leakage() -> None:
 
     with pytest.raises(DatasetValidationError, match="split leakage"):
         build_technical_dataset("TSLA", bars)
+
+
+@pytest.mark.unit
+def test_dataset_rejects_partial_adjusted_close_history() -> None:
+    bars = [_replace_bar(bar, adjusted_close=bar.close * Decimal("0.99")) for bar in _bars(10)]
+    bars[6] = _replace_bar(bars[6], adjusted_close=None)
+
+    with pytest.raises(DatasetValidationError, match="partial adjusted_close"):
+        build_technical_dataset("TSLA", bars)
+
+
+@pytest.mark.unit
+def test_dataset_rejects_stale_or_future_bars_when_as_of_gate_is_configured() -> None:
+    stale_config = TechnicalDatasetConfig(
+        feature_window=4,
+        label_horizon_sessions=2,
+        as_of=RUN_DATE + timedelta(days=10),
+        max_latest_bar_age_days=5,
+    )
+
+    with pytest.raises(DatasetValidationError, match="stale data"):
+        build_technical_dataset("TSLA", _bars(17), config=stale_config)
+
+    future_config = TechnicalDatasetConfig(
+        feature_window=4,
+        label_horizon_sessions=2,
+        as_of=RUN_DATE - timedelta(days=1),
+        max_latest_bar_age_days=5,
+    )
+
+    with pytest.raises(DatasetValidationError, match="lookahead leakage"):
+        build_technical_dataset("TSLA", _bars(17), config=future_config)
+
+
+@pytest.mark.unit
+def test_dataset_rejects_intraday_future_bars_when_as_of_is_datetime() -> None:
+    start = datetime(2026, 5, 11, 0, 0, tzinfo=UTC)
+    bars = tuple(
+        _replace_bar(bar, timestamp=start + timedelta(hours=index))
+        for index, bar in enumerate(_bars(17))
+    )
+    config = TechnicalDatasetConfig(
+        feature_window=4,
+        label_horizon_sessions=2,
+        as_of=start + timedelta(hours=15),
+        max_latest_bar_age_days=1,
+    )
+
+    with pytest.raises(DatasetValidationError, match="lookahead leakage"):
+        build_technical_dataset("TSLA", bars, config=config)
+
+
+@pytest.mark.unit
+def test_freshness_gate_requires_as_of_and_aware_datetime() -> None:
+    with pytest.raises(ValueError, match="requires as_of"):
+        TechnicalDatasetConfig(max_latest_bar_age_days=5)
+
+    with pytest.raises(ValueError, match="timezone"):
+        TechnicalDatasetConfig(as_of=datetime(2026, 5, 11, 12, 0))
+
+
+@pytest.mark.unit
+def test_freshness_gate_metadata_does_not_change_dataset_hash() -> None:
+    base_config = TechnicalDatasetConfig(feature_window=4, label_horizon_sessions=2)
+    gated_config = TechnicalDatasetConfig(
+        feature_window=4,
+        label_horizon_sessions=2,
+        as_of=RUN_DATE,
+        max_latest_bar_age_days=5,
+    )
+
+    base = build_technical_dataset("TSLA", _bars(17), config=base_config)
+    gated = build_technical_dataset("TSLA", _bars(17), config=gated_config)
+
+    assert gated.dataset_hash == base.dataset_hash
 
 
 @pytest.mark.unit

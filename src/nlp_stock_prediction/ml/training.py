@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import platform
 import random
+import sys
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from math import exp, isfinite, log, sqrt
@@ -137,6 +139,7 @@ class TrainingResult(ContractModel):
     validation_metrics: ModelMetrics
     dataset_hash: NonEmptyStr
     trained_at: AwareDatetime
+    runtime_metadata: JsonObject = Field(default_factory=dict)
     usage_limitations: NonEmptyStr = USAGE_LIMITATIONS
 
 
@@ -146,6 +149,9 @@ class TrainingArtifactPaths(ContractModel):
     model_path: Path
     metrics_path: Path
     metadata_path: Path
+    model_sha256: NonEmptyStr
+    metrics_sha256: NonEmptyStr
+    metadata_sha256: NonEmptyStr
 
 
 def detect_training_device(requested_device: DeviceRequest = "auto") -> TrainingDeviceMetadata:
@@ -173,12 +179,12 @@ def detect_training_device(requested_device: DeviceRequest = "auto") -> Training
     if requested_device == "cuda" and not cuda_available:
         raise RuntimeError("CUDA was requested but no CUDA device is available")
 
-    selected_device: SelectedDevice = (
-        "cuda" if requested_device != "cpu" and cuda_available else "cpu"
-    )
+    selected_device: SelectedDevice = "cpu"
     backend = "pure-python-logistic-regression"
-    if selected_device == "cuda":
-        notes.append("CUDA detected and recorded; current baseline still trains on CPU")
+    if cuda_available and requested_device == "cuda":
+        notes.append("CUDA was requested and detected; current baseline still executes on CPU")
+    elif cuda_available:
+        notes.append("CUDA detected and recorded; current baseline still executes on CPU")
     return TrainingDeviceMetadata(
         requested_device=requested_device,
         selected_device=selected_device,
@@ -251,6 +257,21 @@ def train_technical_model(
     )
     train_evaluation = evaluate_model(model, split.train_rows)
     validation_evaluation = evaluate_model(model, split.validation_rows)
+    runtime_metadata = _runtime_metadata(device)
+    model = TechnicalLogisticModel.model_validate(
+        {
+            **model.model_dump(mode="python"),
+            "training_metadata": {
+                **dict(model.training_metadata),
+                "model_hash": model.model_hash,
+                "feature_count": len(model.feature_names),
+                "split": _split_metadata(split),
+                "train_metrics": train_evaluation.metrics.model_dump(mode="json"),
+                "validation_metrics": validation_evaluation.metrics.model_dump(mode="json"),
+                "runtime": runtime_metadata,
+            },
+        }
+    )
     return TrainingResult(
         model=model,
         config=settings,
@@ -260,6 +281,7 @@ def train_technical_model(
         validation_metrics=validation_evaluation.metrics,
         dataset_hash=dataset.dataset_hash,
         trained_at=trained_at,
+        runtime_metadata=runtime_metadata,
     )
 
 
@@ -286,6 +308,9 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
     metadata_path = output_dir / "metadata.json"
     model_path.write_text(result.model.model_dump_json(indent=2), encoding="utf-8")
     metrics_payload = {
+        "schema_version": "ml.training_metrics.v1",
+        "dataset_hash": result.dataset_hash,
+        "model_hash": result.model.model_hash,
         "train": result.train_metrics.model_dump(mode="json"),
         "validation": result.validation_metrics.model_dump(mode="json"),
         "usage_limitations": result.usage_limitations,
@@ -294,11 +319,23 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
         json.dumps(metrics_payload, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    model_sha256 = _file_sha256(model_path)
+    metrics_sha256 = _file_sha256(metrics_path)
     metadata_payload = {
+        "schema_version": "ml.training_metadata.v1",
         "config": result.config.model_dump(mode="json"),
         "device": result.device.model_dump(mode="json"),
         "dataset_hash": result.dataset_hash,
+        "feature_names": list(result.model.feature_names),
+        "model_artifact_sha256": model_sha256,
         "model_hash": result.model.model_hash,
+        "metrics": {
+            "train": result.train_metrics.model_dump(mode="json"),
+            "validation": result.validation_metrics.model_dump(mode="json"),
+        },
+        "metrics_artifact_sha256": metrics_sha256,
+        "runtime": result.runtime_metadata,
+        "split": _split_metadata(result.split),
         "trained_at": result.trained_at.isoformat(),
         "usage_limitations": result.usage_limitations,
     }
@@ -306,10 +343,14 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
         json.dumps(metadata_payload, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    metadata_sha256 = _file_sha256(metadata_path)
     return TrainingArtifactPaths(
         model_path=model_path,
         metrics_path=metrics_path,
         metadata_path=metadata_path,
+        model_sha256=model_sha256,
+        metrics_sha256=metrics_sha256,
+        metadata_sha256=metadata_sha256,
     )
 
 
@@ -450,6 +491,44 @@ def _hash_model(
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _runtime_metadata(device: TrainingDeviceMetadata) -> JsonObject:
+    return {
+        "python_version": sys.version.split()[0],
+        "python_implementation": platform.python_implementation(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "selected_device": device.selected_device,
+        "cuda_available": device.cuda_available,
+        "gpu_name": device.gpu_name,
+        "cuda_version": device.cuda_version,
+        "backend": device.backend,
+    }
+
+
+def _split_metadata(split: DatasetSplit) -> JsonObject:
+    return {
+        "train_rows": len(split.train_rows),
+        "validation_rows": len(split.validation_rows),
+        "purged_row_count": split.purged_row_count,
+        "train_fraction": split.train_fraction,
+        "train_feature_start": _timestamp_to_string(split.train_rows[0].feature_start),
+        "train_feature_end": _timestamp_to_string(split.train_rows[-1].feature_end),
+        "train_label_end": _timestamp_to_string(split.train_rows[-1].label_end),
+        "validation_feature_start": _timestamp_to_string(split.validation_rows[0].feature_start),
+        "validation_feature_end": _timestamp_to_string(split.validation_rows[-1].feature_end),
+        "validation_label_end": _timestamp_to_string(split.validation_rows[-1].label_end),
+    }
+
+
+def _timestamp_to_string(value: date | datetime) -> str:
+    return value.isoformat()
 
 
 def _infer_feature_window(rows: Sequence[TechnicalFeatureRow]) -> int:

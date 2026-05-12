@@ -414,8 +414,8 @@ Status: provider-level behavior implemented; live orchestration wiring remains i
 - [x] `run --source-mode scrape` or equivalent produces Markdown, JSON, and audit artifacts from
       fixture-backed scrape inputs.
 - [x] Live scraping tests are opt-in, rate-limited, and source-specific.
-- [ ] ML dataset generation has leakage tests and data-quality gates.
-- [ ] RTX 3090 training command records reproducible metrics and model artifact metadata.
+- [x] ML dataset generation has leakage tests and data-quality gates.
+- [x] RTX 3090 training command records reproducible metrics and model artifact metadata.
 - [x] ML signal integrates conservatively into technical analysis and scoring with stale/weak-model
       gates.
 - [x] Codex fundamental analysis agent lane has a strict request/response schema and fixture-backed
@@ -452,8 +452,8 @@ python -m pytest -m live_scraping
 Local GPU training smoke after ML implementation:
 
 ```sh
-python -m nlp_stock_prediction.ml.train --config configs/ml/technical-local.yaml
-python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
+python -m nlp_stock_prediction.ml.train --csv data/ml/TSLA.csv --ticker TSLA --output-dir artifacts/ml/TSLA --device auto --as-of 2026-05-11 --max-latest-bar-age-days 5
+python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json --csv data/ml/TSLA.csv --ticker TSLA --output artifacts/ml/TSLA/evaluation.json
 ```
 
 ## Decision log
@@ -526,3 +526,13 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
   gates, fixture-backed TSLA sidecars in experimental scrape mode, Markdown rendering, provider
   result audit coverage, refreshed analysis-context audit records, and focused tests for ML signal
   conversion, ML score gates, fundamental-agent report integration, and scrape-mode E2E sidecars.
+- 2026-05-12-00-00: Completed the remaining ML acceptance items. Added optional as-of/freshness
+  gates for local OHLCV CSV datasets, explicit lookahead/stale/partial-adjustment tests, future-bar
+  feature-isolation coverage, richer training runtime/split/metric metadata, artifact SHA-256
+  recording, and a CLI training command smoke test that verifies model, metrics, metadata, device,
+  and usage-limitation outputs.
+- 2026-05-12-00-00: Addressed review findings in the ML acceptance slice: datetime as-of checks now
+  compare aware instants instead of calendar dates, stale-age config requires `as_of`, training
+  metadata is rebuilt through validated contracts, CUDA detection is recorded separately from the
+  CPU execution backend, artifact hashes are recomputed in tests, subprocess ML tests use a minimal
+  environment, and the GPU/evaluation smoke commands now match the actual CLI.

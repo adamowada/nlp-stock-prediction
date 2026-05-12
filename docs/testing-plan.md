@@ -28,6 +28,8 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
   ticker false positives.
 - Include ML negative cases for insufficient history, duplicate bars, missing OHLCV, impossible
   prices, split-like leakage, and temporal train/validation leakage.
+- Include local training command smoke coverage that verifies model, metrics, metadata, artifact
+  SHA-256 hashes, split metadata, selected-device metadata, and usage-limitations are written.
 
 ### 2. Schema and model tests
 

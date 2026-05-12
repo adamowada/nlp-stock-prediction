@@ -32,6 +32,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             feature_window=args.feature_window,
             label_horizon_sessions=args.label_horizon,
             positive_return_threshold=args.positive_return_threshold,
+            as_of=_parse_timestamp(args.as_of) if args.as_of else None,
+            max_latest_bar_age_days=args.max_latest_bar_age_days,
         ),
     )
     result = train_technical_model(
@@ -51,10 +53,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "model_path": str(paths.model_path),
                 "metrics_path": str(paths.metrics_path),
                 "metadata_path": str(paths.metadata_path),
+                "artifact_sha256": {
+                    "model": paths.model_sha256,
+                    "metrics": paths.metrics_sha256,
+                    "metadata": paths.metadata_sha256,
+                },
                 "dataset_hash": result.dataset_hash,
                 "model_hash": result.model.model_hash,
                 "selected_device": result.device.selected_device,
+                "backend": result.device.backend,
+                "cuda_available": result.device.cuda_available,
+                "gpu_name": result.device.gpu_name,
+                "device_notes": list(result.device.notes),
                 "validation_accuracy": result.validation_metrics.accuracy,
+                "validation_brier_score": result.validation_metrics.brier_score,
                 "usage_limitations": result.usage_limitations,
             },
             sort_keys=True,
@@ -90,6 +102,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--feature-window", type=int, default=5)
     parser.add_argument("--label-horizon", type=int, default=1)
     parser.add_argument("--positive-return-threshold", type=float, default=0.0)
+    parser.add_argument(
+        "--as-of",
+        help=(
+            "Optional dataset as-of date or aware datetime for stale-data/lookahead checks. "
+            "Examples: 2026-05-11 or 2026-05-11T21:00:00+00:00."
+        ),
+    )
+    parser.add_argument(
+        "--max-latest-bar-age-days",
+        type=int,
+        help="Reject local CSVs whose latest bar is older than this many calendar days.",
+    )
     parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--learning-rate", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=42)
@@ -130,12 +154,14 @@ def _require_cell(row: dict[str, str | None], column: str) -> str:
 
 
 def _parse_timestamp(value: str) -> date | datetime:
-    if "T" in value:
-        parsed = datetime.fromisoformat(value)
+    stripped = value.strip()
+    try:
+        return date.fromisoformat(stripped)
+    except ValueError:
+        parsed = datetime.fromisoformat(stripped)
         if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValueError("datetime CSV timestamps must include a timezone")
+            raise ValueError("datetime CSV timestamps must include a timezone") from None
         return parsed
-    return date.fromisoformat(value)
 
 
 if __name__ == "__main__":
