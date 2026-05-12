@@ -26,6 +26,7 @@ from nlp_stock_prediction.contracts import (
 _IDENTIFIER_PREFIX = "ticker-container-"
 _DEFAULT_SOURCE_URL = "https://www.reddit.com/r/wallstreetbets/"
 _TICKER_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+_DEFAULT_FRESHNESS_WINDOW_SECONDS = 86_400
 
 
 @dataclass(slots=True)
@@ -94,12 +95,20 @@ def discover_tickers_from_devvit_html(
     raw_snapshot_id: str,
     retrieval_method: RetrievalMethod = RetrievalMethod.PUBLIC_SCRAPE,
     provider_name: str = "reddit",
+    observed_at: datetime | None = None,
+    freshness_window_seconds: int = _DEFAULT_FRESHNESS_WINDOW_SECONDS,
 ) -> TickerDiscoveryResult:
     """Parse a Devvit ticker card into a frozen discovery contract."""
 
     parsed = _parse_ticker_containers(html)
     parsed_candidates = parsed.candidates
     source_url = request.source_url or _DEFAULT_SOURCE_URL
+    observed = observed_at or fetched_at
+    freshness_status, freshness_seconds = _freshness(
+        observed_at=observed,
+        fetched_at=fetched_at,
+        freshness_window_seconds=freshness_window_seconds,
+    )
     warnings: list[ProviderWarning] = []
 
     if parsed.invalid_identifiers:
@@ -206,10 +215,13 @@ def discover_tickers_from_devvit_html(
             rank=rank,
             request=request,
             fetched_at=fetched_at,
+            observed_at=observed,
             raw_snapshot_id=raw_snapshot_id,
             retrieval_method=retrieval_method,
             provider_name=provider_name,
             source_url=source_url,
+            freshness_status=freshness_status,
+            freshness_seconds=freshness_seconds,
         )
         for rank, parsed_candidate in enumerate(parsed_candidates)
     )
@@ -267,24 +279,27 @@ def _to_ticker_candidate(
     rank: int,
     request: TickerDiscoveryRequest,
     fetched_at: datetime,
+    observed_at: datetime,
     raw_snapshot_id: str,
     retrieval_method: RetrievalMethod,
     provider_name: str,
     source_url: str,
+    freshness_status: FreshnessStatus,
+    freshness_seconds: int,
 ) -> TickerCandidate:
     provenance = SourceProvenance(
         provider_name=provider_name,
         source_kind=SourceKind.REDDIT_TICKER_CARD,
         retrieval_method=retrieval_method,
         fetched_at=fetched_at,
-        observed_at=fetched_at,
+        observed_at=observed_at,
         source_url=source_url,
         raw_identifier=candidate.raw_identifier,
         raw_snapshot_id=raw_snapshot_id,
         query=request.query,
         cache_key=f"reddit:ticker-card:{request.run_date.isoformat()}",
-        freshness_status=FreshnessStatus.FRESH,
-        freshness_seconds=0,
+        freshness_status=freshness_status,
+        freshness_seconds=freshness_seconds,
         provider_metadata={
             "request_id": request.request_id,
             "candidate_rank": rank,
@@ -299,6 +314,19 @@ def _to_ticker_candidate(
         source_url=source_url,
         provenance=provenance,
     )
+
+
+def _freshness(
+    *,
+    observed_at: datetime,
+    fetched_at: datetime,
+    freshness_window_seconds: int,
+) -> tuple[FreshnessStatus, int]:
+    age_seconds = max(0, int((fetched_at - observed_at).total_seconds()))
+    status = (
+        FreshnessStatus.FRESH if age_seconds <= freshness_window_seconds else FreshnessStatus.STALE
+    )
+    return status, age_seconds
 
 
 def _warning(
