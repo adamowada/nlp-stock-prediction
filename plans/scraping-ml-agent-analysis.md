@@ -499,3 +499,15 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
   orchestration and the broader scraping/ML/Codex-agent milestones remain planned work.
 - 2026-05-12-00-00: Reworked this plan for parallel development with git worktrees, Codex subagent
   packet templates, workstream IDs, branch names, ownership boundaries, and merge order.
+- 2026-05-12-00-00: Tagged and pushed `parallel-worktree-start-2026-05-12` at `81a9bd1`, then
+  launched six Codex worker worktrees from that exact baseline:
+  `codex/scraping-foundation`, `codex/reddit-scraper`, `codex/apnews-scraper`,
+  `codex/candlecharts-feasibility`, `codex/ml-technical-analysis`, and
+  `codex/fundamental-agent`.
+- 2026-05-12-00-00: Integrated the six pushed workstreams into coordinator branch
+  `codex/parallel-integration`, including scraping policy/shared HTML helpers, Reddit public-page
+  scraping, AP News public HTML scraping, Candlecharts feasibility probing, isolated ML dataset and
+  training foundations, and fixture-backed fundamental-agent schemas. Coordinator review adjusted
+  Reddit blocked-policy warnings to match the shared W1 semantics.
+- 2026-05-12-00-00: Final integration verification passed with `299 passed, 3 skipped`,
+  `ruff check src tests`, `ruff format --check src tests`, `mypy .`, and `git diff --check`.
