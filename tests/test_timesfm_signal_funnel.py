@@ -119,40 +119,40 @@ def test_signal_funnel_quick_profile_defaults_to_raw_screen(tmp_path: Path) -> N
 
 @pytest.mark.unit
 def test_signal_funnel_can_load_sp500_universe_from_cache(tmp_path: Path) -> None:
-    output_root = tmp_path / "out"
+    cache_dir = tmp_path / "universes"
+    cache_dir.mkdir()
+    cached_symbols = [f"A{index}" for index in range(401)]
+    (cache_dir / "sp500-symbols.csv").write_text(
+        "symbol\n" + "\n".join(cached_symbols) + "\n",
+        encoding="utf-8",
+    )
+
+    args = signal_funnel.build_parser().parse_args(
+        ["--universe", "sp500", "--universe-cache-dir", str(cache_dir)]
+    )
+    symbols, source = signal_funnel._resolve_symbols(args)
+
+    assert symbols == tuple(cached_symbols)
+    assert source["universe"] == "sp500"
+    assert source["source"] == "cache"
+
+
+@pytest.mark.unit
+def test_signal_funnel_rejects_truncated_sp500_cache(tmp_path: Path) -> None:
     cache_dir = tmp_path / "universes"
     cache_dir.mkdir()
     (cache_dir / "sp500-symbols.csv").write_text("symbol\nMSFT\nGOOG\n", encoding="utf-8")
 
-    exit_code = signal_funnel.main(
-        [
-            "--dry-run",
-            "--universe",
-            "sp500",
-            "--universe-cache-dir",
-            str(cache_dir),
-            "--as-of",
-            "2026-05-11",
-            "--output-root",
-            str(output_root),
-            "--run-id",
-            "sp500-cache",
-            "--device",
-            "cpu",
-            "--stop-after",
-            "data_check",
-        ]
-    )
+    with pytest.raises(ValueError, match="returned only 2 symbols"):
+        signal_funnel._load_sp500_symbols(cache_dir=cache_dir, refresh=False)
 
-    assert exit_code == 0
-    manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
-    leaderboard = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))
 
-    assert manifest["symbols"] == ["MSFT", "GOOG"]
-    assert manifest["symbol_count"] == 2
-    assert manifest["symbol_source"]["universe"] == "sp500"
-    assert manifest["symbol_source"]["source"] == "cache"
-    assert [row["symbol"] for row in leaderboard["rows"]] == ["MSFT", "GOOG"]
+@pytest.mark.unit
+def test_signal_funnel_rejects_empty_explicit_symbols() -> None:
+    args = signal_funnel.build_parser().parse_args(["--symbols", ""])
+
+    with pytest.raises(ValueError, match="at least one symbol is required"):
+        signal_funnel._resolve_symbols(args)
 
 
 @pytest.mark.unit
@@ -534,6 +534,10 @@ def test_signal_funnel_stage2_kills_raw_timesfm_when_materially_worse(
     assert raw_row["rmse_ratio_vs_best_baseline"] > 1.15
     assert raw_row["directional_delta_vs_best_baseline"] < -0.05
     assert raw_row["kill_reason"].startswith("raw_timesfm_underperformed_baselines:")
+
+    candidates = json.loads((output_root / "raw_candidates.json").read_text(encoding="utf-8"))
+    assert candidates["rows"] == []
+    assert _read_csv_rows(output_root / "raw_candidates.csv") == []
 
 
 @pytest.mark.unit

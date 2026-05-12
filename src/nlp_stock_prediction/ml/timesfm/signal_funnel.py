@@ -47,6 +47,7 @@ DEFAULT_UNIVERSE_CACHE_DIR = Path("data/ml/universes")
 SP500_WIKITEXT_URL = (
     "https://en.wikipedia.org/w/index.php?title=List_of_S%26P_500_companies&action=raw"
 )
+SP500_MIN_SYMBOL_COUNT = 400
 UNIVERSE_USER_AGENT = "nlp-stock-prediction-timesfm-funnel/0.1"
 _SP500_SYMBOL_PATTERN = re.compile(r"\{\{(?:NyseSymbol|NasdaqSymbol)\|([^}|<\s]+)")
 _SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
@@ -4140,6 +4141,8 @@ def _raw_candidate_rows(
     for row in rows:
         if row.stage != "raw_timesfm_screen":
             continue
+        if not row.selected_for_next_stage:
+            continue
         if (
             row.rmse is None
             or row.best_baseline_rmse is None
@@ -4178,7 +4181,6 @@ def _raw_candidate_rows(
         )
     candidates.sort(
         key=lambda row: (
-            not row.selected_for_next_stage,
             -row.candidate_score,
             row.rmse_ratio_vs_best_baseline,
             -row.directional_delta_vs_best_baseline,
@@ -4201,9 +4203,9 @@ def _resolve_symbols(args: argparse.Namespace) -> tuple[tuple[str, ...], dict[st
     explicit_sources = [
         source
         for source, is_present in (
-            ("symbols", bool(args.symbols)),
-            ("symbols_file", bool(args.symbols_file)),
-            ("universe", bool(args.universe and args.universe != "focused")),
+            ("symbols", args.symbols is not None),
+            ("symbols_file", args.symbols_file is not None),
+            ("universe", args.universe == "sp500"),
         )
         if is_present
     ]
@@ -4212,9 +4214,11 @@ def _resolve_symbols(args: argparse.Namespace) -> tuple[tuple[str, ...], dict[st
             "--symbols, --symbols-file, and --universe sp500 are mutually exclusive "
             f"(got {', '.join(explicit_sources)})"
         )
-    if args.symbols:
+    if args.symbols is not None:
         return _parse_symbols(args.symbols), {"kind": "symbols", "value": args.symbols}
-    if args.symbols_file:
+    if args.symbols_file is not None:
+        if not args.symbols_file.strip():
+            raise ValueError("--symbols-file cannot be empty")
         path = Path(args.symbols_file)
         return _parse_symbols_file(path), {"kind": "symbols_file", "path": str(path)}
     if args.universe == "sp500":
@@ -4286,7 +4290,9 @@ def _load_sp500_symbols(
 ) -> tuple[tuple[str, ...], dict[str, Any]]:
     cache_path = cache_dir / "sp500-symbols.csv"
     if cache_path.exists() and not refresh:
-        return _read_cached_universe_symbols(cache_path), {
+        symbols = _read_cached_universe_symbols(cache_path)
+        _validate_sp500_symbols(symbols, source=f"cache {cache_path}")
+        return symbols, {
             "kind": "universe",
             "universe": "sp500",
             "source": "cache",
@@ -4303,23 +4309,33 @@ def _load_sp500_symbols(
             "source_url": SP500_WIKITEXT_URL,
             "cache_path": str(cache_path),
         }
-    except Exception:
+    except Exception as exc:
         if cache_path.exists():
-            return _read_cached_universe_symbols(cache_path), {
+            symbols = _read_cached_universe_symbols(cache_path)
+            _validate_sp500_symbols(symbols, source=f"cache {cache_path}")
+            return symbols, {
                 "kind": "universe",
                 "universe": "sp500",
                 "source": "cache_after_fetch_failure",
                 "source_url": SP500_WIKITEXT_URL,
                 "cache_path": str(cache_path),
+                "fetch_error": str(exc),
             }
         raise
 
 
 def _parse_sp500_wikitext(wikitext: str) -> tuple[str, ...]:
     symbols = _dedupe_symbols(match.group(1) for match in _SP500_SYMBOL_PATTERN.finditer(wikitext))
-    if len(symbols) < 400:
-        raise ValueError(f"S&P 500 universe parse returned only {len(symbols)} symbols")
+    _validate_sp500_symbols(symbols, source="Wikipedia wikitext")
     return symbols
+
+
+def _validate_sp500_symbols(symbols: Sequence[str], *, source: str) -> None:
+    if len(symbols) < SP500_MIN_SYMBOL_COUNT:
+        raise ValueError(
+            f"S&P 500 universe {source} returned only {len(symbols)} symbols; "
+            f"expected at least {SP500_MIN_SYMBOL_COUNT}"
+        )
 
 
 def _fetch_text(url: str) -> str:
