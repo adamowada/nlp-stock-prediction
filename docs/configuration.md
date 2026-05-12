@@ -51,8 +51,30 @@ conventions for future live setup or manual adapter wiring:
 | --- | --- |
 | `NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY` | Alpha Vantage market data and fundamentals. |
 | `NLP_STOCK_PREDICTION_FRED_API_KEY` | FRED macro data. |
-| `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | X recent-search social evidence. |
+| `NLP_STOCK_PREDICTION_X_API_KEY` | X App API Key, also called the Consumer Key; used to identify the app and regenerate app-only tokens when needed. |
+| `NLP_STOCK_PREDICTION_X_API_SECRET` | X App API Secret, also called the Consumer Secret; keep secret and use only for token generation or OAuth flows. |
+| `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | X App-only Bearer Token for read-only recent-search requests. |
 | `NLP_STOCK_PREDICTION_NEWS_API_KEY` | Public news provider adapters that require an API key. |
+
+## X API Stock News
+
+Live provider orchestration is not enabled in the current V1 CLI, but the live X provider direction
+is official X API recent search, not browser scraping. X is always treated as a stock-news/social
+evidence source for every discovered ticker once live provider orchestration is enabled.
+
+For each ticker, the app should request the top 50 relevant posts from the X recent-search endpoint:
+
+- Query: `$TICKER lang:en -is:retweet`
+- Result order: `sort_order=relevancy`
+- Result count: `max_results=50`
+
+The provider should authenticate with `NLP_STOCK_PREDICTION_X_BEARER_TOKEN`, request public post
+fields such as `created_at`, `public_metrics`, `lang`, and `author_id`, and preserve the query,
+sort order, returned post IDs, timestamps, metrics, and API response snapshot IDs in provenance and
+audit artifacts. The app intentionally avoids `sort_order=recency` for production stock-news
+evidence because the smoke test showed too much spam/noise. API key and secret values are kept in
+`.env` for completeness and token rotation; normal read-only recent-search calls should use the
+Bearer Token.
 
 ## `.env` Files
 
@@ -61,6 +83,20 @@ commit.
 
 The app does not automatically load `.env` files yet. For now, either set environment variables in
 your shell or load a local `.env` with your own shell tooling before running live smoke checks.
+
+For an X smoke test, create a local `.env` shaped like this and fill in the values from your X
+Developer App's "Keys and tokens" page:
+
+```dotenv
+NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1
+NLP_STOCK_PREDICTION_X_API_KEY=your-consumer-key
+NLP_STOCK_PREDICTION_X_API_SECRET=your-secret-key
+NLP_STOCK_PREDICTION_X_BEARER_TOKEN=your-bearer-token
+```
+
+Do not quote the values unless your shell loader requires it. Do not commit `.env`; `.env` and
+`.env.*` are ignored by git. The app should never print these values in logs, reports, audit
+artifacts, or test failures.
 
 ## Configured Live Smoke Paths
 

@@ -1,0 +1,400 @@
+# Scraping, ML Technical Analysis, And Agent Fundamentals Plan
+
+## Goal
+
+Replace the future live API path with compliance-aware scraping adapters where public HTML is the
+right source, use the official X API for stock-news/social evidence, add a local RTX 3090 training
+pipeline for ML-assisted technical analysis, and introduce a Codex-agent-based NLP fundamental
+analysis lane that produces contract-valid, evidence-grounded outputs for the daily report.
+
+The end state is a report pipeline that can run from scraped public web inputs where allowed,
+degrades visibly when a source blocks scraping or lacks usable data, trains and evaluates a local
+technical-analysis model reproducibly, and separates observed scraped evidence from generated
+analysis and recommendations.
+
+## Non-goals
+
+- Do not bypass robots.txt, paywalls, login walls, anti-bot systems, CAPTCHAs, or platform access
+  controls.
+- Do not use real-money brokerage execution, auto-trading, or executable order payloads.
+- Do not claim scraped social/news discussion as fact without attribution and provenance.
+- Do not make the default deterministic test suite depend on live websites, GPUs, browser sessions,
+  or local Codex agent availability.
+- Do not treat the ML model as investment advice or as a replacement for evidence, risk gates,
+  and disclaimers.
+- Do not scrape TradingView internals embedded inside Candlecharts unless legal review and source
+  terms allow it.
+
+## Context
+
+Current V1 behavior is deterministic and offline-only. `run --offline` builds a synthetic fixture
+bundle, while non-offline orchestration exits with the live-disabled gate. Provider adapters for
+Alpha Vantage, FRED, NewsAPI-like news, X, and SEC exist, but the CLI does not wire them into live
+report generation. Reddit and LLM extraction are fixture-backed.
+
+Requested scrape targets:
+
+- Reddit ticker/discussion source: `https://www.reddit.com/r/wallstreetbets/`
+- Financial news source: `https://apnews.com/hub/financial-markets`
+- Candlestick source: `https://candlecharts.com/live-charts`
+- X stock-news/social source: official X API recent search for each ticker's cashtag.
+
+Initial public-source constraints checked on 2026-05-11:
+
+- Reddit robots.txt allows broad page access but disallows API/search endpoints and several dynamic
+  service paths. Plan for the public subreddit page and public post pages only.
+- AP News robots.txt allows the hub path but disallows `/api/v2/feed/`, search, RSS, and several
+  internal paths. Plan for hub/article HTML only.
+- X browser scraping is replaced by official X API recent search. For every discovered ticker, use
+  the app-only Bearer Token to request the top 50 relevant results (`sort_order=relevancy`,
+  `max_results=50`) for `$TICKER lang:en -is:retweet`.
+- Candlecharts live chart page is public HTML but points users to TradingView for chart tracking.
+  Plan a feasibility probe before assuming usable OHLCV data can be extracted.
+
+Relevant existing modules:
+
+- CLI/orchestration: `src/nlp_stock_prediction/cli.py`, `src/nlp_stock_prediction/pipeline.py`
+- Provider contracts: `src/nlp_stock_prediction/contracts/providers.py`
+- Provenance and warnings: `src/nlp_stock_prediction/contracts/provenance.py`
+- Reddit parsing/evidence: `src/nlp_stock_prediction/reddit/`
+- Provider helpers/cache: `src/nlp_stock_prediction/providers/_base.py`
+- Extraction and clustering: `src/nlp_stock_prediction/extraction/`
+- Analysis/scoring: `src/nlp_stock_prediction/analysis/`, `src/nlp_stock_prediction/scoring/`
+- Reporting/audit: `src/nlp_stock_prediction/reporting/`
+- Live test gates: `tests/conftest.py`, `tests/test_lane_f_live_smoke.py`
+
+## Milestones
+
+### Milestone 1: Compliance And Scraping Policy Gate
+
+- Changes:
+  - Add a source policy registry for each target with robots status, allowed paths, disallowed paths,
+    crawl delay, login requirement, JavaScript requirement, and fallback behavior.
+  - Add a `ScrapingPolicyResult` or equivalent provider warning helper so blocked sources return
+    structured `ProviderResult` warnings instead of silent omissions.
+  - Add user-agent configuration for polite scraping and rate limiting.
+  - Preserve the current network-blocked default tests.
+- Files likely affected:
+  - `src/nlp_stock_prediction/providers/_base.py`
+  - `src/nlp_stock_prediction/compliance.py`
+  - `src/nlp_stock_prediction/contracts/providers.py`
+  - `src/nlp_stock_prediction/contracts/enums.py`
+  - `docs/configuration.md`
+  - `.env.example`
+  - `tests/test_lane_f_compliance.py`
+  - new tests for scraping policy behavior
+- Verification:
+  - Unit tests for allowed, disallowed, login-required, and drift-detected policies.
+  - Live scraping tests remain opt-in and skip without `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1`.
+
+### Milestone 2: Scraping Infrastructure
+
+- Changes:
+  - Add a shared HTML fetcher/parser adapter with rate limits, retries, cache keys, content hashing,
+    text extraction, canonical URL capture, and raw snapshot audit persistence.
+  - Prefer static HTML parsing with `html.parser` or a small dependency such as BeautifulSoup.
+  - Add optional browser-rendered scraping only behind an explicit live marker for sources that
+    require JavaScript and are allowed by policy.
+  - Add markup drift warnings when selectors fail or required sections are missing.
+- Files likely affected:
+  - `src/nlp_stock_prediction/providers/_base.py`
+  - new `src/nlp_stock_prediction/providers/scraping.py`
+  - `src/nlp_stock_prediction/contracts/fixtures.py`
+  - `src/nlp_stock_prediction/reporting/audit.py`
+  - `tests/test_scraping_provider_base.py`
+- Verification:
+  - Fixture-backed HTML parser tests.
+  - Cache-hit tests prove no network request is made after a cached raw snapshot.
+  - Drift tests cover missing selectors and malformed HTML.
+
+### Milestone 3: Reddit WSB Scraper
+
+- Changes:
+  - Replace the fixture-only Reddit provider with a policy-aware public-page scraper that can:
+    discover the Devvit daily ticker card from `r/wallstreetbets`,
+    fetch public post/comment context where allowed,
+    normalize discussion into `SourceEvidence`,
+    and retain fixture fallback for tests.
+  - Keep ticker extraction compatible with the existing `ticker-container-*` parser, but add drift
+    probes for alternate public markup.
+  - Do not use Reddit API, JSON endpoints, private endpoints, or login-only content.
+- Files likely affected:
+  - `src/nlp_stock_prediction/reddit/discovery.py`
+  - `src/nlp_stock_prediction/reddit/evidence.py`
+  - `src/nlp_stock_prediction/reddit/provider.py`
+  - new `src/nlp_stock_prediction/providers/reddit_scrape.py`
+  - `tests/test_lane_a_reddit_*`
+  - new recorded raw Reddit HTML fixtures
+- Verification:
+  - Contract tests for valid six-ticker discovery, insufficient tickers, duplicate tickers,
+    malformed markup, stale snapshot, and no-discussion cases.
+  - Opt-in live smoke checks the public page shape without requiring login.
+
+### Milestone 4: AP News Financial Markets Scraper
+
+- Changes:
+  - Add a news scraper for the AP financial markets hub and linked article pages.
+  - Extract headline, article URL, published timestamp when available, author/source label, body
+    summary text, matched tickers, and provenance.
+  - Avoid AP API/feed/search/RSS paths disallowed by robots.
+  - Add AP-specific drift warnings and freshness thresholds.
+- Files likely affected:
+  - `src/nlp_stock_prediction/providers/news.py`
+  - new `src/nlp_stock_prediction/providers/apnews.py`
+  - `tests/test_lane_b_providers.py`
+  - new AP raw fixtures
+- Verification:
+  - Fixture tests for hub page extraction, article page extraction, missing timestamp, unrelated
+    article filtering, and stale news.
+  - Opt-in live smoke checks only the hub page and one public article URL if discovered.
+
+### Milestone 5: Candlecharts Candlestick Data Feasibility And Adapter
+
+- Changes:
+  - First implement a feasibility probe that records whether Candlecharts exposes usable OHLCV data
+    in public HTML, JSON script tags, or permitted page content.
+  - If usable public OHLCV exists, build a scraper-backed `MarketDataProvider` that emits
+    `MarketSnapshot` and raw audit snapshots.
+  - If Candlecharts only embeds a TradingView widget or canvas without extractable licensed data,
+    return a `ProviderStatus.UNAVAILABLE` or `PARTIAL` result with a clear warning and require
+    user-supplied OHLCV CSV fixtures for ML training.
+  - Add no-scrape guardrails for embedded third-party widget internals unless explicitly approved.
+- Files likely affected:
+  - new `src/nlp_stock_prediction/providers/candlecharts.py`
+  - `src/nlp_stock_prediction/providers/market.py`
+  - `src/nlp_stock_prediction/analysis/technical.py`
+  - `docs/configuration.md`
+  - new Candlecharts fixtures and tests
+- Verification:
+  - Feasibility tests for public HTML with OHLCV, widget-only HTML, missing symbol, and stale data.
+  - Live smoke classifies the public page without extracting protected third-party internals.
+
+### Milestone 6: X API Relevant Search
+
+- Changes:
+  - Use the official X API v2 recent-search endpoint instead of browser scraping X search pages.
+  - Read `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` for app-only read access.
+  - Document `NLP_STOCK_PREDICTION_X_API_KEY` and `NLP_STOCK_PREDICTION_X_API_SECRET` for app
+    identity and Bearer Token regeneration, but avoid using them in normal read-only calls.
+  - For each discovered ticker, make one bounded recent-search request:
+    `$TICKER lang:en -is:retweet` with `sort_order=relevancy` and `max_results=50` for
+    top relevant stock-news results.
+  - Preserve query, sort order, post IDs, timestamps, public metrics, language, author ID, cache key,
+    raw snapshot ID, and freshness in `SourceEvidence` provenance.
+  - If credentials are missing, quota is exhausted, X is unavailable, or a ticker returns no posts,
+    emit structured provider warnings and continue the report.
+- Files likely affected:
+  - `src/nlp_stock_prediction/providers/social.py`
+  - `src/nlp_stock_prediction/compliance.py`
+  - `tests/test_lane_b_providers.py`
+  - `docs/configuration.md`
+- Verification:
+  - Tests for missing credentials, relevancy request shape, default 50-post limit,
+    six-ticker bounded orchestration, no ticker matches, duplicate posts, malformed API responses,
+    stale social evidence, rate limits, and upstream failures.
+
+### Milestone 7: Live Scrape Orchestration
+
+- Changes:
+  - Add an explicit non-offline mode such as `run --source-mode scrape` while keeping `--offline`
+    deterministic.
+  - Wire Reddit, AP News, Candlecharts, X API recent-search provider, extraction, analysis, scoring,
+    reporting, and audit manifest into one degraded-provider-aware pipeline.
+  - Ensure all missing, blocked, stale, and drifted sources appear in provider health and report
+    warnings.
+  - Keep raw snapshots and normalized artifacts out of git unless they are curated fixtures.
+- Files likely affected:
+  - `src/nlp_stock_prediction/cli.py`
+  - `src/nlp_stock_prediction/pipeline.py`
+  - `src/nlp_stock_prediction/reporting/fixtures.py`
+  - `src/nlp_stock_prediction/reporting/markdown.py`
+  - `src/nlp_stock_prediction/reporting/json.py`
+  - end-to-end tests
+- Verification:
+  - Fixture-backed scrape-mode e2e writes Markdown, JSON, and audit artifacts.
+  - Live scrape/API smoke is opt-in and can pass with allowed sources while surfacing X credential
+    or quota failures and widget-only Candlecharts as warnings.
+
+### Milestone 8: Local ML Technical Analysis Dataset
+
+- Changes:
+  - Define a training dataset schema from OHLCV bars, derived candle pattern features, volatility,
+    volume, gap, and forward-return labels.
+  - Add a data validation stage that rejects insufficient history, duplicate bars, missing OHLCV,
+    stale data, and impossible prices.
+  - If Candlecharts cannot legally provide enough historical OHLCV, require local CSV/raw snapshot
+    imports rather than scraping unapproved sources.
+  - Create deterministic sample fixtures for CPU tests and separate local training data paths that
+    stay ignored by git.
+- Files likely affected:
+  - new `src/nlp_stock_prediction/ml/`
+  - new `tests/test_ml_dataset.py`
+  - `.gitignore`
+  - `docs/configuration.md`
+  - `docs/testing-plan.md`
+- Verification:
+  - Unit tests for feature generation, label generation, train/validation split integrity, no
+    lookahead leakage, and insufficient-data failures.
+
+### Milestone 9: RTX 3090 Training Pipeline
+
+- Changes:
+  - Add a PyTorch training pipeline that auto-detects CUDA and records GPU name, CUDA version,
+    seed, dataset hash, hyperparameters, metrics, and model artifact hash.
+  - Start with a compact temporal model such as a 1D CNN/TCN or small transformer over OHLCV-derived
+    windows, plus a logistic/gradient baseline for sanity checks.
+  - Add reproducible train/evaluate commands and store model artifacts outside git by default.
+  - Add calibration metrics and no-trade thresholds so weak predictions do not become recommendations.
+- Files likely affected:
+  - `pyproject.toml`
+  - new `src/nlp_stock_prediction/ml/train.py`
+  - new `src/nlp_stock_prediction/ml/model.py`
+  - new `src/nlp_stock_prediction/ml/evaluate.py`
+  - new `tests/test_ml_training_smoke.py`
+  - `docs/configuration.md`
+- Verification:
+  - CPU smoke test trains on tiny fixtures.
+  - Local GPU command trains on RTX 3090 and writes metrics/artifacts.
+  - Evaluation proves no data leakage and reports confidence/calibration.
+
+### Milestone 10: ML Technical Analysis Integration
+
+- Changes:
+  - Extend `TechnicalAnalysis` or add an ML sidecar component that includes model version, input
+    feature references, prediction horizon, probability/calibration, and limitations.
+  - Combine deterministic technical indicators and ML signal conservatively.
+  - Block ML-driven recommendations unless model metrics and data freshness pass configured gates.
+- Files likely affected:
+  - `src/nlp_stock_prediction/contracts/analysis.py`
+  - `src/nlp_stock_prediction/analysis/technical.py`
+  - `src/nlp_stock_prediction/scoring/recommendations.py`
+  - `src/nlp_stock_prediction/reporting/markdown.py`
+  - schema/report tests
+- Verification:
+  - Tests for no model, stale model, weak confidence, conflicting deterministic/ML signal, and
+    qualified ML-assisted but evidence-grounded setup.
+
+### Milestone 11: Codex Agent Fundamental Analysis Lane
+
+- Changes:
+  - Define a `FundamentalNlpAnalysisRequest` and response schema for a Codex agent that reads scraped
+    company/news/fundamental evidence and returns structured analysis with citations, assumptions,
+    risks, and confidence inputs.
+  - Add a fixture-backed agent provider for tests and a local/manual Codex-agent runner for real use.
+  - Require the agent to separate observed scraped content from its own interpretation.
+  - Persist agent prompts, response JSON, validation warnings, and source evidence IDs in audit
+    artifacts.
+  - If no supported programmatic Codex agent runner is available in the CLI environment, keep this
+    as a human-supervised local step with importable agent-output JSON.
+- Files likely affected:
+  - new `src/nlp_stock_prediction/agents/fundamental.py`
+  - `src/nlp_stock_prediction/contracts/analysis.py`
+  - `src/nlp_stock_prediction/analysis/fundamentals.py`
+  - `src/nlp_stock_prediction/pipeline.py`
+  - `src/nlp_stock_prediction/reporting/audit.py`
+  - new `tests/test_fundamental_agent.py`
+- Verification:
+  - Tests for valid agent output, missing citations, unsupported claims, contradictory evidence,
+    stale evidence, malformed JSON, and no-agent-available fallback.
+
+### Milestone 12: Documentation, CI, And Rollout
+
+- Changes:
+  - Update README, configuration, testing plan, and roadmap with scrape-mode commands, env vars,
+    live-source caveats, ML training commands, and Codex agent workflow.
+  - Add CI jobs for deterministic scrape fixtures and CPU ML smoke only.
+  - Keep live scraping and GPU training out of PR CI unless explicitly scheduled/configured.
+  - Add a staged rollout checklist before enabling scrape mode as non-experimental.
+- Files likely affected:
+  - `README.md`
+  - `docs/configuration.md`
+  - `docs/testing-plan.md`
+  - `docs/multi-milestone-plan.md`
+  - `.github/workflows/ci.yml`
+- Verification:
+  - Docs examples run locally for offline and fixture-backed scrape modes.
+  - CI remains deterministic without network, GPU, or local Codex agent.
+
+## Acceptance criteria
+
+- [ ] Scraping source policy gate exists and prevents disallowed scraping by default.
+- [ ] Reddit scraper discovers the daily WSB ticker card from allowed public pages or reports a
+      drift/blocked warning.
+- [ ] AP News scraper returns attributed financial-market evidence from public hub/article HTML.
+- [ ] Candlecharts adapter either returns contract-valid OHLCV from allowed public data or a clear
+      unavailable/widget-only warning.
+- [ ] X provider uses official API recent search for every discovered ticker and requests the top
+      50 relevant results with `sort_order=relevancy` and `max_results=50`.
+- [ ] `run --source-mode scrape` or equivalent produces Markdown, JSON, and audit artifacts from
+      fixture-backed scrape inputs.
+- [ ] Live scraping tests are opt-in, rate-limited, and source-specific.
+- [ ] ML dataset generation has leakage tests and data-quality gates.
+- [ ] RTX 3090 training command records reproducible metrics and model artifact metadata.
+- [ ] ML signal integrates conservatively into technical analysis and scoring with stale/weak-model
+      gates.
+- [ ] Codex fundamental analysis agent lane has a strict request/response schema and fixture-backed
+      tests.
+- [ ] Reports preserve source evidence, provider metadata, confidence inputs, disclaimers, and
+      warnings for blocked/stale/drifted providers.
+- [ ] Existing offline behavior remains deterministic and green.
+- [ ] Documentation covers configuration, compliance limits, training, and agent workflow.
+
+## Verification commands
+
+```sh
+python -m pytest
+python -m pytest -m "not live_api and not live_scraping"
+python -m pytest tests/test_lane_a_reddit_discovery.py tests/test_lane_a_reddit_evidence.py
+python -m pytest tests/test_lane_b_providers.py
+python -m pytest tests/test_lane_c_extraction.py
+python -m pytest tests/test_lane_d_analysis.py tests/test_lane_d_scoring.py
+python -m pytest tests/test_lane_e_cli_e2e.py
+python -m pytest tests/test_lane_f_compliance.py tests/test_lane_f_reliability.py
+ruff check .
+ruff format --check .
+mypy .
+python -m nlp_stock_prediction --help
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+```
+
+Opt-in live checks after source configuration:
+
+```sh
+python -m pytest -m live_scraping
+```
+
+Local GPU training smoke after ML implementation:
+
+```sh
+python -m nlp_stock_prediction.ml.train --config configs/ml/technical-local.yaml
+python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
+```
+
+## Decision log
+
+- 2026-05-11-00-00: Keep the default test suite deterministic and network-free; scraping and GPU
+  training stay opt-in because source markup, robots policies, and local hardware availability are
+  unstable.
+- 2026-05-11-00-00: Use official X API recent search for X stock-news/social evidence instead of
+  browser scraping. Read-only recent-search calls use the app-only Bearer Token; API Key and API
+  Secret are documented for app identity and token regeneration.
+- 2026-05-11-00-00: Treat Candlecharts as a feasibility-gated source because the public live chart
+  page appears to rely on TradingView for chart tracking; do not scrape embedded third-party widget
+  internals without approval.
+- 2026-05-11-00-00: Use local ML only as an analysis input with model provenance and confidence
+  gates, not as an autonomous recommendation engine.
+- 2026-05-11-00-00: Keep the Codex fundamental analysis lane schema-first and fixture-backed, with
+  live/local agent execution optional until a supported programmatic runner is confirmed.
+
+## Progress log
+
+- 2026-05-11-00-00: Created plan from requested scrape-only provider direction, RTX 3090 local ML
+  training requirement, and Codex-agent fundamental-analysis requirement. No implementation started.
+- 2026-05-11-00-00: Superseded the earlier X local-capture idea after the user provided X Developer
+  App credentials and selected the official API path.
+- 2026-05-11-00-00: Initially updated X milestone to official API recent search using both
+  relevance and newest-first result orders for each ticker, backed by `.env` X App credentials.
+  This was superseded by the next entry.
+- 2026-05-11-00-00: Superseded recency for production after smoke-test result quality was too noisy.
+  Production X evidence now uses `$TICKER lang:en -is:retweet`, `sort_order=relevancy`, and
+  `max_results=50`.

@@ -49,7 +49,7 @@ def build_x_recent_search_query(
     ticker: str,
     *,
     lang: str = "en",
-    exclude_retweets: bool = False,
+    exclude_retweets: bool = True,
 ) -> str:
     """Build the recent-search query used for a ticker cashtag."""
 
@@ -64,12 +64,16 @@ class XRecentSearchProvider:
     """X recent-search adapter backed by the official API shape."""
 
     provider_name = "x-recent-search"
+    default_limit = 50
+    default_sort_order = "relevancy"
 
     def __init__(
         self,
         *,
         bearer_token: str | None = None,
-        endpoint: str = "https://api.twitter.com/2/tweets/search/recent",
+        endpoint: str = "https://api.x.com/2/tweets/search/recent",
+        sort_order: str = default_sort_order,
+        default_limit: int = default_limit,
         transport: JsonTransport | None = None,
         cache: ProviderCache | None = None,
         now: Callable[[], datetime] = utc_now,
@@ -78,6 +82,8 @@ class XRecentSearchProvider:
     ) -> None:
         self._bearer_token = bearer_token
         self._endpoint = endpoint
+        self._sort_order = _validate_sort_order(sort_order)
+        self._default_limit = _validate_limit(default_limit)
         self._transport = transport or UrllibJsonTransport()
         self._cache = cache
         self._now = now
@@ -101,7 +107,8 @@ class XRecentSearchProvider:
             self._endpoint,
             {
                 "query": query,
-                "max_results": request.limit,
+                "sort_order": self._sort_order,
+                "max_results": request.limit or self._default_limit,
                 "tweet.fields": "created_at,public_metrics,lang,author_id",
             },
         )
@@ -126,7 +133,15 @@ class XRecentSearchProvider:
                 headers={"Authorization": f"Bearer {self._bearer_token}"},
                 timeout=self._timeout,
             )
-            evidence = self._map_payload(request, fetched.payload, fetched, query, url, fetched_at)
+            evidence = self._map_payload(
+                request,
+                fetched.payload,
+                fetched,
+                query,
+                url,
+                fetched_at,
+                self._sort_order,
+            )
         except ProviderTransportError as exc:
             return transport_error_result(
                 provider_name=self.provider_name,
@@ -212,6 +227,7 @@ class XRecentSearchProvider:
         query: str,
         source_url: str,
         fetched_at: datetime,
+        sort_order: str,
     ) -> tuple[SourceEvidence, ...]:
         items = payload.get("data", [])
         if not isinstance(items, list):
@@ -263,6 +279,7 @@ class XRecentSearchProvider:
                         freshness_seconds=freshness_seconds,
                         provider_metadata={
                             "lang": raw_item.get("lang"),
+                            "sort_order": sort_order,
                             "cache_hit": fetched.cache_hit,
                             "public_metrics": {
                                 key: value
@@ -295,6 +312,19 @@ def _social_score(metrics: dict[object, object]) -> int | None:
             score += value
             found = True
     return score if found else None
+
+
+def _validate_sort_order(sort_order: str) -> str:
+    normalized = sort_order.strip().lower()
+    if normalized not in {"relevancy", "recency"}:
+        raise ValueError("X recent-search sort_order must be relevancy or recency")
+    return normalized
+
+
+def _validate_limit(limit: int) -> int:
+    if limit < 10 or limit > 100:
+        raise ValueError("X recent-search default_limit must be between 10 and 100")
+    return limit
 
 
 __all__ = ["XRecentSearchProvider", "build_x_recent_search_query"]

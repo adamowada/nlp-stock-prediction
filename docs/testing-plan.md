@@ -37,8 +37,10 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 ### 4. Live API integration tests
 
 - Current Phase 3 live API coverage verifies the SEC company tickers endpoint and keeps a reserved
-  LLM smoke gate explicit. Future live provider coverage should extend to Reddit, X/Twitter, news,
-  market data, fundamentals, FRED, and any enabled LLM provider.
+  LLM smoke gate explicit. Future live provider coverage should extend to Reddit, X API recent
+  search, news, market data, fundamentals, FRED, and any enabled LLM provider.
+- X API provider coverage should verify the production stock-news/social query shape:
+  `$TICKER lang:en -is:retweet`, `sort_order=relevancy`, and `max_results=50`.
 - Require explicit environment variables for credentials and opt-in execution.
 - Check authentication failures, quota/rate-limit responses, malformed upstream responses, and stale data behavior.
 - Mark these tests separately from fast local tests, for example:

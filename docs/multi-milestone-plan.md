@@ -4,7 +4,7 @@
 
 Build a TDD-first Python CLI that generates one daily, evidence-grounded stock opportunity report for a retail trader with a small account.
 
-The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that signal with technical, fundamental, sector, and macro analysis, then writes Markdown and JSON reports.
+The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, always uses X API recent search for the top 50 relevant stock-news/social posts for each discovered ticker when live provider orchestration is enabled, extracts discussed trading strategies with evidence, combines that signal with technical, fundamental, sector, and macro analysis, then writes Markdown and JSON reports.
 
 The v1 posture is exploratory but auditable. The app may surface speculative stock/options ideas, but each recommendation must include confidence, source evidence, risks, invalidation criteria, and a clear non-advice disclaimer. No real-money brokerage execution is included.
 
@@ -130,7 +130,9 @@ Ownership:
 
 Deliverables:
 
-- Query X/Twitter recent search for cashtags and ticker terms as a social/catalyst signal, prioritizing examples such as `$TSLA lang:en`.
+- Query X API recent search for each discovered ticker as a stock-news/social/catalyst signal.
+  For every ticker, request the top 50 relevant results with `$TICKER lang:en -is:retweet`,
+  `sort_order=relevancy`, and `max_results=50`.
 - Query a configured public news provider for recent company or ticker headlines/articles.
 - Pull daily candle data and company overview/fundamental fields from free official providers where available.
 - Use SEC EDGAR APIs as supplemental filing and company-facts sources.

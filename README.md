@@ -2,7 +2,7 @@
 
 A TDD-first Python project for generating a daily, evidence-grounded stock opportunity report for retail traders.
 
-The app will discover the six tickers highlighted by r/wallstreetbets' daily Devvit ticker card, collect recent public discussion and news, extract discussed trading strategies with source evidence, and combine that signal with technical, fundamental, sector, and macro analysis. The final output is intended to be a Markdown report plus structured JSON and audit artifacts for traceability.
+The app will discover the six tickers highlighted by r/wallstreetbets' daily Devvit ticker card, collect recent public discussion and news, always query X API recent search for the top 50 relevant stock-news/social posts for each ticker when live provider orchestration is enabled, extract discussed trading strategies with source evidence, and combine that signal with technical, fundamental, sector, and macro analysis. The final output is intended to be a Markdown report plus structured JSON and audit artifacts for traceability.
 
 ## Current status
 
@@ -13,7 +13,7 @@ Phase 3 is complete for the local V1 CLI on `feature/integration-and-hardening`.
 1. Discover the daily r/wallstreetbets ticker card and extract six tickers.
 2. Retrieve recent WSB posts and daily-thread comments for each ticker.
 3. Use evidence-grounded NLP/LLM extraction to identify discussed strategies.
-4. Gather public market, news, fundamental, sector, and macro data.
+4. Gather public market, news, X top relevant ticker discussion, fundamental, sector, and macro data.
 5. Generate one daily report with ticker sections, qualified trading ideas or a clear no-trade summary, provider warnings, freshness, evidence, and disclaimers.
 
 ## Development
