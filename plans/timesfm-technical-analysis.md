@@ -1,6 +1,6 @@
 # TimesFM 2.5 Technical Analysis Phase
 
-Status: active.
+Status: complete.
 
 ## Goal
 
@@ -250,6 +250,8 @@ Status: implemented.
 
 ### Stage 9: Phase Acceptance And Cleanup
 
+Status: implemented.
+
 - Changes:
   - Run the full deterministic suite and focused TimesFM tests.
   - Run one opt-in Windows CUDA TimesFM smoke with the RTX 3090.
@@ -428,3 +430,19 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   skips; non-live pytest reported 370 passed and 7 deselected; focused TimesFM deterministic tests
   reported 53 passed; `ruff check . --no-cache`, `ruff format --check .`, `mypy .`,
   `python -m nlp_stock_prediction --help`, `git diff --check`, and doc-drift scans passed.
+- 2026-05-12-00-00: Implemented Stage 9 phase acceptance and cleanup. Full pytest reported
+  370 passed and 7 opt-in live skips; non-live pytest reported 370 passed and 7 deselected;
+  focused TimesFM deterministic tests reported 53 passed; `ruff check . --no-cache`,
+  `ruff format --check .`, `mypy .`, `python -m nlp_stock_prediction --help`, and
+  `git diff --check` passed.
+- 2026-05-12-00-00: Stage 9 Windows RTX 3090 acceptance smoke passed. PyTorch `2.11.0+cu128`
+  detected `NVIDIA GeForce RTX 3090`; TimesFM smoke wrote
+  `artifacts/ml/timesfm-smoke/smoke-result.json`; synthetic adapter inference wrote
+  `artifacts/ml/timesfm-forecast-smoke/forecast.json`; one-step LoRA training wrote ignored adapter,
+  metadata, and metrics artifacts under `artifacts/ml/timesfm-train-smoke/`; rolling evaluation
+  wrote `artifacts/ml/timesfm-eval-smoke/evaluation.json` with status `weak` and
+  `suitable_for_scoring=false`; and `--ml-artifact` report generation wrote Markdown, JSON, and
+  `audit/ml-artifacts.json` with the TimesFM sidecar preserved.
+- 2026-05-12-00-00: Confirmed cleanup posture for Phase 4 acceptance: generated reports, local ML
+  artifacts, adapter weights, caches, bytecode, and `.env` remain ignored by git; no secrets, model
+  weights, or unrelated generated artifacts are staged.

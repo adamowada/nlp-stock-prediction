@@ -157,7 +157,7 @@ Core scenario names to use first:
 ## Phase Boundary
 
 Phase 0 and Phase 1 are complete, Phase 2 implementation lanes have been integrated, Phase 3 local
-V1 acceptance is complete, and the follow-on opt-in live scrape orchestration path has been merged.
-The active Phase 4 plan is the local TimesFM technical-analysis work in
+V1 acceptance is complete, the follow-on opt-in live scrape orchestration path has been merged, and
+Phase 4 local TimesFM technical-analysis acceptance is recorded in
 `plans/timesfm-technical-analysis.md`. Shared public contracts should stay stable unless a
 single-threaded contract revision is recorded in a new active plan.
