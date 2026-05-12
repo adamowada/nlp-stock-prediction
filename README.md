@@ -39,33 +39,51 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
 ```
 
+Preferred WSB ticker workflow:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile walkaway --refresh-data --refresh-runs
+```
+
+The signal funnel is the canonical TimesFM research workflow. It writes an incremental leaderboard,
+runs cheap baselines before raw TimesFM, runs a cheap adapter smoke only for raw TimesFM survivors,
+runs bounded survivor HPO only for smoke winners, and emits a report-ready
+`ml.timesfm.evaluation.v1` artifact only when the selected adapter clears held-out final
+baseline-aware scoring gates.
+
+Use the current report date for `--as-of`. If the market/data provider has not posted that day's
+close yet, the latest usable bar may still be the prior session; the freshness gate allows this by
+default. To add WSB tickers later, change only the comma-separated `--symbols` list. Omit
+`--refresh-runs` when you want to reuse compatible existing artifacts, and include it when you want
+a clean recompute. See [docs/timesfm-funnel-runbook.md](docs/timesfm-funnel-runbook.md) for the
+full walkaway runbook.
+
+Broad S&P 500 raw-screen scan:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --universe sp500 --as-of 2026-05-12 --device cuda --profile quick --refresh-data --refresh-runs --refresh-universe --output-root artifacts/ml/timesfm-funnel-sp500
+```
+
+For broad scans, start with `raw_candidates.csv`; it ranks raw TimesFM candidates by baseline lift
+before you spend time on adapter smoke or HPO.
+
 Single-ticker CSV workflow:
 
 ```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --csv data/ml/TSLA.csv --ticker TSLA --device cuda --output-dir artifacts/ml/TSLA/timesfm --epochs 1 --max-steps 20 --as-of 2026-05-11 --max-latest-bar-age-days 5
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --csv data/ml/TSLA.csv --ticker TSLA --model-dir artifacts/ml/TSLA/timesfm --device cuda --output artifacts/ml/TSLA/timesfm/evaluation.json --as-of 2026-05-11 --suitability-max-latest-bar-age-days 5
-.\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --csv data/ml/TSLA.csv --ticker TSLA --device cuda --output-dir artifacts/ml/TSLA/timesfm --epochs 1 --max-steps 20 --as-of 2026-05-12 --max-latest-bar-age-days 5
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --csv data/ml/TSLA.csv --ticker TSLA --model-dir artifacts/ml/TSLA/timesfm --device cuda --output artifacts/ml/TSLA/timesfm/evaluation.json --as-of 2026-05-12 --suitability-max-latest-bar-age-days 5
+.\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-12 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
 ```
 
-Staged six-ticker signal funnel:
+Legacy focused HPO:
 
 ```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda --profile walkaway
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda
 ```
 
-The funnel writes an incremental leaderboard, runs cheap baselines before raw TimesFM, runs a cheap
-adapter smoke only for raw TimesFM survivors, runs bounded survivor HPO only for smoke winners, and
-emits a report-ready `ml.timesfm.evaluation.v1` artifact only when the selected adapter clears the
-held-out final baseline-aware scoring gates. Use `--profile quick` to stop after the raw TimesFM
-screen.
-
-Focused six-ticker HPO:
-
-```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda
-```
-
-The old broad S&P 500 batch workflow has been retired. Use the focused HPO command for the current WSB ticker set, or the single-ticker train/evaluate commands for targeted experiments.
+The old broad S&P 500 batch workflow has been retired. Use the signal funnel for WSB ticker-set
+research, focused HPO only for reference/comparison runs, and the single-ticker train/evaluate
+commands for targeted experiments.
 
 CSV files belong under ignored paths such as `data/ml/`. Generated models, adapters, metrics, and reports belong under ignored paths such as `artifacts/` and `reports/`.
 

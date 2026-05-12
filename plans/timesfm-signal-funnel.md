@@ -9,7 +9,7 @@ survivors.
 The end state is one walkaway command:
 
 ```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda --profile walkaway
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile walkaway --refresh-data --refresh-runs
 ```
 
 The command should collect or reuse focused ticker data, run a staged funnel, write a durable
@@ -235,13 +235,15 @@ Add a new module:
 Primary command:
 
 ```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda --profile walkaway
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile walkaway --refresh-data --refresh-runs
 ```
 
 Useful options:
 
 ```text
 --symbols
+--symbols-file
+--universe focused|sp500
 --as-of
 --device
 --profile quick|walkaway|full
@@ -249,7 +251,9 @@ Useful options:
 --output-root
 --refresh-data
 --refresh-runs
+--refresh-universe
 --stop-after data_check|baseline_screen|raw_timesfm_screen|adapter_smoke|survivor_hpo|final_eval|report_ready
+--candidate-top-n
 --screen-max-windows
 --smoke-max-steps
 --max-hpo-trials-per-ticker
@@ -386,6 +390,10 @@ Profile defaults:
   ticker set.
 - [x] The command writes `manifest.json`, `leaderboard.json`, and `leaderboard.csv` incrementally so
   partial runs remain inspectable.
+- [x] Broad scans can use `--universe sp500` or `--symbols-file` instead of hand-pasting long
+  ticker lists.
+- [x] The command writes `raw_candidates.json` and `raw_candidates.csv` so broad raw TimesFM scans
+  produce a ranked shortlist.
 - [x] Raw base TimesFM metrics are recorded on the same rolling windows as adapter evaluations.
 - [x] Adapter smoke runs only for symbols/configs that pass raw-stage gates.
 - [x] HPO runs only for adapter-smoke survivors.
@@ -401,7 +409,7 @@ Profile defaults:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_timesfm_signal_funnel.py
 .\.venv\Scripts\python.exe -m pytest tests/test_timesfm_focused_hpo.py tests/test_timesfm_evaluation.py tests/test_timesfm_dataset.py tests/test_timesfm_training.py
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --dry-run --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda --profile walkaway
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --dry-run --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile walkaway
 ruff check .
 ruff format --check .
 mypy .
@@ -410,8 +418,9 @@ mypy .
 Optional CUDA verification:
 
 ```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda --profile quick
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda --profile walkaway
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile quick --refresh-data
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile walkaway --refresh-data --refresh-runs
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --universe sp500 --as-of 2026-05-12 --device cuda --profile quick --refresh-data --refresh-runs --refresh-universe --output-root artifacts/ml/timesfm-funnel-sp500
 ```
 
 ## Decision Log
@@ -452,3 +461,9 @@ Optional CUDA verification:
 - 2026-05-12: Implemented Stage 6 `report_ready` with `ml.timesfm.evaluation.v1` promotion for
   suitable final evaluations only, per-symbol report-ready manifests, top-level promoted paths, docs
   updates, and tests proving weak final evals do not produce scoring artifacts.
+- 2026-05-12: Refreshed the top-level README, configuration guide, and dedicated TimesFM funnel
+  runbook with the current walkaway command, `--as-of` semantics, symbol-list reuse guidance, and
+  refresh policy before the first full manual run.
+- 2026-05-12: Added broad-scan ergonomics with `--universe sp500`, `--symbols-file`, cached S&P 500
+  universe loading, and ranked `raw_candidates` outputs so the funnel can start from technical
+  signal discovery instead of only WSB ticker discovery.

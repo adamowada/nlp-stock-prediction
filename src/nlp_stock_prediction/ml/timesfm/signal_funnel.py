@@ -7,11 +7,13 @@ import csv
 import hashlib
 import json
 import math
+import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.request import Request, urlopen
 
 from pydantic import Field
 
@@ -41,6 +43,13 @@ from nlp_stock_prediction.ml.train import load_price_bars_csv
 
 DEFAULT_OUTPUT_ROOT = Path("artifacts/ml/timesfm-funnel")
 DEFAULT_DATA_DIR = Path("data/ml/wsb_10y")
+DEFAULT_UNIVERSE_CACHE_DIR = Path("data/ml/universes")
+SP500_WIKITEXT_URL = (
+    "https://en.wikipedia.org/w/index.php?title=List_of_S%26P_500_companies&action=raw"
+)
+UNIVERSE_USER_AGENT = "nlp-stock-prediction-timesfm-funnel/0.1"
+_SP500_SYMBOL_PATTERN = re.compile(r"\{\{(?:NyseSymbol|NasdaqSymbol)\|([^}|<\s]+)")
+_SYMBOL_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _BLOCKING_MODEL_SOURCE_WARNING_IDS = frozenset({"timesfm_adapter_hash_mismatch"})
 IMPLEMENTED_STAGES = (
     "data_check",
@@ -90,6 +99,7 @@ FunnelDecision = Literal[
 ]
 FunnelProfile = Literal["quick", "walkaway", "full"]
 DeviceRequest = Literal["auto", "cpu", "cuda"]
+UniverseName = Literal["focused", "sp500"]
 
 
 class SignalFunnelLeaderboardRow(ContractModel):
@@ -137,6 +147,30 @@ class SignalFunnelLeaderboardRow(ContractModel):
     calibration_proxy: float | None = None
     selected_for_next_stage: bool = False
     promoted_for_scoring: bool = False
+    notes: str | None = None
+
+
+class SignalFunnelCandidateRow(ContractModel):
+    """Ranked raw TimesFM broad-scan candidate row."""
+
+    rank: int = Field(ge=1)
+    run_id: NonEmptyStr
+    as_of: str
+    symbol: TickerSymbol
+    source_stage: NonEmptyStr
+    method: NonEmptyStr
+    status: FunnelStatus
+    decision: FunnelDecision
+    candidate_score: float
+    rmse: float = Field(ge=0.0)
+    best_baseline_rmse: float = Field(ge=0.0)
+    rmse_ratio_vs_best_baseline: float
+    directional_accuracy: float = Field(ge=0.0, le=1.0)
+    best_baseline_directional_accuracy: float = Field(ge=0.0, le=1.0)
+    directional_delta_vs_best_baseline: float
+    selected_for_next_stage: bool
+    kill_reason: str | None = None
+    evaluation_artifact: str | None = None
     notes: str | None = None
 
 
@@ -278,7 +312,7 @@ def run_signal_funnel(
 
     if args.stop_after is None:
         args.stop_after = _default_stop_after_for_profile(args.profile)
-    symbols = _parse_symbols(args.symbols)
+    symbols, symbol_source = _resolve_symbols(args)
     as_of = date.fromisoformat(args.as_of)
     start = as_of - timedelta(days=365 * args.years)
     output_root = Path(args.output_root)
@@ -296,6 +330,8 @@ def run_signal_funnel(
         "run_id": run_id,
         "created_at": created_at,
         "symbols": list(symbols),
+        "symbol_count": len(symbols),
+        "symbol_source": symbol_source,
         "as_of": as_of.isoformat(),
         "years": args.years,
         "profile": args.profile,
@@ -303,6 +339,7 @@ def run_signal_funnel(
         "dry_run": bool(args.dry_run),
         "data_dir": str(data_dir),
         "output_root": str(output_root),
+        "candidate_top_n": args.candidate_top_n,
         "implemented_stages": list(IMPLEMENTED_STAGES),
         "requested_stop_after": args.stop_after,
         "records": [],
@@ -4057,6 +4094,21 @@ def _write_signal_funnel_outputs(
     row_payloads = [row.model_dump(mode="json") for row in rows]
     write_manifest(output_root / "leaderboard.json", {"rows": row_payloads})
     _write_leaderboard_csv(output_root / "leaderboard.csv", row_payloads)
+    candidate_top_n = int(manifest.get("candidate_top_n", 50))
+    candidate_rows = _raw_candidate_rows(rows, top_n=candidate_top_n)
+    candidate_payloads = [row.model_dump(mode="json") for row in candidate_rows]
+    write_manifest(
+        output_root / "raw_candidates.json",
+        {
+            "schema_version": "ml.timesfm.signal_funnel.raw_candidates.v1",
+            "run_id": manifest.get("run_id"),
+            "as_of": manifest.get("as_of"),
+            "symbol_source": manifest.get("symbol_source"),
+            "candidate_top_n": candidate_top_n,
+            "rows": candidate_payloads,
+        },
+    )
+    _write_candidate_csv(output_root / "raw_candidates.csv", candidate_payloads)
 
 
 def _write_leaderboard_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
@@ -4069,11 +4121,227 @@ def _write_leaderboard_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
             writer.writerow(row)
 
 
+def _write_candidate_csv(path: Path, rows: Sequence[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(SignalFunnelCandidateRow.model_fields)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def _raw_candidate_rows(
+    rows: Sequence[SignalFunnelLeaderboardRow],
+    *,
+    top_n: int,
+) -> tuple[SignalFunnelCandidateRow, ...]:
+    candidates: list[SignalFunnelCandidateRow] = []
+    for row in rows:
+        if row.stage != "raw_timesfm_screen":
+            continue
+        if (
+            row.rmse is None
+            or row.best_baseline_rmse is None
+            or row.rmse_ratio_vs_best_baseline is None
+            or row.directional_accuracy is None
+            or row.best_baseline_directional_accuracy is None
+            or row.directional_delta_vs_best_baseline is None
+        ):
+            continue
+        candidate_score = _raw_candidate_score(
+            rmse_ratio=row.rmse_ratio_vs_best_baseline,
+            directional_delta=row.directional_delta_vs_best_baseline,
+        )
+        candidates.append(
+            SignalFunnelCandidateRow(
+                rank=1,
+                run_id=row.run_id,
+                as_of=row.as_of,
+                symbol=row.symbol,
+                source_stage=row.stage,
+                method=row.method,
+                status=row.status,
+                decision=row.decision,
+                candidate_score=candidate_score,
+                rmse=row.rmse,
+                best_baseline_rmse=row.best_baseline_rmse,
+                rmse_ratio_vs_best_baseline=row.rmse_ratio_vs_best_baseline,
+                directional_accuracy=row.directional_accuracy,
+                best_baseline_directional_accuracy=row.best_baseline_directional_accuracy,
+                directional_delta_vs_best_baseline=row.directional_delta_vs_best_baseline,
+                selected_for_next_stage=row.selected_for_next_stage,
+                kill_reason=row.kill_reason,
+                evaluation_artifact=row.evaluation_artifact,
+                notes=row.notes,
+            )
+        )
+    candidates.sort(
+        key=lambda row: (
+            not row.selected_for_next_stage,
+            -row.candidate_score,
+            row.rmse_ratio_vs_best_baseline,
+            -row.directional_delta_vs_best_baseline,
+            row.symbol,
+        )
+    )
+    ranked = [
+        candidate.model_copy(update={"rank": rank})
+        for rank, candidate in enumerate(candidates[: max(0, top_n)], start=1)
+    ]
+    return tuple(ranked)
+
+
+def _raw_candidate_score(*, rmse_ratio: float, directional_delta: float) -> float:
+    rmse_lift = 1.0 - rmse_ratio
+    return round(rmse_lift + directional_delta, 8)
+
+
+def _resolve_symbols(args: argparse.Namespace) -> tuple[tuple[str, ...], dict[str, Any]]:
+    explicit_sources = [
+        source
+        for source, is_present in (
+            ("symbols", bool(args.symbols)),
+            ("symbols_file", bool(args.symbols_file)),
+            ("universe", bool(args.universe and args.universe != "focused")),
+        )
+        if is_present
+    ]
+    if len(explicit_sources) > 1:
+        raise ValueError(
+            "--symbols, --symbols-file, and --universe sp500 are mutually exclusive "
+            f"(got {', '.join(explicit_sources)})"
+        )
+    if args.symbols:
+        return _parse_symbols(args.symbols), {"kind": "symbols", "value": args.symbols}
+    if args.symbols_file:
+        path = Path(args.symbols_file)
+        return _parse_symbols_file(path), {"kind": "symbols_file", "path": str(path)}
+    if args.universe == "sp500":
+        symbols, metadata = _load_sp500_symbols(
+            cache_dir=Path(args.universe_cache_dir),
+            refresh=args.refresh_universe,
+        )
+        return symbols, metadata
+    return tuple(DEFAULT_SYMBOLS), {"kind": "universe", "universe": "focused_default"}
+
+
 def _parse_symbols(value: str) -> tuple[str, ...]:
-    symbols = tuple(symbol.strip().upper() for symbol in value.split(",") if symbol.strip())
+    symbols = _dedupe_symbols(symbol.strip() for symbol in value.split(",") if symbol.strip())
     if not symbols:
         raise ValueError("at least one symbol is required")
     return symbols
+
+
+def _parse_symbols_file(path: Path) -> tuple[str, ...]:
+    if not path.exists():
+        raise ValueError(f"symbols file does not exist: {path}")
+    if path.suffix.lower() == ".csv":
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = reader.fieldnames or []
+            symbol_field = next(
+                (field for field in fieldnames if field.strip().lower() in {"symbol", "ticker"}),
+                None,
+            )
+            if symbol_field is not None:
+                return _dedupe_symbols(
+                    row.get(symbol_field, "") for row in reader if row.get(symbol_field)
+                )
+    text = path.read_text(encoding="utf-8")
+    return _parse_symbols_text(text)
+
+
+def _parse_symbols_text(text: str) -> tuple[str, ...]:
+    raw_symbols: list[str] = []
+    for line in text.splitlines():
+        clean_line = line.split("#", 1)[0].strip()
+        if not clean_line:
+            continue
+        raw_symbols.extend(token for token in clean_line.replace(",", " ").split() if token)
+    return _dedupe_symbols(raw_symbols)
+
+
+def _dedupe_symbols(raw_symbols: Iterable[str]) -> tuple[str, ...]:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for raw_symbol in raw_symbols:
+        symbol = raw_symbol.strip().upper().removeprefix("$")
+        if not symbol or symbol in {"SYMBOL", "TICKER"}:
+            continue
+        if not _SYMBOL_PATTERN.fullmatch(symbol):
+            raise ValueError(f"invalid ticker symbol: {raw_symbol}")
+        if symbol not in seen:
+            symbols.append(symbol)
+            seen.add(symbol)
+    if not symbols:
+        raise ValueError("at least one symbol is required")
+    return tuple(symbols)
+
+
+def _load_sp500_symbols(
+    *,
+    cache_dir: Path,
+    refresh: bool,
+) -> tuple[tuple[str, ...], dict[str, Any]]:
+    cache_path = cache_dir / "sp500-symbols.csv"
+    if cache_path.exists() and not refresh:
+        return _read_cached_universe_symbols(cache_path), {
+            "kind": "universe",
+            "universe": "sp500",
+            "source": "cache",
+            "cache_path": str(cache_path),
+        }
+    try:
+        wikitext = _fetch_text(SP500_WIKITEXT_URL)
+        symbols = _parse_sp500_wikitext(wikitext)
+        _write_cached_universe_symbols(cache_path, symbols)
+        return symbols, {
+            "kind": "universe",
+            "universe": "sp500",
+            "source": "wikipedia",
+            "source_url": SP500_WIKITEXT_URL,
+            "cache_path": str(cache_path),
+        }
+    except Exception:
+        if cache_path.exists():
+            return _read_cached_universe_symbols(cache_path), {
+                "kind": "universe",
+                "universe": "sp500",
+                "source": "cache_after_fetch_failure",
+                "source_url": SP500_WIKITEXT_URL,
+                "cache_path": str(cache_path),
+            }
+        raise
+
+
+def _parse_sp500_wikitext(wikitext: str) -> tuple[str, ...]:
+    symbols = _dedupe_symbols(match.group(1) for match in _SP500_SYMBOL_PATTERN.finditer(wikitext))
+    if len(symbols) < 400:
+        raise ValueError(f"S&P 500 universe parse returned only {len(symbols)} symbols")
+    return symbols
+
+
+def _fetch_text(url: str) -> str:
+    request = Request(url, headers={"User-Agent": UNIVERSE_USER_AGENT})
+    with urlopen(request, timeout=30) as response:
+        payload = cast(bytes, response.read())
+        return payload.decode("utf-8")
+
+
+def _write_cached_universe_symbols(path: Path, symbols: Sequence[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=("symbol",))
+        writer.writeheader()
+        for symbol in symbols:
+            writer.writerow({"symbol": symbol})
+
+
+def _read_cached_universe_symbols(path: Path) -> tuple[str, ...]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        return _dedupe_symbols(row.get("symbol", "") for row in reader if row.get("symbol"))
 
 
 def _parse_int_list(value: str) -> tuple[int, ...]:
@@ -4113,7 +4381,19 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the signal-funnel CLI parser."""
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--symbols", default=",".join(DEFAULT_SYMBOLS))
+    parser.add_argument("--symbols")
+    parser.add_argument(
+        "--symbols-file",
+        help="Text or CSV file of tickers. CSV files should include a symbol or ticker column.",
+    )
+    parser.add_argument(
+        "--universe",
+        choices=("focused", "sp500"),
+        default="focused",
+        help="Built-in ticker universe. Use sp500 for a broad raw TimesFM scan.",
+    )
+    parser.add_argument("--universe-cache-dir", default=str(DEFAULT_UNIVERSE_CACHE_DIR))
+    parser.add_argument("--refresh-universe", action="store_true")
     parser.add_argument("--as-of", default=DEFAULT_AS_OF.isoformat())
     parser.add_argument("--years", type=int, default=10)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="cuda")
@@ -4168,6 +4448,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hpo-lora-target-modules", default="all-linear")
     parser.add_argument("--hpo-lora-bias", choices=("none", "all", "lora_only"), default="none")
     parser.add_argument("--final-max-windows", type=int, default=128)
+    parser.add_argument(
+        "--candidate-top-n",
+        type=int,
+        default=50,
+        help="Number of raw TimesFM broad-scan candidates to write to raw_candidates outputs.",
+    )
     parser.add_argument("--raw-rmse-kill-threshold", type=float, default=1.15)
     parser.add_argument("--raw-directional-kill-threshold", type=float, default=-0.05)
     parser.add_argument("--raw-rmse-promote-threshold", type=float, default=1.05)

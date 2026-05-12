@@ -118,6 +118,89 @@ def test_signal_funnel_quick_profile_defaults_to_raw_screen(tmp_path: Path) -> N
 
 
 @pytest.mark.unit
+def test_signal_funnel_can_load_sp500_universe_from_cache(tmp_path: Path) -> None:
+    output_root = tmp_path / "out"
+    cache_dir = tmp_path / "universes"
+    cache_dir.mkdir()
+    (cache_dir / "sp500-symbols.csv").write_text("symbol\nMSFT\nGOOG\n", encoding="utf-8")
+
+    exit_code = signal_funnel.main(
+        [
+            "--dry-run",
+            "--universe",
+            "sp500",
+            "--universe-cache-dir",
+            str(cache_dir),
+            "--as-of",
+            "2026-05-11",
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "sp500-cache",
+            "--device",
+            "cpu",
+            "--stop-after",
+            "data_check",
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+    leaderboard = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))
+
+    assert manifest["symbols"] == ["MSFT", "GOOG"]
+    assert manifest["symbol_count"] == 2
+    assert manifest["symbol_source"]["universe"] == "sp500"
+    assert manifest["symbol_source"]["source"] == "cache"
+    assert [row["symbol"] for row in leaderboard["rows"]] == ["MSFT", "GOOG"]
+
+
+@pytest.mark.unit
+def test_signal_funnel_can_load_symbols_file(tmp_path: Path) -> None:
+    output_root = tmp_path / "out"
+    symbols_file = tmp_path / "symbols.txt"
+    symbols_file.write_text(" $mu, msft\n# comment\nGOOG\nMSFT\n", encoding="utf-8")
+
+    exit_code = signal_funnel.main(
+        [
+            "--dry-run",
+            "--symbols-file",
+            str(symbols_file),
+            "--as-of",
+            "2026-05-11",
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "symbols-file",
+            "--device",
+            "cpu",
+            "--stop-after",
+            "data_check",
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+    leaderboard = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))
+
+    assert manifest["symbols"] == ["MU", "MSFT", "GOOG"]
+    assert manifest["symbol_source"] == {"kind": "symbols_file", "path": str(symbols_file)}
+    assert [row["symbol"] for row in leaderboard["rows"]] == ["MU", "MSFT", "GOOG"]
+
+
+@pytest.mark.unit
+def test_signal_funnel_parses_sp500_wikitext_templates() -> None:
+    templates = "\n".join(f"|{{{{NyseSymbol|A{index}}}}}" for index in range(401))
+    wikitext = templates + "\n|{{NyseSymbol|BRK.B}}\n|{{NasdaqSymbol|GOOG}}\n"
+
+    symbols = signal_funnel._parse_sp500_wikitext(wikitext)
+
+    assert symbols[:3] == ("A0", "A1", "A2")
+    assert "BRK.B" in symbols
+    assert "GOOG" in symbols
+
+
+@pytest.mark.unit
 def test_signal_funnel_stage0_marks_limited_test_windows_research_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -359,6 +442,22 @@ def test_signal_funnel_stage2_promotes_raw_timesfm_when_it_beats_baselines(
     assert raw_row["raw_timesfm_rmse"] == 0.0
     assert raw_row["rmse_ratio_vs_best_baseline"] == 0.0
     assert "sample_count=16" in raw_row["notes"]
+
+    candidates = json.loads((output_root / "raw_candidates.json").read_text(encoding="utf-8"))
+    candidate_rows = candidates["rows"]
+    assert candidate_rows[0]["symbol"] == "MU"
+    assert candidate_rows[0]["rank"] == 1
+    assert candidate_rows[0]["status"] == "passed"
+    assert candidate_rows[0]["candidate_score"] == pytest.approx(
+        round(
+            1.0
+            - raw_row["rmse_ratio_vs_best_baseline"]
+            + raw_row["directional_delta_vs_best_baseline"],
+            8,
+        )
+    )
+    candidate_csv_rows = _read_csv_rows(output_root / "raw_candidates.csv")
+    assert candidate_csv_rows[0]["symbol"] == "MU"
 
     artifact_path = Path(raw_row["evaluation_artifact"])
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))

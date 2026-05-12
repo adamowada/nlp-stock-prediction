@@ -124,39 +124,55 @@ CSV input belongs under an ignored path such as `data/ml/TSLA.csv` and must cont
 The dataset builder rejects duplicate timestamps, insufficient windows, future bars, stale latest
 bars, partial adjusted-close history, and split-like price jumps.
 
-Train/evaluate/attach:
+Preferred TimesFM signal-funnel runbook:
 
 ```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --csv data/ml/TSLA.csv --ticker TSLA --device cuda --output-dir artifacts/ml/TSLA/timesfm --epochs 1 --max-steps 20 --as-of 2026-05-11 --max-latest-bar-age-days 5
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --csv data/ml/TSLA.csv --ticker TSLA --model-dir artifacts/ml/TSLA/timesfm --device cuda --output artifacts/ml/TSLA/timesfm/evaluation.json --as-of 2026-05-11 --suitability-max-latest-bar-age-days 5
-.\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile walkaway --refresh-data --refresh-runs
 ```
 
-Staged six-ticker signal funnel:
+The signal funnel is the preferred WSB ticker-set research workflow. It writes `manifest.json`,
+`leaderboard.json`, and `leaderboard.csv` under `artifacts/ml/timesfm-funnel/`, evaluates cheap
+baselines before raw base TimesFM, and runs one cheap LoRA adapter smoke only for raw TimesFM
+survivors. Smoke winners then enter bounded survivor HPO, where candidates are ranked by
+validation-window baseline lift before validation loss. The walkaway/full default evaluates the
+selected adapter on untouched held-out test windows and emits a report-ready
+`ml.timesfm.evaluation.v1` artifact only when the final baseline-aware gates pass.
+
+Use the current report date for `--as-of`; if that day's close has not posted yet, the latest usable
+bar may still be the prior session and the default freshness gate allows it. To run a different WSB
+set later, change only the comma-separated `--symbols` list. Omit `--refresh-runs` to reuse
+compatible existing artifacts, or include it for a clean recompute. See
+[`docs/timesfm-funnel-runbook.md`](timesfm-funnel-runbook.md) for the full walkaway procedure.
+
+Useful variants:
 
 ```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda --profile walkaway
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --dry-run --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile walkaway
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile quick --refresh-data
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile walkaway --stop-after adapter_smoke
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --universe sp500 --as-of 2026-05-12 --device cuda --profile quick --refresh-data --refresh-runs --refresh-universe --output-root artifacts/ml/timesfm-funnel-sp500
 ```
 
-The signal funnel is the preferred research workflow while the baseline-aware gates are being
-developed. It writes `manifest.json`, `leaderboard.json`, and `leaderboard.csv` under
-`artifacts/ml/timesfm-funnel/`, evaluates cheap baselines before raw base TimesFM, and runs one
-cheap LoRA adapter smoke only for raw TimesFM survivors. Smoke winners then enter bounded survivor
-HPO, where candidates are ranked by validation-window baseline lift before validation loss. The
-walkaway/full default then evaluates the selected adapter on untouched held-out test windows and
-emits a report-ready `ml.timesfm.evaluation.v1` artifact only when the final baseline-aware gates
-pass. Use `--profile quick` to stop after the raw TimesFM screen, or `--stop-after adapter_smoke`
-for an explicit smoke-stage run.
+Broad scans also write `raw_candidates.csv` and `raw_candidates.json`, ranked from the raw TimesFM
+screen before adapter smoke or HPO. Use `--symbols-file` for custom watchlists.
 
-Focused six-ticker HPO workflow:
+Train/evaluate/attach single-ticker CSV workflow:
 
 ```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --csv data/ml/TSLA.csv --ticker TSLA --device cuda --output-dir artifacts/ml/TSLA/timesfm --epochs 1 --max-steps 20 --as-of 2026-05-12 --max-latest-bar-age-days 5
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --csv data/ml/TSLA.csv --ticker TSLA --model-dir artifacts/ml/TSLA/timesfm --device cuda --output artifacts/ml/TSLA/timesfm/evaluation.json --as-of 2026-05-12 --suitability-max-latest-bar-age-days 5
+.\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-12 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
+```
+
+Legacy focused HPO workflow:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda
 ```
 
 The retired broad S&P 500 batch helper workflow is no longer documented or kept in `data/ml/`.
-Use focused HPO for the current WSB ticker set, and use the single-ticker commands above for
-targeted research.
+Use the signal funnel for current WSB ticker-set research, focused HPO only for reference/comparison
+runs, and the single-ticker commands above for targeted research.
 
 Generated data and model artifacts stay out of git through `data/ml/`, `artifacts/`, `models/`,
 and `reports/`.
@@ -170,8 +186,10 @@ and `reports/`.
 | `artifacts/ml/<TICKER>/timesfm/training-metadata.json` | train | Model ID/revision, source hashes, split settings, seed, device/CUDA metadata, packages, and artifact hashes. |
 | `artifacts/ml/<TICKER>/timesfm/training-metrics.json` | train | Train and validation loss summaries. |
 | `artifacts/ml/<TICKER>/timesfm/evaluation.json` | evaluate | Rolling evaluation, baseline comparisons, suitability flags, and forward forecast. |
-| `data/ml/wsb_10y/<TICKER>.csv` | focused_hpo | Adjusted OHLCV inputs for the current focused WSB ticker set. |
+| `data/ml/wsb_10y/<TICKER>.csv` | signal_funnel/focused_hpo | Adjusted OHLCV inputs for the current focused WSB ticker set. |
 | `artifacts/ml/timesfm-funnel/leaderboard.json` | signal_funnel | Incremental staged leaderboard with data, baseline, raw TimesFM, adapter-smoke, HPO, and final-eval decisions. |
+| `artifacts/ml/timesfm-funnel/raw_candidates.csv` | signal_funnel | Ranked raw TimesFM broad-scan shortlist. |
+| `artifacts/ml/timesfm-funnel/raw_candidates.json` | signal_funnel | JSON form of the raw TimesFM broad-scan shortlist. |
 | `artifacts/ml/timesfm-funnel/raw_timesfm_screen/<TICKER>.evaluation.json` | signal_funnel | Raw base TimesFM validation-window screen artifact. |
 | `artifacts/ml/timesfm-funnel/adapter_smoke/<TICKER>.evaluation.json` | signal_funnel | Cheap LoRA adapter-smoke validation-window screen artifact. |
 | `artifacts/ml/timesfm-funnel/survivor_hpo/<TICKER>/<TRIAL>.evaluation.json` | signal_funnel | Per-trial survivor HPO validation-window artifact. |
