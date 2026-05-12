@@ -16,6 +16,7 @@ from nlp_stock_prediction.cli import (
     main,
 )
 from nlp_stock_prediction.contracts import RiskProfile, RunConfig
+from nlp_stock_prediction.environment import DISABLE_DOTENV_ENV
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
@@ -55,6 +56,37 @@ def test_main_without_subcommand_prints_help_and_succeeds(
     assert exit_code == 0
     assert "usage: python -m nlp_stock_prediction" in captured.out
     assert "run" in captured.out
+    assert captured.err == ""
+
+
+@pytest.mark.unit
+def test_main_loads_local_dotenv_without_overriding_shell_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "NLP_STOCK_PREDICTION_CLI_DOTENV_TEST_FROM_FILE=loaded",
+                "NLP_STOCK_PREDICTION_CLI_DOTENV_TEST_EXISTING=from-file",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(DISABLE_DOTENV_ENV, raising=False)
+    monkeypatch.delenv("NLP_STOCK_PREDICTION_CLI_DOTENV_TEST_FROM_FILE", raising=False)
+    monkeypatch.setenv("NLP_STOCK_PREDICTION_CLI_DOTENV_TEST_EXISTING", "from-shell")
+
+    exit_code = main([])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "usage: python -m nlp_stock_prediction" in captured.out
+    assert os.environ["NLP_STOCK_PREDICTION_CLI_DOTENV_TEST_FROM_FILE"] == "loaded"
+    assert os.environ["NLP_STOCK_PREDICTION_CLI_DOTENV_TEST_EXISTING"] == "from-shell"
     assert captured.err == ""
 
 

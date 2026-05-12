@@ -12,6 +12,7 @@ from pathlib import Path
 
 from nlp_stock_prediction.contracts.enums import RiskProfile
 from nlp_stock_prediction.contracts.providers import RunConfig
+from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.pipeline import generate_daily_report
 
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
@@ -25,6 +26,7 @@ _CLI_EPILOG = """Examples:
 Configuration:
   Offline runs are deterministic and do not use network providers.
   Scrape source mode uses compliance-aware provider adapters with deterministic fixtures by default.
+  A local .env file is loaded automatically without overriding exported shell variables.
   Pass --offline to generate the deterministic fixture-backed report bundle.
   Keep provider credentials in environment variables or ignored local .env files;
   see docs/configuration.md.
@@ -148,6 +150,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    load_local_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:

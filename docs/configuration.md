@@ -42,7 +42,9 @@ plus provider degradation probes; it does not make default live network calls.
 ## Environment Variables
 
 The default test suite, `run --offline`, and `run --source-mode scrape` do not require credentials,
-`.env` files, or network access. Live smoke checks are explicit opt-in:
+`.env` files, or network access. The CLI automatically loads the nearest local `.env` file when it
+starts, without overriding variables already exported in the shell. Live smoke checks are explicit
+opt-in:
 
 | Variable | Used for | Required when |
 | --- | --- | --- |
@@ -53,6 +55,7 @@ The default test suite, `run --offline`, and `run --source-mode scrape` do not r
 | `NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` | Optional User-Agent for future compliance-aware public HTML adapters. | Manual/live scraping adapter runs; deterministic tests use injected transports. |
 | `NLP_STOCK_PREDICTION_SCRAPE_MIN_DELAY_SECONDS` | Optional non-negative crawl delay floor for future scraping adapters; defaults to `1.0`. | Manual/live scraping adapter runs that enforce polite throttling. |
 | `NLP_STOCK_PREDICTION_LIVE_LLM_SMOKE` | Reserved for future live LLM smoke wiring. | Leave unset or `0` until live LLM adapter wiring is enabled. |
+| `NLP_STOCK_PREDICTION_DISABLE_DOTENV` | Disables CLI `.env` auto-loading when set to `1`. | Deterministic tests, CI, or debugging an exported shell environment. |
 
 Provider adapters already return structured `missing_credentials` warnings when keys are absent.
 The current CLI does not wire live provider orchestration yet, but these names are the project
@@ -179,8 +182,10 @@ separate from observed source evidence.
 `.env` and `.env.*` are ignored by git. `.env.example` contains placeholder keys only and is safe to
 commit.
 
-The app does not automatically load `.env` files yet. For now, either set environment variables in
-your shell or load a local `.env` with your own shell tooling before running live smoke checks.
+The CLI automatically searches from the current working directory upward for the nearest `.env` file
+and loads it on startup. Existing shell variables win over `.env` values, so temporary PowerShell
+exports can override local defaults for one run. Set `NLP_STOCK_PREDICTION_DISABLE_DOTENV=1` to
+disable this behavior.
 
 For an X smoke test, create a local `.env` shaped like this and fill in the values from your X
 Developer App's "Keys and tokens" page:
