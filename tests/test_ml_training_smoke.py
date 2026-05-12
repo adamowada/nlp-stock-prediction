@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from nlp_stock_prediction.contracts import PriceBar
+from nlp_stock_prediction.analysis import apply_technical_ml_signal, build_technical_ml_signal
+from nlp_stock_prediction.contracts import AnalysisSignal, PriceBar, TechnicalAnalysis
 from nlp_stock_prediction.ml.dataset import TechnicalDatasetConfig, build_technical_dataset
 from nlp_stock_prediction.ml.training import (
     TrainingConfig,
@@ -99,6 +100,42 @@ def test_model_evaluation_and_artifact_round_trip(tmp_path: Path) -> None:
     assert evaluation.metrics.samples == 8
     assert len(evaluation.predictions) == 8
     assert all(0.0 <= prediction.probability <= 1.0 for prediction in evaluation.predictions)
+
+
+@pytest.mark.unit
+def test_technical_ml_signal_sidecar_from_evaluation_attaches_metrics() -> None:
+    dataset = build_technical_dataset(
+        "AMD",
+        _training_bars(),
+        config=TechnicalDatasetConfig(feature_window=5, label_horizon_sessions=2),
+    )
+    result = train_technical_model(
+        dataset,
+        config=TrainingConfig(epochs=20, seed=13, requested_device="cpu"),
+    )
+    evaluation = evaluate_model(result.model, dataset.rows[-8:])
+
+    signal = build_technical_ml_signal(
+        model=result.model,
+        evaluation=evaluation,
+        as_of=RUN_DATE,
+        min_validation_accuracy=0.0,
+        min_confidence=0.0,
+    )
+    analysis = TechnicalAnalysis(
+        ticker="AMD",
+        summary="Baseline deterministic technical analysis is mixed.",
+        signal=AnalysisSignal.MIXED,
+        confidence=0.55,
+    )
+
+    integrated = apply_technical_ml_signal(analysis, signal)
+
+    assert integrated.ml_signal == signal
+    assert signal.metadata["validation_samples"] == 8
+    assert any(metric.name == "ml-positive-return-probability" for metric in integrated.metrics)
+    assert any(metric.name == "ml-validation-brier-score" for metric in integrated.metrics)
+    assert "ML sidecar:" in integrated.summary
 
 
 @pytest.mark.unit

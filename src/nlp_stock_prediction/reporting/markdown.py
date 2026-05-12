@@ -246,6 +246,20 @@ def _render_analysis(component: AnalysisComponent | None) -> list[str]:
     sector = getattr(component, "sector", None)
     if isinstance(sector, str) and sector:
         lines.append(f"- Sector: {sector}")
+    ml_signal = getattr(component, "ml_signal", None)
+    if ml_signal is not None:
+        lines.append(
+            "- ML signal: "
+            f"{ml_signal.signal.value}; probability {ml_signal.probability_positive:.2f}; "
+            f"confidence {ml_signal.calibrated_confidence:.2f}; status {ml_signal.status}."
+        )
+    agent_signal = getattr(component, "agent_signal", None)
+    if agent_signal is not None:
+        lines.append(
+            "- Fundamental agent: "
+            f"{agent_signal.signal.value}; confidence {agent_signal.confidence:.2f}; "
+            f"claims {agent_signal.claim_count}; risks {agent_signal.risk_count}."
+        )
     supportive = getattr(component, "supportive_factors", ())
     if supportive:
         formatted = _format_list(tuple(str(item) for item in supportive))

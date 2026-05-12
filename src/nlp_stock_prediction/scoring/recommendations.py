@@ -20,6 +20,7 @@ from nlp_stock_prediction.contracts import (
     ScoreBreakdown,
     ScoreComponent,
     StrategyCluster,
+    TechnicalMlSignal,
     TradeCandidate,
 )
 from nlp_stock_prediction.scoring.risk import assess_risk
@@ -76,6 +77,8 @@ def score_strategy_cluster(
         threshold=threshold,
         contradiction_count=len(analysis.contradictions),
         cluster_warnings=cluster.warnings,
+        analysis=analysis,
+        cluster=cluster,
     )
     if not risk_plan.passed:
         action = RecommendationAction.AVOID
@@ -288,6 +291,59 @@ def _penalties(
             )
         )
 
+    ml_signal = analysis.technical.ml_signal if analysis.technical is not None else None
+    if ml_signal is not None:
+        penalties.extend(_ml_signal_penalties(ml_signal, cluster.direction))
+
+    return tuple(penalties)
+
+
+def _ml_signal_penalties(
+    ml_signal: TechnicalMlSignal,
+    direction: Direction,
+) -> tuple[ScoreComponent, ...]:
+    penalties: list[ScoreComponent] = []
+    if ml_signal.status != "usable":
+        penalties.append(
+            ScoreComponent(
+                name="ml-signal-quality-penalty",
+                raw_value=ml_signal.status,
+                normalized_score=0.75,
+                weight=0.10,
+                contribution=-0.075,
+                rationale=(
+                    "The local ML technical sidecar is present but not actionable enough "
+                    "to support a trade."
+                ),
+                warning_ids=ml_signal.warning_ids,
+            )
+        )
+    if _ml_signal_conflicts_direction(ml_signal, direction):
+        penalties.append(
+            ScoreComponent(
+                name="ml-technical-conflict-penalty",
+                raw_value=ml_signal.probability_positive,
+                normalized_score=1.0,
+                weight=0.12,
+                contribution=-0.12,
+                rationale=(
+                    "The ML technical sidecar conflicts with the observed strategy direction."
+                ),
+                warning_ids=ml_signal.warning_ids,
+            )
+        )
+    elif ml_signal.signal == AnalysisSignal.MIXED or ml_signal.calibrated_confidence < 0.15:
+        penalties.append(
+            ScoreComponent(
+                name="ml-signal-weak-penalty",
+                raw_value=ml_signal.calibrated_confidence,
+                normalized_score=0.40,
+                weight=0.06,
+                contribution=-0.024,
+                rationale="The ML technical sidecar is too weak to increase confidence.",
+                warning_ids=ml_signal.warning_ids,
+            )
+        )
     return tuple(penalties)
 
 
@@ -348,6 +404,8 @@ def _failed_score_gates(
     threshold: float,
     contradiction_count: int,
     cluster_warnings: tuple[ProviderWarning, ...],
+    analysis: AnalysisBundle,
+    cluster: StrategyCluster,
 ) -> tuple[str, ...]:
     failed_gates: list[str] = []
     if contradiction_count >= 2:
@@ -357,9 +415,26 @@ def _failed_score_gates(
         failed_gates.append("conflicting-source-evidence")
     if "high_sarcasm_joke_risk" in warning_risk_types:
         failed_gates.append("high-sarcasm-joke-risk")
+    ml_signal = analysis.technical.ml_signal if analysis.technical is not None else None
+    if ml_signal is not None:
+        if ml_signal.status != "usable":
+            failed_gates.append("ml-signal-not-actionable")
+        if _ml_signal_conflicts_direction(ml_signal, cluster.direction):
+            failed_gates.append("ml-technical-conflict")
     if overall_score < threshold:
         failed_gates.append("score-below-threshold")
     return tuple(failed_gates)
+
+
+def _ml_signal_conflicts_direction(
+    ml_signal: TechnicalMlSignal,
+    direction: Direction,
+) -> bool:
+    if direction == Direction.BEARISH:
+        return ml_signal.signal == AnalysisSignal.SUPPORTS
+    if direction == Direction.BULLISH:
+        return ml_signal.signal == AnalysisSignal.CONFLICTS
+    return False
 
 
 def _warning_risk_types(warnings: tuple[ProviderWarning, ...]) -> set[str]:

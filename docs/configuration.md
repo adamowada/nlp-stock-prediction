@@ -111,9 +111,15 @@ user-supplied OHLCV CSV fixtures when Candlecharts is widget-only.
 
 ## Local ML Technical Analysis
 
-The ML technical-analysis lane is isolated from report generation and scoring. It builds local
-research artifacts from user-supplied OHLCV CSV files and records model, dataset, hardware, and
-usage-limitation metadata. Outputs are not investment advice and are not wired into recommendations.
+The ML technical-analysis lane builds local research artifacts from user-supplied OHLCV CSV files
+and records model, dataset, hardware, and usage-limitation metadata. Outputs are not investment
+advice. When an evaluated model is explicitly attached to an analysis bundle, the report treats it
+as a conservative sidecar with model/dataset hashes, probability, calibration, freshness, and
+validation metrics. Recommendation scoring applies weak, stale, unavailable, or conflicting ML
+gates when that sidecar is present; ML output cannot qualify a trade by itself.
+
+The experimental fixture-backed `--source-mode scrape` path includes a TSLA ML sidecar so Markdown,
+JSON, and audit payloads exercise the integration shape without requiring a local model artifact.
 
 Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
 access, or local training data. CUDA/RTX metadata is detected only when available and when the local
@@ -144,6 +150,19 @@ Example evaluation command:
 ```sh
 python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json --csv data/ml/TSLA.csv --ticker TSLA --output artifacts/ml/TSLA/evaluation.json
 ```
+
+## Fundamental Agent Analysis
+
+The fundamental-agent lane accepts a citation-bound `FundamentalNlpAnalysisRequest` and returns a
+validated `FundamentalNlpAnalysisResponse` with claims, risks, assumptions, confidence inputs, and
+audit metadata. Fixture-backed providers are used in deterministic tests. Expected malformed,
+unsupported, stale, contradictory, or unavailable agent outputs become provider warnings rather than
+uncaught pipeline failures.
+
+When a validated agent result is attached, the report preserves the existing deterministic
+fundamental analysis and adds an `agent_signal` sidecar. The sidecar is surfaced in Markdown, JSON,
+`provider-results.json`, and `analysis-contexts.json`; generated agent interpretation remains
+separate from observed source evidence.
 
 ## `.env` Files
 

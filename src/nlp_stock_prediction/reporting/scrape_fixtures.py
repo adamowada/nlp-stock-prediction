@@ -8,12 +8,19 @@ from datetime import datetime
 from typing import cast
 from urllib.parse import parse_qs, unquote_plus, urlsplit
 
+from nlp_stock_prediction.agents import FixtureFundamentalAgentProvider
+from nlp_stock_prediction.analysis.fundamental_agent import apply_fundamental_agent_result
+from nlp_stock_prediction.analysis.ml_signal import apply_technical_ml_signal
 from nlp_stock_prediction.contracts import (
+    AnalysisSignal,
     AuditArtifact,
     AuditManifest,
     DailyReport,
     DataFreshnessSummary,
     EvidenceRequest,
+    FreshnessStatus,
+    FundamentalNlpAnalysisRequest,
+    FundamentalNlpAnalysisResponse,
     JsonObject,
     JsonValue,
     MarketDataRequest,
@@ -21,6 +28,7 @@ from nlp_stock_prediction.contracts import (
     ProviderResult,
     ProviderStatus,
     SourceEvidence,
+    TechnicalMlSignal,
     TickerDiscoveryRequest,
     WarningCode,
 )
@@ -148,6 +156,7 @@ def build_scrape_fixture_bundle(config: RunConfig) -> ScrapeFixtureBundle:
         offline_bundle=offline_bundle,
         config=config,
         run_id=run_id,
+        provider_results=provider_results,
         provider_health=provider_health,
         provider_evidence=provider_evidence,
     )
@@ -293,7 +302,7 @@ def _provider_results(
         )
     )
 
-    return cast(
+    base_results = cast(
         tuple[ProviderResult[object], ...],
         (
             reddit_discovery,
@@ -308,6 +317,125 @@ def _provider_results(
             x_rate_limited,
         ),
     )
+    provider_evidence = _provider_evidence(base_results)
+    fundamental_agent = _fundamental_agent_result(
+        config=config,
+        fetched_at=fetched_at,
+        evidence=provider_evidence,
+    )
+    return (*base_results, cast(ProviderResult[object], fundamental_agent))
+
+
+def _fundamental_agent_result(
+    *,
+    config: RunConfig,
+    fetched_at: datetime,
+    evidence: tuple[SourceEvidence, ...],
+) -> ProviderResult[FundamentalNlpAnalysisResponse]:
+    request_id = f"scrape-fundamental-agent-tsla-{config.run_date.isoformat()}"
+    tsla_evidence = _first_evidence_for_ticker(evidence, "TSLA")
+    if tsla_evidence is None:
+        return FixtureFundamentalAgentProvider(
+            payload=None, fetched_at=fetched_at
+        ).analyze_fundamentals(
+            FundamentalNlpAnalysisRequest(
+                request_id=request_id,
+                ticker="TSLA",
+                run_date=config.run_date,
+                as_of=fetched_at,
+                evidence=(),
+                prompt_version="scrape-fixture-fundamental-agent-v1",
+                schema_version="fundamental-agent-response-v1",
+            )
+        )
+    quote = _agent_quote(tsla_evidence)
+    payload = {
+        "request_id": request_id,
+        "ticker": "TSLA",
+        "as_of": fetched_at,
+        "summary": (
+            "Fixture fundamental agent treats TSLA evidence as catalyst-aware but still "
+            "speculative."
+        ),
+        "signal": "mixed",
+        "confidence": 0.62,
+        "source_evidence_ids": [tsla_evidence.evidence_id],
+        "citations": [
+            {
+                "evidence_id": tsla_evidence.evidence_id,
+                "quote": quote,
+                "relevance": 0.84,
+            }
+        ],
+        "claims": [
+            {
+                "claim_id": "claim-tsla-discussion-catalyst",
+                "claim_type": "observed",
+                "text": "TSLA discussion mentions catalyst watch.",
+                "citations": [
+                    {
+                        "evidence_id": tsla_evidence.evidence_id,
+                        "quote": quote,
+                        "relevance": 0.84,
+                    }
+                ],
+                "confidence": 0.72,
+            }
+        ],
+        "risks": [
+            {
+                "risk_id": "risk-tsla-speculative-social-evidence",
+                "text": "Social evidence is speculative and can reverse quickly.",
+                "severity": "medium",
+                "citations": [
+                    {
+                        "evidence_id": tsla_evidence.evidence_id,
+                        "quote": quote,
+                        "relevance": 0.70,
+                    }
+                ],
+            }
+        ],
+        "assumptions": ("Fixture agent output is deterministic and citation-bound.",),
+        "confidence_inputs": {
+            "claim_count": 1,
+            "cited_source_count": 1,
+            "stale_source_count": 0,
+        },
+    }
+    provider = FixtureFundamentalAgentProvider(
+        payload=payload,
+        provider_name="fundamental-agent",
+        fetched_at=fetched_at,
+    )
+    request = FundamentalNlpAnalysisRequest(
+        request_id=request_id,
+        ticker="TSLA",
+        run_date=config.run_date,
+        as_of=fetched_at,
+        evidence=(tsla_evidence,),
+        prompt_version="scrape-fixture-fundamental-agent-v1",
+        schema_version="fundamental-agent-response-v1",
+        focus_areas=("valuation", "profitability", "growth", "risk"),
+    )
+    return provider.analyze_fundamentals(request)
+
+
+def _first_evidence_for_ticker(
+    evidence: tuple[SourceEvidence, ...],
+    ticker: str,
+) -> SourceEvidence | None:
+    normalized = ticker.upper()
+    for record in evidence:
+        if record.ticker == normalized or normalized in record.matched_tickers:
+            return record
+    return None
+
+
+def _agent_quote(evidence: SourceEvidence) -> str:
+    if "catalyst watch" in evidence.text:
+        return "catalyst watch"
+    return evidence.text[:80]
 
 
 def _provider_evidence(results: tuple[ProviderResult[object], ...]) -> tuple[SourceEvidence, ...]:
@@ -329,6 +457,7 @@ def _scrape_report(
     offline_bundle: OfflineFixtureBundle,
     config: RunConfig,
     run_id: str,
+    provider_results: tuple[ProviderResult[object], ...],
     provider_health: tuple[ProviderHealth, ...],
     provider_evidence: tuple[SourceEvidence, ...],
 ) -> DailyReport:
@@ -347,9 +476,26 @@ def _scrape_report(
     command_args["source_mode"] = "scrape"
     command_args["offline"] = False
     report = offline_bundle.report
+    fundamental_agent_result = _fundamental_agent_result_from_results(provider_results)
+    ml_signal = _fixture_ml_signal(report.generated_at)
     ticker_sections = tuple(
         section.model_copy(
             update={
+                "technical_analysis": (
+                    apply_technical_ml_signal(section.technical_analysis, ml_signal)
+                    if section.ticker == "TSLA" and section.technical_analysis is not None
+                    else section.technical_analysis
+                ),
+                "fundamental_analysis": (
+                    apply_fundamental_agent_result(
+                        section.fundamental_analysis,
+                        fundamental_agent_result,
+                    )
+                    if section.ticker == "TSLA"
+                    and section.fundamental_analysis is not None
+                    and fundamental_agent_result is not None
+                    else section.fundamental_analysis
+                ),
                 "social_news_summary": (
                     f"Experimental scrape source mode wired Reddit public pages, AP News, "
                     f"X relevancy API fixtures, and Candlecharts feasibility probes for "
@@ -360,6 +506,8 @@ def _scrape_report(
                     "source_mode": "scrape",
                     "provider_names": list(source_health_names),
                     "provider_result_artifact": "provider-results",
+                    "ml_signal": "fixture_sidecar" if section.ticker == "TSLA" else None,
+                    "fundamental_agent": ("fixture_sidecar" if section.ticker == "TSLA" else None),
                 },
             }
         )
@@ -385,6 +533,36 @@ def _scrape_report(
             "ticker_sections": ticker_sections,
             "audit_manifest": None,
         }
+    )
+
+
+def _fundamental_agent_result_from_results(
+    provider_results: tuple[ProviderResult[object], ...],
+) -> ProviderResult[FundamentalNlpAnalysisResponse] | None:
+    for result in provider_results:
+        if result.provider_name == "fundamental-agent":
+            return cast(ProviderResult[FundamentalNlpAnalysisResponse], result)
+    return None
+
+
+def _fixture_ml_signal(generated_at: datetime) -> TechnicalMlSignal:
+    return TechnicalMlSignal(
+        model_hash="fixture-technical-model-tsla-v1",
+        dataset_hash="fixture-technical-dataset-tsla-v1",
+        as_of=generated_at,
+        feature_end=generated_at,
+        prediction_horizon_sessions=1,
+        probability_positive=0.61,
+        calibrated_confidence=0.31,
+        signal=AnalysisSignal.SUPPORTS,
+        status="usable",
+        freshness_status=FreshnessStatus.FRESH,
+        validation_accuracy=0.58,
+        validation_brier_score=0.21,
+        limitations=(
+            "Fixture ML signal is local research metadata and cannot qualify a trade alone.",
+        ),
+        metadata={"source_mode": "scrape", "fixture": True},
     )
 
 
@@ -420,8 +598,55 @@ def _scrape_audit_payloads(
             cast(JsonValue, record) for record in _raw_snapshot_records(provider_results)
         )
         raw_snapshots["records"] = raw_records
+    _refresh_analysis_context_payload(payloads, report)
     payloads["provider-results.json"] = _provider_results_payload(report.run_id, provider_results)
     return payloads
+
+
+def _refresh_analysis_context_payload(
+    payloads: dict[str, JsonObject],
+    report: DailyReport,
+) -> None:
+    analysis_contexts = payloads.get("analysis-contexts.json")
+    if analysis_contexts is None:
+        return
+    records_value = analysis_contexts.get("records")
+    if not isinstance(records_value, list):
+        return
+    sections_by_ticker = {section.ticker: section for section in report.ticker_sections}
+    refreshed_records: list[JsonValue] = []
+    for record in records_value:
+        if not isinstance(record, dict):
+            refreshed_records.append(record)
+            continue
+        ticker = record.get("ticker")
+        if not isinstance(ticker, str) or ticker not in sections_by_ticker:
+            refreshed_records.append(cast(JsonValue, record))
+            continue
+        section = sections_by_ticker[ticker]
+        refreshed_record: JsonObject = cast(JsonObject, dict(record))
+        if section.technical_analysis is not None:
+            refreshed_record["technical"] = cast(
+                JsonValue,
+                section.technical_analysis.model_dump(mode="json"),
+            )
+        if section.fundamental_analysis is not None:
+            refreshed_record["fundamental"] = cast(
+                JsonValue,
+                section.fundamental_analysis.model_dump(mode="json"),
+            )
+        if section.sector_context is not None:
+            refreshed_record["sector"] = cast(
+                JsonValue,
+                section.sector_context.model_dump(mode="json"),
+            )
+        if section.macro_context is not None:
+            refreshed_record["macro"] = cast(
+                JsonValue,
+                section.macro_context.model_dump(mode="json"),
+            )
+        refreshed_records.append(cast(JsonValue, refreshed_record))
+    analysis_contexts["records"] = refreshed_records
 
 
 def _scrape_audit_manifest(

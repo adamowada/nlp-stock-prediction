@@ -15,7 +15,7 @@ from nlp_stock_prediction.contracts.base import (
     NonEmptyStr,
     TickerSymbol,
 )
-from nlp_stock_prediction.contracts.enums import AnalysisSignal, TimeHorizon
+from nlp_stock_prediction.contracts.enums import AnalysisSignal, FreshnessStatus, TimeHorizon
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.provenance import (
     EvidenceReference,
@@ -48,6 +48,44 @@ class AnalysisComponent(ContractModel):
     assumptions: tuple[str, ...] = Field(default_factory=tuple)
 
 
+class TechnicalMlSignal(ContractModel):
+    """Conservative sidecar for local ML-assisted technical-analysis output."""
+
+    model_hash: NonEmptyStr
+    dataset_hash: NonEmptyStr
+    as_of: date | datetime
+    feature_end: date | datetime
+    prediction_horizon_sessions: int = Field(ge=1)
+    probability_positive: Confidence
+    calibrated_confidence: Confidence
+    signal: AnalysisSignal
+    status: Literal["usable", "weak", "stale", "conflicting", "unavailable"] = "usable"
+    freshness_status: FreshnessStatus = FreshnessStatus.UNKNOWN
+    validation_accuracy: Confidence | None = None
+    validation_brier_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    warning_ids: tuple[str, ...] = Field(default_factory=tuple)
+    limitations: tuple[str, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+
+class FundamentalAgentSignal(ContractModel):
+    """Report-facing summary of a validated fundamental NLP agent result."""
+
+    request_id: NonEmptyStr
+    provider_name: NonEmptyStr
+    runner_name: NonEmptyStr
+    raw_response_id: str | None = None
+    signal: AnalysisSignal
+    confidence: Confidence
+    summary: NonEmptyStr
+    source_evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    claim_count: int = Field(ge=0)
+    risk_count: int = Field(ge=0)
+    contradictions: tuple[str, ...] = Field(default_factory=tuple)
+    warning_ids: tuple[str, ...] = Field(default_factory=tuple)
+    confidence_inputs: JsonObject = Field(default_factory=dict)
+
+
 class TechnicalAnalysis(AnalysisComponent):
     ticker: TickerSymbol
     trend: str | None = None
@@ -57,6 +95,7 @@ class TechnicalAnalysis(AnalysisComponent):
     volatility_summary: str | None = None
     gap_summary: str | None = None
     candlestick_summary: str | None = None
+    ml_signal: TechnicalMlSignal | None = None
 
 
 class FundamentalAnalysis(AnalysisComponent):
@@ -67,6 +106,7 @@ class FundamentalAnalysis(AnalysisComponent):
     balance_sheet_risk: str | None = None
     earnings_timing: str | None = None
     notable_filings: tuple[str, ...] = Field(default_factory=tuple)
+    agent_signal: FundamentalAgentSignal | None = None
 
 
 class FundamentalNlpAnalysisRequest(ProviderRequest):
@@ -232,9 +272,13 @@ class AnalysisBundle(ContractModel):
 __all__ = [
     "AnalysisBundle",
     "AnalysisComponent",
+    "FundamentalAgentSignal",
     "FundamentalAnalysis",
+    "FundamentalNlpAnalysisRequest",
+    "FundamentalNlpAnalysisResponse",
     "MacroContext",
     "MetricValue",
     "SectorContext",
     "TechnicalAnalysis",
+    "TechnicalMlSignal",
 ]

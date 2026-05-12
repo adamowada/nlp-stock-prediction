@@ -367,9 +367,28 @@ def test_cli_scrape_source_mode_writes_degraded_provider_report_bundle(tmp_path:
         and evidence.provenance.provider_metadata["sort_order"] == "relevancy"
         for evidence in report.evidence_sources
     )
+    tsla_section = next(section for section in report.ticker_sections if section.ticker == "TSLA")
+    assert tsla_section.technical_analysis is not None
+    assert tsla_section.technical_analysis.ml_signal is not None
+    assert tsla_section.technical_analysis.ml_signal.status == "usable"
+    assert tsla_section.fundamental_analysis is not None
+    assert tsla_section.fundamental_analysis.agent_signal is not None
+    assert tsla_section.fundamental_analysis.agent_signal.provider_name == "fundamental-agent"
+    markdown = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert "ML signal: supports" in markdown
+    assert "Fundamental agent: mixed" in markdown
+
     provider_results = _read_json_object(audit_dir / "provider-results.json")
     assert provider_results["source_mode"] == "scrape"
-    assert len(_json_records(provider_results)) >= 10
+    provider_records = _json_records(provider_results)
+    assert len(provider_records) >= 10
+    assert any(record["provider_name"] == "fundamental-agent" for record in provider_records)
+    analysis_records = _json_records(_read_json_object(audit_dir / "analysis-contexts.json"))
+    tsla_context = next(record for record in analysis_records if record["ticker"] == "TSLA")
+    technical_context = cast(JsonObject, tsla_context["technical"])
+    fundamental_context = cast(JsonObject, tsla_context["fundamental"])
+    assert isinstance(technical_context["ml_signal"], dict)
+    assert isinstance(fundamental_context["agent_signal"], dict)
     manifest = AuditManifest.model_validate(_read_json_object(audit_dir / "audit-manifest.json"))
     assert manifest == report.audit_manifest
     assert "provider-results" in {artifact.artifact_id for artifact in manifest.artifacts}

@@ -18,6 +18,10 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 - Cover ticker extraction, ticker matching, evidence normalization, clustering, technical indicators, scoring rules, risk gates, and report rendering helpers.
 - Cover ML technical datasets with deterministic OHLCV fixtures, including candle, volatility,
   volume, gap, and forward-return label generation.
+- Cover ML technical sidecar integration, including model/evaluation conversion, report attachment,
+  weak or conflicting signal gates, and scoring penalties.
+- Cover fundamental-agent integration, including valid citation-bound sidecars, malformed output,
+  unsupported claims, stale or contradictory evidence, and unavailable-agent fallbacks.
 - Include negative cases for malformed HTML, duplicate or insufficient tickers, missing provider
   data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
   recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
@@ -81,6 +85,8 @@ python -m pytest -m live_scraping
 - Include scenarios for:
   - A normal six-ticker day.
   - Experimental scrape source mode with provider health, warnings, and `provider-results.json`.
+  - Experimental scrape source mode with ML sidecar and fundamental-agent sidecar entries in
+    Markdown, JSON, provider-result, and analysis-context audit payloads.
   - No qualifying trade ideas.
   - Partial provider outages.
   - Conflicting Reddit/news/technical/fundamental signals.

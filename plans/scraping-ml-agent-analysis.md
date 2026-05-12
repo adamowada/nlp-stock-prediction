@@ -416,9 +416,9 @@ Status: provider-level behavior implemented; live orchestration wiring remains i
 - [x] Live scraping tests are opt-in, rate-limited, and source-specific.
 - [ ] ML dataset generation has leakage tests and data-quality gates.
 - [ ] RTX 3090 training command records reproducible metrics and model artifact metadata.
-- [ ] ML signal integrates conservatively into technical analysis and scoring with stale/weak-model
+- [x] ML signal integrates conservatively into technical analysis and scoring with stale/weak-model
       gates.
-- [ ] Codex fundamental analysis agent lane has a strict request/response schema and fixture-backed
+- [x] Codex fundamental analysis agent lane has a strict request/response schema and fixture-backed
       tests.
 - [x] Reports preserve source evidence, provider metadata, confidence inputs, disclaimers, and
       warnings for blocked/stale/drifted providers.
@@ -521,3 +521,8 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
   report health plus `audit/provider-results.json`, fixture-backed e2e coverage, and
   source-specific opt-in live smoke tests. Narrow verification passed for CLI/e2e/AP/Candlecharts/
   Reddit/scraping tests with `48 passed`.
+- 2026-05-12-00-00: Completed the direct ML/fundamental integration slice. Added report-facing
+  `TechnicalMlSignal` and `FundamentalAgentSignal` sidecars, conservative ML scoring penalties and
+  gates, fixture-backed TSLA sidecars in experimental scrape mode, Markdown rendering, provider
+  result audit coverage, refreshed analysis-context audit records, and focused tests for ML signal
+  conversion, ML score gates, fundamental-agent report integration, and scrape-mode E2E sidecars.

@@ -6,6 +6,8 @@ from typing import Any
 import pytest
 
 from nlp_stock_prediction.agents import FixtureFundamentalAgentProvider
+from nlp_stock_prediction.analysis import apply_fundamental_agent_result
+from nlp_stock_prediction.contracts import AnalysisSignal, FundamentalAnalysis
 from nlp_stock_prediction.contracts.analysis import FundamentalNlpAnalysisRequest
 from nlp_stock_prediction.contracts.enums import (
     FreshnessStatus,
@@ -151,6 +153,34 @@ def test_fixture_fundamental_agent_accepts_cited_audit_ready_output() -> None:
     assert result.data.audit.raw_response_id == result.raw_snapshot_id
     assert result.data.audit.prompt_sha256 is not None
     assert result.cache_key is not None
+
+
+def test_apply_fundamental_agent_result_attaches_report_sidecar() -> None:
+    provider = FixtureFundamentalAgentProvider(
+        payload=_valid_payload(),
+        provider_name="fundamental-agent",
+        fetched_at=NOW,
+    )
+    result = provider.analyze_fundamentals(_request())
+    analysis = FundamentalAnalysis(
+        ticker="NVDA",
+        summary="Baseline fundamental analysis is mixed.",
+        signal=AnalysisSignal.MIXED,
+        confidence=0.52,
+    )
+
+    integrated = apply_fundamental_agent_result(analysis, result)
+
+    assert integrated.agent_signal is not None
+    assert integrated.agent_signal.provider_name == "fundamental-agent"
+    assert integrated.agent_signal.claim_count == 2
+    assert integrated.agent_signal.risk_count == 1
+    assert integrated.agent_signal.source_evidence_ids == ("news-nvda-growth",)
+    assert integrated.signal == AnalysisSignal.SUPPORTS
+    assert integrated.confidence == 0.76
+    assert [reference.evidence_id for reference in integrated.evidence] == ["news-nvda-growth"]
+    assert any(metric.name == "fundamental-agent-confidence" for metric in integrated.metrics)
+    assert "Fundamental agent:" in integrated.summary
 
 
 def test_fixture_fundamental_agent_rejects_missing_claim_citations() -> None:
