@@ -41,6 +41,7 @@ from nlp_stock_prediction.ml.train import load_price_bars_csv
 
 DEFAULT_OUTPUT_ROOT = Path("artifacts/ml/timesfm-funnel")
 DEFAULT_DATA_DIR = Path("data/ml/wsb_10y")
+_BLOCKING_MODEL_SOURCE_WARNING_IDS = frozenset({"timesfm_adapter_hash_mismatch"})
 IMPLEMENTED_STAGES = (
     "data_check",
     "baseline_screen",
@@ -243,10 +244,13 @@ class _FinalEvalPredictionBatch(ContractModel):
     model_id: str | None = None
     model_revision: str | None = None
     adapter_sha256: str | None = None
+    training_ticker: str | None = None
     training_metadata_path: str | None = None
     validation_mean_loss: float | None = Field(default=None, ge=0.0)
+    warning_ids: tuple[str, ...] = Field(default_factory=tuple)
     point_forecasts: tuple[tuple[float, ...], ...]
     full_predictions: tuple[tuple[tuple[float, ...], ...], ...] = Field(default_factory=tuple)
+    forward_forecast: JsonObject | None = None
     runtime_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -2439,6 +2443,10 @@ def _run_final_eval(
             metrics,
             rmse_ratio=rmse_ratio,
             directional_delta=directional_delta,
+            warning_ids=prediction_batch.warning_ids,
+            has_forward_forecast=prediction_batch.forward_forecast is not None,
+            training_ticker=prediction_batch.training_ticker,
+            dataset_ticker=dataset.ticker,
             args=args,
         )
         status: FunnelStatus = "suitable" if not suitability_reasons else "weak"
@@ -2537,6 +2545,8 @@ def _run_final_eval_model(
 ) -> _FinalEvalPredictionBatch:
     from nlp_stock_prediction.ml.timesfm.evaluate import (
         TimesFmEvaluationConfig,
+        _forward_forecast,
+        _forward_forecast_window,
         _load_model_predictor,
         load_timesfm_evaluation_model_source,
     )
@@ -2545,6 +2555,11 @@ def _run_final_eval_model(
         raise ValueError("selected survivor_hpo row is missing training metadata")
     model_dir = Path(selected_hpo_row.training_metadata).parent
     model_source = load_timesfm_evaluation_model_source(model_dir)
+    if model_source.training_ticker != dataset.ticker:
+        raise ValueError(
+            "TimesFM training metadata ticker "
+            f"{model_source.training_ticker} does not match evaluation ticker {dataset.ticker}."
+        )
     evaluation_config = TimesFmEvaluationConfig(
         requested_device=args.device,
         max_windows=args.final_max_windows,
@@ -2561,15 +2576,20 @@ def _run_final_eval_model(
         prediction = predictor(window)
         point_forecasts.append(prediction.point_forecast)
         full_predictions.append(prediction.full_predictions)
+    forward_window = _forward_forecast_window(dataset)
+    forward_forecast = _forward_forecast(forward_window, predictor(forward_window))
     return _FinalEvalPredictionBatch(
         source_trial_id=selected_hpo_row.method,
         model_id=model_source.model_id,
         model_revision=model_source.model_revision,
         adapter_sha256=model_source.adapter_sha256,
+        training_ticker=model_source.training_ticker,
         training_metadata_path=selected_hpo_row.training_metadata,
         validation_mean_loss=selected_hpo_row.validation_mean_loss,
+        warning_ids=model_source.warning_ids,
         point_forecasts=tuple(point_forecasts),
         full_predictions=tuple(full_predictions),
+        forward_forecast=cast(JsonObject, forward_forecast.model_dump(mode="json")),
         runtime_metadata={
             **runtime_metadata,
             "final_eval_dir": str(output_dir),
@@ -2623,6 +2643,10 @@ def _final_eval_suitability_reasons(
     *,
     rmse_ratio: float | None,
     directional_delta: float,
+    warning_ids: Sequence[str],
+    has_forward_forecast: bool,
+    training_ticker: str | None,
+    dataset_ticker: str,
     args: argparse.Namespace,
 ) -> tuple[str, ...]:
     reasons: list[str] = []
@@ -2634,6 +2658,15 @@ def _final_eval_suitability_reasons(
         reasons.append("underperforms_best_rmse_baseline")
     if directional_delta < 0.0:
         reasons.append("underperforms_best_directional_baseline")
+    if not has_forward_forecast:
+        reasons.append("missing_forward_forecast")
+    if training_ticker is None or not training_ticker.strip():
+        reasons.append("missing_training_ticker")
+    elif training_ticker.upper() != dataset_ticker.upper():
+        reasons.append("training_ticker_mismatch")
+    reasons.extend(
+        warning_id for warning_id in warning_ids if warning_id in _BLOCKING_MODEL_SOURCE_WARNING_IDS
+    )
     return tuple(reasons)
 
 
@@ -2672,6 +2705,7 @@ def _write_final_eval_artifact(
         "kill_reason": kill_reason,
         "suitable_for_scoring": status == "suitable",
         "suitability_reasons": list(suitability_reasons),
+        "warning_ids": list(prediction_batch.warning_ids),
         "model_id": prediction_batch.model_id or selected_hpo_row.model_id or args.model_id,
         "model_revision": (
             prediction_batch.model_revision
@@ -2693,6 +2727,9 @@ def _write_final_eval_artifact(
         "horizon_length": dataset.horizon_length,
         "max_windows": args.final_max_windows,
         "config": _final_eval_config_payload(args),
+        "model_source": {
+            "training_ticker": prediction_batch.training_ticker,
+        },
         "selected_hpo": {
             "method": selected_hpo_row.method,
             "evaluation_artifact": selected_hpo_row.evaluation_artifact,
@@ -2710,6 +2747,7 @@ def _write_final_eval_artifact(
         "rmse_ratio_vs_best_baseline": rmse_ratio,
         "directional_delta_vs_best_baseline": directional_delta,
         "records": [record.model_dump(mode="json") for record in records],
+        "forward_forecast": prediction_batch.forward_forecast,
         "runtime_metadata": prediction_batch.runtime_metadata,
     }
     write_manifest(artifact_path, payload)
@@ -2938,6 +2976,7 @@ def _write_report_ready_evaluation_artifact(
         TimesFmEvaluationConfig,
         TimesFmEvaluationMetrics,
         TimesFmEvaluationRecord,
+        TimesFmForwardForecast,
         write_timesfm_evaluation_artifact,
     )
 
@@ -2964,6 +3003,34 @@ def _write_report_ready_evaluation_artifact(
         baseline_cls=TimesFmBaselineEvaluation,
         metrics_cls=TimesFmEvaluationMetrics,
     )
+    forward_payload = final_payload.get("forward_forecast")
+    if not isinstance(forward_payload, dict):
+        raise ValueError("report_ready requires final_eval forward_forecast")
+    forward_forecast = TimesFmForwardForecast.model_validate(forward_payload)
+    raw_warning_ids = final_payload.get("warning_ids", [])
+    if raw_warning_ids is None:
+        raw_warning_ids = []
+    if not isinstance(raw_warning_ids, list):
+        raise ValueError("report_ready requires final_eval warning_ids to be a list")
+    warning_ids = tuple(str(warning_id) for warning_id in raw_warning_ids)
+    blocking_warning_ids = tuple(
+        warning_id for warning_id in warning_ids if warning_id in _BLOCKING_MODEL_SOURCE_WARNING_IDS
+    )
+    if blocking_warning_ids:
+        raise ValueError(
+            "report_ready blocked by model source warning(s): " + ",".join(blocking_warning_ids)
+        )
+    model_source = final_payload.get("model_source")
+    if not isinstance(model_source, dict):
+        raise ValueError("report_ready requires final_eval model_source")
+    training_ticker = model_source.get("training_ticker")
+    if not isinstance(training_ticker, str) or not training_ticker.strip():
+        raise ValueError("report_ready requires final_eval training_ticker")
+    if training_ticker.strip().upper() != symbol.upper():
+        raise ValueError(
+            "report_ready training ticker "
+            f"{training_ticker} does not match artifact symbol {symbol}."
+        )
     training_metadata, training_metadata_sha256 = _report_ready_training_metadata(
         final_row,
         symbol=symbol,
@@ -3012,12 +3079,13 @@ def _write_report_ready_evaluation_artifact(
         metrics=metrics,
         baselines=baselines,
         records=records,
-        forward_forecast=None,
+        forward_forecast=forward_forecast,
         training_metadata=training_metadata,
         runtime_metadata={
             "backend": "signal_funnel_report_ready",
             "source_final_eval_artifact": final_row.evaluation_artifact,
         },
+        warning_ids=warning_ids,
     )
     promoted_path = output_root / "report_ready" / symbol / "best" / "evaluation.json"
     write_timesfm_evaluation_artifact(artifact, promoted_path)
