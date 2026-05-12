@@ -41,6 +41,8 @@ access. Live smoke checks are explicit opt-in:
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | Identifies SEC live API smoke requests. | Running the SEC live API smoke test. |
 | `NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL` | Narrow URL for the public scraping smoke test. | Running the live scraping smoke test. |
 | `NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT` | Literal text expected in the configured scraping smoke response. | Running the live scraping smoke test. |
+| `NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` | Optional User-Agent for future compliance-aware public HTML adapters. | Manual/live scraping adapter runs; deterministic tests use injected transports. |
+| `NLP_STOCK_PREDICTION_SCRAPE_MIN_DELAY_SECONDS` | Optional non-negative crawl delay floor for future scraping adapters; defaults to `1.0`. | Manual/live scraping adapter runs that enforce polite throttling. |
 | `NLP_STOCK_PREDICTION_LIVE_LLM_SMOKE` | Reserved for future live LLM smoke wiring. | Leave unset or `0` until live LLM adapter wiring is enabled. |
 
 Provider adapters already return structured `missing_credentials` warnings when keys are absent.
@@ -75,6 +77,20 @@ audit artifacts. The app intentionally avoids `sort_order=recency` for productio
 evidence because the smoke test showed too much spam/noise. API key and secret values are kept in
 `.env` for completeness and token rotation; normal read-only recent-search calls should use the
 Bearer Token.
+
+## Public HTML Scraping Guardrails
+
+Live scraping remains unwired in the V1 CLI, but shared adapter helpers now use a source policy
+registry before public HTML fetches. Policies describe allowlisted paths, disallowed paths, robots
+review status, login and JavaScript requirements, and fallback behavior. Blocked, login-required,
+and markup-drift cases should return `ProviderResult` warnings instead of raising for expected
+provider conditions.
+
+The default public HTML request identity is
+`nlp-stock-prediction/0.1 compliance-aware-scraper`. Override it with
+`NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` for manual/live adapter runs when a more specific contact
+string is appropriate. `NLP_STOCK_PREDICTION_SCRAPE_MIN_DELAY_SECONDS` is reserved as the shared
+polite crawl-delay floor for future live adapters; keep it non-negative.
 
 ## `.env` Files
 
