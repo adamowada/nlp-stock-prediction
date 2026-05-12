@@ -16,10 +16,14 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 
 - Validate pure functions and small modules without network access.
 - Cover ticker extraction, ticker matching, evidence normalization, clustering, technical indicators, scoring rules, risk gates, and report rendering helpers.
+- Cover ML technical datasets with deterministic OHLCV fixtures, including candle, volatility,
+  volume, gap, and forward-return label generation.
 - Include negative cases for malformed HTML, duplicate or insufficient tickers, missing provider
   data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
   recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
   ticker false positives.
+- Include ML negative cases for insufficient history, duplicate bars, missing OHLCV, impossible
+  prices, split-like leakage, and temporal train/validation leakage.
 
 ### 2. Schema and model tests
 
@@ -112,6 +116,14 @@ Fixture-backed e2e coverage now exercises offline CLI report generation. Live AP
 checks remain opt-in, and live LLM checks are reserved until a live adapter and credential contract
 exist. See `docs/configuration.md` for the current live-smoke environment variables and `.env`
 guidance.
+
+ML lane smoke coverage is CPU-only by default:
+
+```sh
+python -m pytest tests/test_ml_dataset.py tests/test_ml_training_smoke.py -q
+```
+
+GPU/RTX training is a local opt-in command path and should not be required in PR CI.
 
 Stage 5 failure drills are represented across parser, provider-adapter, extraction/clustering,
 scoring, report-rendering, and CLI e2e tests. The matrix covers malformed Reddit ticker-card HTML,

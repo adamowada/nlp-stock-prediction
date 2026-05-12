@@ -18,3 +18,8 @@ dist/
 
 reports/
 cache/
+
+# Local ML inputs and generated model artifacts.
+data/ml/
+artifacts/
+models/

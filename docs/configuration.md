@@ -100,6 +100,42 @@ TradingView/widget chart, the provider returns a structured `no_data` warning an
 TradingView internals. Downstream ML or technical-analysis work should use approved provider data or
 user-supplied OHLCV CSV fixtures when Candlecharts is widget-only.
 
+## Local ML Technical Analysis
+
+The ML technical-analysis lane is isolated from report generation and scoring. It builds local
+research artifacts from user-supplied OHLCV CSV files and records model, dataset, hardware, and
+usage-limitation metadata. Outputs are not investment advice and are not wired into recommendations.
+
+Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
+access, or local training data. CUDA/RTX metadata is detected only when available and when the local
+training command is configured with `--device auto` or `--device cuda`.
+
+Local training data and artifacts should stay outside git. The repo ignores `data/ml/`,
+`artifacts/`, and `models/` for this purpose. A local CSV must include:
+
+- `timestamp`
+- `open`
+- `high`
+- `low`
+- `close`
+- `volume`
+- optional `adjusted_close`
+
+Example CPU training command:
+
+```sh
+python -m nlp_stock_prediction.ml.train --csv data/ml/TSLA.csv --ticker TSLA --output-dir artifacts/ml/TSLA --device cpu
+```
+
+When running from an uninstalled source checkout, set `PYTHONPATH=src` or install the package in
+editable mode before using `python -m`.
+
+Example evaluation command:
+
+```sh
+python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json --csv data/ml/TSLA.csv --ticker TSLA --output artifacts/ml/TSLA/evaluation.json
+```
+
 ## `.env` Files
 
 `.env` and `.env.*` are ignored by git. `.env.example` contains placeholder keys only and is safe to
