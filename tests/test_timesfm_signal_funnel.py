@@ -43,9 +43,13 @@ def test_signal_funnel_stage0_dry_run_writes_manifest_and_leaderboard(tmp_path: 
 
     assert manifest["schema_version"] == "ml.timesfm.signal_funnel_manifest.v1"
     assert manifest["run_id"] == "stage0-dry-run"
-    assert manifest["implemented_stages"] == ["data_check", "baseline_screen"]
+    assert manifest["implemented_stages"] == [
+        "data_check",
+        "baseline_screen",
+        "raw_timesfm_screen",
+    ]
     assert manifest["skipped_stages"][0]["reason"] == "stage_not_implemented"
-    assert len(leaderboard["rows"]) == 2
+    assert len(leaderboard["rows"]) == 3
     assert leaderboard["rows"][0]["symbol"] == "MU"
     assert leaderboard["rows"][0]["status"] == "passed"
     assert leaderboard["rows"][0]["decision"] == "continue"
@@ -54,6 +58,9 @@ def test_signal_funnel_stage0_dry_run_writes_manifest_and_leaderboard(tmp_path: 
     assert leaderboard["rows"][1]["stage"] == "baseline_screen"
     assert leaderboard["rows"][1]["status"] == "skipped"
     assert leaderboard["rows"][1]["kill_reason"] == "dry_run_no_csv_loaded"
+    assert leaderboard["rows"][2]["stage"] == "raw_timesfm_screen"
+    assert leaderboard["rows"][2]["status"] == "skipped"
+    assert leaderboard["rows"][2]["kill_reason"] == "dry_run_no_model_loaded"
     assert csv_rows[0]["symbol"] == "MU"
     assert csv_rows[0]["status"] == "passed"
 
@@ -193,6 +200,8 @@ def test_signal_funnel_stage1_writes_baseline_and_technical_rows(
             "cpu",
             "--screen-max-windows",
             "16",
+            "--stop-after",
+            "baseline_screen",
         ]
     )
 
@@ -226,6 +235,150 @@ def test_signal_funnel_stage1_writes_baseline_and_technical_rows(
     assert "signal=" in technical["notes"]
     assert "trend=" in technical["notes"]
     assert technical["selected_for_next_stage"] is True
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage2_promotes_raw_timesfm_when_it_beats_baselines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    def raw_predictor(
+        _dataset: Any,
+        windows: Any,
+        args: Any,
+    ) -> signal_funnel._RawTimesFmPredictionBatch:
+        return signal_funnel._RawTimesFmPredictionBatch(
+            model_id="fake-raw-timesfm",
+            model_revision="fake-revision",
+            point_forecasts=tuple(tuple(window.future_values) for window in windows),
+            runtime_metadata={"backend": "fake_raw_predictor", "device": args.device},
+        )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage2-promote",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+        ],
+        raw_predictor=raw_predictor,
+    )
+
+    assert exit_code == 0
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    methods = {row["method"]: row for row in records}
+    raw_row = methods["raw_timesfm_base"]
+
+    assert len(records) == 5
+    assert raw_row["stage"] == "raw_timesfm_screen"
+    assert raw_row["status"] == "passed"
+    assert raw_row["decision"] == "run_adapter_smoke"
+    assert raw_row["selected_for_next_stage"] is True
+    assert raw_row["model_id"] == "fake-raw-timesfm"
+    assert raw_row["model_revision"] == "fake-revision"
+    assert raw_row["rmse"] == 0.0
+    assert raw_row["raw_timesfm_rmse"] == 0.0
+    assert raw_row["rmse_ratio_vs_best_baseline"] == 0.0
+    assert "sample_count=16" in raw_row["notes"]
+
+    artifact_path = Path(raw_row["evaluation_artifact"])
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact["schema_version"] == "ml.timesfm.raw_evaluation.v1"
+    assert artifact["status"] == "passed"
+    assert artifact["decision"] == "run_adapter_smoke"
+    assert artifact["metrics"]["sample_count"] == 16
+    assert len(artifact["records"]) == 16
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage2_kills_raw_timesfm_when_materially_worse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    def raw_predictor(
+        _dataset: Any,
+        windows: Any,
+        _args: Any,
+    ) -> signal_funnel._RawTimesFmPredictionBatch:
+        return signal_funnel._RawTimesFmPredictionBatch(
+            model_id="fake-raw-timesfm",
+            point_forecasts=tuple(
+                tuple(window.context_values[-1] - 10.0 for _ in window.future_values)
+                for window in windows
+            ),
+            runtime_metadata={"backend": "fake_raw_predictor"},
+        )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage2-kill",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+        ],
+        raw_predictor=raw_predictor,
+    )
+
+    assert exit_code == 0
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    raw_row = next(row for row in records if row["stage"] == "raw_timesfm_screen")
+
+    assert raw_row["status"] == "killed"
+    assert raw_row["decision"] == "stop"
+    assert raw_row["selected_for_next_stage"] is False
+    assert raw_row["rmse_ratio_vs_best_baseline"] > 1.15
+    assert raw_row["directional_delta_vs_best_baseline"] < -0.05
+    assert raw_row["kill_reason"].startswith("raw_timesfm_underperformed_baselines:")
 
 
 @pytest.mark.unit

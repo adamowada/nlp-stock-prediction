@@ -434,3 +434,6 @@ Optional CUDA verification:
 - 2026-05-12: Implemented Stage 1 `baseline_screen` with cheap last-close and recent-mean-return
   validation-window baselines plus deterministic technical-analysis snapshot rows, while keeping
   dry-run and failed data checks auditable as skipped baseline rows.
+- 2026-05-12: Implemented Stage 2 `raw_timesfm_screen` with capped validation-window raw base
+  TimesFM evaluation, baseline-relative kill/promote decisions, raw evaluation artifacts, and
+  fake-predictor unit coverage so default tests stay offline and CUDA-free.
