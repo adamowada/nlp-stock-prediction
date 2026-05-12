@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -21,6 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from nlp_stock_prediction.ml.timesfm.artifacts import file_sha256
 from nlp_stock_prediction.ml.timesfm.smoke import DEFAULT_MODEL_ID
 
 DEFAULT_SYMBOLS = ("MU", "SPY", "ASTS", "SNDK", "GOOG", "NVDA")
@@ -64,6 +65,18 @@ class HpoTrial:
             f"ctx{self.context_length}_h{self.horizon_length}_steps{self.max_steps}"
             f"_bs{self.batch_size}_lr{lr}_r{self.lora_r}_a{self.lora_alpha}_do{dropout}"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingChoice:
+    """Comparable summary for a completed training run."""
+
+    symbol: str
+    trial: HpoTrial
+    validation_mean_loss: float
+    validation_final_loss: float
+    training_metadata_path: Path
+    run_dir: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +164,8 @@ def run_focused_hpo(args: argparse.Namespace) -> int:
         "data_dir": str(data_dir),
         "output_root": str(output_root),
         "price_policy": ADJUSTED_PRICE_POLICY,
+        "selection_policy": "validation_loss_then_single_final_heldout_evaluation",
+        "trial_selection": "diverse_priority_prefix",
         "max_trials_per_ticker": args.max_trials_per_ticker,
         "dry_run": bool(args.dry_run),
         "records": [],
@@ -234,6 +249,7 @@ def dry_run_data_record(
     return {
         "csv_path": str(data_dir / f"{symbol}.csv"),
         "metadata_path": str(data_dir / f"{symbol}.metadata.json"),
+        "csv_sha256": None,
         "rows": estimated_rows,
         "first": effective_start.isoformat(),
         "last": as_of.isoformat(),
@@ -259,29 +275,37 @@ def ensure_symbol_data(
     if csv_path.exists() and metadata_path.exists() and not refresh:
         rows = _read_rows(csv_path)
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        mismatch = _cached_data_mismatch(
+            symbol,
+            policy,
+            metadata,
+            rows,
+            start=start,
+            effective_start=effective_start,
+            as_of=as_of,
+        )
+        if mismatch is not None:
+            print(f"  {symbol}: refreshing cached data ({mismatch})")
+            rows, metadata = _fetch_and_write_symbol_data(
+                symbol,
+                policy,
+                csv_path=csv_path,
+                metadata_path=metadata_path,
+                start=start,
+                effective_start=effective_start,
+                as_of=as_of,
+                sleep_seconds=sleep_seconds,
+            )
     else:
-        rows = fetch_adjusted_ohlcv(symbol, effective_start, as_of)
-        if sleep_seconds > 0:
-            time.sleep(sleep_seconds)
-        metadata = {
-            "schema_version": "ml.timesfm.focused_ohlcv.v1",
-            "symbol": symbol,
-            "asset_type": policy.asset_type,
-            "requested_start": start.isoformat(),
-            "effective_start": effective_start.isoformat(),
-            "as_of": as_of.isoformat(),
-            "source": "yahoo-chart",
-            "source_url_template": YAHOO_CHART_URL,
-            "price_policy": ADJUSTED_PRICE_POLICY,
-            "lineage_notes": list(policy.notes),
-            "rows": len(rows),
-            "first": rows[0]["timestamp"] if rows else None,
-            "last": rows[-1]["timestamp"] if rows else None,
-        }
-        write_ohlcv_csv(csv_path, rows)
-        metadata_path.write_text(
-            json.dumps(metadata, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        rows, metadata = _fetch_and_write_symbol_data(
+            symbol,
+            policy,
+            csv_path=csv_path,
+            metadata_path=metadata_path,
+            start=start,
+            effective_start=effective_start,
+            as_of=as_of,
+            sleep_seconds=sleep_seconds,
         )
     if len(rows) < policy.minimum_rows:
         raise RuntimeError(
@@ -290,11 +314,96 @@ def ensure_symbol_data(
     return {
         "csv_path": str(csv_path),
         "metadata_path": str(metadata_path),
+        "csv_sha256": file_sha256(csv_path),
         "rows": len(rows),
         "first": rows[0]["timestamp"],
         "last": rows[-1]["timestamp"],
         "metadata": metadata,
     }
+
+
+def _fetch_and_write_symbol_data(
+    symbol: str,
+    policy: TickerPolicy,
+    *,
+    csv_path: Path,
+    metadata_path: Path,
+    start: date,
+    effective_start: date,
+    as_of: date,
+    sleep_seconds: float,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    rows = fetch_adjusted_ohlcv(symbol, effective_start, as_of)
+    if sleep_seconds > 0:
+        time.sleep(sleep_seconds)
+    write_ohlcv_csv(csv_path, rows)
+    metadata = {
+        "schema_version": "ml.timesfm.focused_ohlcv.v1",
+        "symbol": symbol,
+        "asset_type": policy.asset_type,
+        "requested_start": start.isoformat(),
+        "effective_start": effective_start.isoformat(),
+        "as_of": as_of.isoformat(),
+        "source": "yahoo-chart",
+        "source_url_template": YAHOO_CHART_URL,
+        "price_policy": ADJUSTED_PRICE_POLICY,
+        "lineage_notes": list(policy.notes),
+        "rows": len(rows),
+        "first": rows[0]["timestamp"] if rows else None,
+        "last": rows[-1]["timestamp"] if rows else None,
+        "csv_sha256": file_sha256(csv_path),
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return rows, metadata
+
+
+def _cached_data_mismatch(
+    symbol: str,
+    policy: TickerPolicy,
+    metadata: Any,
+    rows: Sequence[dict[str, str]],
+    *,
+    start: date,
+    effective_start: date,
+    as_of: date,
+) -> str | None:
+    if not isinstance(metadata, dict):
+        return "metadata is not a JSON object"
+    expectations: dict[str, object] = {
+        "schema_version": "ml.timesfm.focused_ohlcv.v1",
+        "symbol": symbol,
+        "asset_type": policy.asset_type,
+        "requested_start": start.isoformat(),
+        "effective_start": effective_start.isoformat(),
+        "as_of": as_of.isoformat(),
+        "price_policy": ADJUSTED_PRICE_POLICY,
+        "lineage_notes": list(policy.notes),
+        "rows": len(rows),
+    }
+    for key, expected in expectations.items():
+        if metadata.get(key) != expected:
+            return f"{key} expected {expected!r}, found {metadata.get(key)!r}"
+    if not rows:
+        return "cached CSV has no rows"
+    first = rows[0].get("timestamp")
+    last = rows[-1].get("timestamp")
+    if metadata.get("first") != first:
+        return f"first row expected {metadata.get('first')!r}, found {first!r}"
+    if metadata.get("last") != last:
+        return f"last row expected {metadata.get('last')!r}, found {last!r}"
+    try:
+        first_date = date.fromisoformat(str(first))
+        last_date = date.fromisoformat(str(last))
+    except ValueError:
+        return "row timestamps are not ISO dates"
+    if first is None or first_date < effective_start:
+        return "first row predates effective ticker history"
+    if last is None or last_date > as_of:
+        return "last row is after as_of"
+    return None
 
 
 def fetch_adjusted_ohlcv(symbol: str, start: date, end: date) -> list[dict[str, str]]:
@@ -395,7 +504,7 @@ def run_symbol_hpo(
     csv_path = Path(str(data_record["csv_path"]))
     row_count = int(data_record["rows"])
     trial_records: list[dict[str, Any]] = []
-    choices: list[EvaluationChoice] = []
+    choices: list[TrainingChoice] = []
     selected_trials = select_trainable_trials(
         trials,
         row_count=row_count,
@@ -420,39 +529,48 @@ def run_symbol_hpo(
 
     for trial_index, trial in enumerate(selected_trials, start=1):
         run_dir = runs_root / trial.run_id
-        evaluation_path = run_dir / "evaluation.json"
+        metadata_path = run_dir / "training-metadata.json"
         print(f"  {symbol} trial {trial_index:02d}/{len(selected_trials):02d}: {trial.run_id}")
-        if evaluation_path.exists() and not args.refresh_runs:
-            choice = choice_from_evaluation(symbol, trial, evaluation_path, run_dir)
-            choices.append(choice)
-            trial_records.append(_trial_record(choice, reused=True))
-            continue
+        if metadata_path.exists() and not args.refresh_runs:
+            try:
+                choice = choice_from_training_metadata(
+                    symbol,
+                    trial,
+                    metadata_path,
+                    run_dir,
+                    data_record=data_record,
+                    args=args,
+                )
+            except ValueError as exc:
+                print(f"  {symbol} trial {trial.run_id}: stale training metadata ({exc})")
+            else:
+                choices.append(choice)
+                trial_records.append(_training_trial_record(choice, reused=True))
+                continue
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
         run_dir.mkdir(parents=True, exist_ok=True)
         train_command = _train_command(args, csv_path, symbol, run_dir, trial)
-        evaluate_command = _evaluate_command(
-            args,
-            csv_path,
-            symbol,
-            run_dir,
-            evaluation_path,
-            trial,
-        )
         try:
             log_path = run_dir / "train.log"
             _run_logged(train_command, log_path)
-            log_path = run_dir / "evaluate.log"
-            _run_logged(evaluate_command, log_path)
-            choice = choice_from_evaluation(symbol, trial, evaluation_path, run_dir)
+            choice = choice_from_training_metadata(
+                symbol,
+                trial,
+                metadata_path,
+                run_dir,
+                data_record=data_record,
+                args=args,
+            )
             choices.append(choice)
-            trial_records.append(_trial_record(choice, reused=False))
+            trial_records.append(_training_trial_record(choice, reused=False))
         except subprocess.CalledProcessError as exc:
-            failed_stage = "train" if log_path.name == "train.log" else "evaluate"
             trial_records.append(
                 {
                     "run_id": trial.run_id,
                     "status": "failed",
                     "returncode": exc.returncode,
-                    "failed_stage": failed_stage,
+                    "failed_stage": "train",
                     "trial": _trial_payload(trial),
                     "log_path": str(log_path),
                 }
@@ -469,29 +587,93 @@ def run_symbol_hpo(
             "data": data_record,
             "trials": trial_records,
         }
-    best = choose_best_evaluation(choices)
+    best = choose_best_training_run(choices)
+    evaluation_path = best.run_dir / "evaluation.json"
+    evaluation_reused = False
+    if evaluation_path.exists() and not args.refresh_runs:
+        mismatch = _evaluation_artifact_mismatch(
+            symbol,
+            best.trial,
+            evaluation_path,
+            best.run_dir,
+            data_record=data_record,
+            args=args,
+        )
+        if mismatch is None:
+            evaluation_reused = True
+        else:
+            print(f"  {symbol} best evaluation stale ({mismatch}); rerunning evaluation")
+    if not evaluation_reused:
+        evaluate_command = _evaluate_command(
+            args,
+            csv_path,
+            symbol,
+            best.run_dir,
+            evaluation_path,
+            best.trial,
+        )
+        try:
+            _run_logged(evaluate_command, best.run_dir / "evaluate.log")
+        except subprocess.CalledProcessError as exc:
+            return {
+                "symbol": symbol,
+                "status": "failed",
+                "error": f"final evaluation failed with exit code {exc.returncode}",
+                "policy": _policy_payload(policy),
+                "data": data_record,
+                "best_training": _training_choice_payload(best),
+                "trials": trial_records,
+            }
+    post_evaluation_mismatch = _evaluation_artifact_mismatch(
+        symbol,
+        best.trial,
+        evaluation_path,
+        best.run_dir,
+        data_record=data_record,
+        args=args,
+    )
+    if post_evaluation_mismatch is not None:
+        return {
+            "symbol": symbol,
+            "status": "failed",
+            "error": f"final evaluation artifact mismatch: {post_evaluation_mismatch}",
+            "policy": _policy_payload(policy),
+            "data": data_record,
+            "best_training": _training_choice_payload(best),
+            "trials": trial_records,
+        }
+    final_choice = choice_from_evaluation(symbol, best.trial, evaluation_path, best.run_dir)
+    for trial_record in trial_records:
+        if trial_record.get("run_id") == best.trial.run_id:
+            trial_record["selected_for_final_evaluation"] = True
     best_dir = symbol_root / "best"
     if best_dir.exists():
         shutil.rmtree(best_dir)
     shutil.copytree(best.run_dir, best_dir)
     print(
-        f"  {symbol} best: {best.status} acc={best.directional_accuracy:.6f} "
-        f"rmse_ratio={best.rmse_ratio:.4f}"
+        f"  {symbol} best: {final_choice.status} "
+        f"val_loss={best.validation_mean_loss:.6f} "
+        f"acc={final_choice.directional_accuracy:.6f} rmse_ratio={final_choice.rmse_ratio:.4f}"
     )
     return {
         "symbol": symbol,
-        "status": best.status,
-        "suitable_for_scoring": best.suitable_for_scoring,
+        "status": final_choice.status,
+        "suitable_for_scoring": final_choice.suitable_for_scoring,
         "policy": _policy_payload(policy),
         "data": data_record,
         "best": {
             "run_id": best.trial.run_id,
-            "evaluation": str(best.evaluation_path),
+            "selection_metric": "validation_mean_loss",
+            "validation_mean_loss": best.validation_mean_loss,
+            "validation_final_loss": best.validation_final_loss,
+            "training_metadata": str(best.training_metadata_path),
+            "evaluation": str(final_choice.evaluation_path),
+            "evaluation_reused": evaluation_reused,
             "promoted_dir": str(best_dir),
-            "directional_accuracy": best.directional_accuracy,
-            "rmse": best.rmse,
-            "best_baseline_rmse": best.best_baseline_rmse,
-            "rmse_ratio": round(best.rmse_ratio, 8),
+            "directional_accuracy": final_choice.directional_accuracy,
+            "rmse": final_choice.rmse,
+            "best_baseline_rmse": final_choice.best_baseline_rmse,
+            "rmse_ratio": round(final_choice.rmse_ratio, 8),
             "trial": _trial_payload(best.trial),
         },
         "trials": trial_records,
@@ -567,7 +749,9 @@ def select_trainable_trials(
     """Filter candidates that cannot fit train/validation/test windows."""
 
     trainable = tuple(trial for trial in trials if row_count >= minimum_rows_for_trial(trial))
-    return trainable if max_trials == 0 else trainable[:max_trials]
+    if max_trials == 0 or len(trainable) <= max_trials:
+        return trainable
+    return _diverse_priority_prefix(trainable, max_trials)
 
 
 def minimum_rows_for_trial(trial: HpoTrial) -> int:
@@ -576,20 +760,54 @@ def minimum_rows_for_trial(trial: HpoTrial) -> int:
     return trial.context_length + (3 * trial.horizon_length) + 2
 
 
-def choose_best_evaluation(choices: Sequence[EvaluationChoice]) -> EvaluationChoice:
-    """Choose the best completed trial without tuning against report scoring."""
+def choose_best_training_run(choices: Sequence[TrainingChoice]) -> TrainingChoice:
+    """Choose the best completed training run using validation loss only."""
 
     if not choices:
-        raise ValueError("at least one evaluation choice is required")
+        raise ValueError("at least one training choice is required")
     return min(
         choices,
         key=lambda choice: (
-            0 if choice.suitable_for_scoring else 1,
-            0 if choice.status == "suitable" else 1,
-            choice.rmse_ratio,
-            -choice.directional_accuracy,
-            choice.rmse,
+            choice.validation_mean_loss,
+            choice.validation_final_loss,
+            _trial_priority(choice.trial),
         ),
+    )
+
+
+def choice_from_training_metadata(
+    symbol: str,
+    trial: HpoTrial,
+    metadata_path: Path,
+    run_dir: Path,
+    *,
+    data_record: dict[str, Any],
+    args: argparse.Namespace,
+) -> TrainingChoice:
+    """Load and validate one training artifact for HPO selection."""
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    mismatch = _training_metadata_mismatch(
+        symbol,
+        trial,
+        metadata,
+        data_record=data_record,
+        args=args,
+    )
+    if mismatch is not None:
+        raise ValueError(mismatch)
+    validation = _json_object(metadata, "metrics")["validation"]
+    if not isinstance(validation, dict):
+        raise ValueError("training metadata validation metrics must be a JSON object")
+    mean_loss = _required_finite_float(validation, "mean_loss")
+    final_loss = _required_finite_float(validation, "final_loss")
+    return TrainingChoice(
+        symbol=symbol,
+        trial=trial,
+        validation_mean_loss=mean_loss,
+        validation_final_loss=final_loss,
+        training_metadata_path=metadata_path,
+        run_dir=run_dir,
     )
 
 
@@ -624,6 +842,137 @@ def choice_from_evaluation(
     )
 
 
+def _training_metadata_mismatch(
+    symbol: str,
+    trial: HpoTrial,
+    metadata: Any,
+    *,
+    data_record: dict[str, Any],
+    args: argparse.Namespace,
+) -> str | None:
+    if not isinstance(metadata, dict):
+        return "training metadata is not a JSON object"
+    csv_sha256 = data_record.get("csv_sha256")
+    expectations: dict[str, object] = {
+        "schema_version": "ml.timesfm.training_metadata.v1",
+        "ticker": symbol,
+        "model_id": args.model_id,
+        "source_kind": "csv",
+        "csv_sha256": csv_sha256,
+    }
+    for key, expected in expectations.items():
+        if metadata.get(key) != expected:
+            return f"{key} expected {expected!r}, found {metadata.get(key)!r}"
+    dataset = metadata.get("dataset")
+    if not isinstance(dataset, dict):
+        return "dataset metadata missing"
+    dataset_expectations: dict[str, object] = {
+        "target_field": "adjusted_close",
+        "as_of": args.as_of,
+        "max_latest_bar_age_days": args.max_latest_bar_age_days,
+    }
+    for key, expected in dataset_expectations.items():
+        if dataset.get(key) != expected:
+            return f"dataset.{key} expected {expected!r}, found {dataset.get(key)!r}"
+    split = metadata.get("split")
+    if not isinstance(split, dict):
+        return "split metadata missing"
+    split_expectations: dict[str, object] = {
+        "context_length": trial.context_length,
+        "horizon_length": trial.horizon_length,
+        "target_field": "adjusted_close",
+    }
+    for key, expected in split_expectations.items():
+        if split.get(key) != expected:
+            return f"split.{key} expected {expected!r}, found {split.get(key)!r}"
+    config = metadata.get("config")
+    if not isinstance(config, dict):
+        return "training config missing"
+    config_expectations: dict[str, object] = {
+        "requested_device": args.device,
+        "epochs": args.epochs,
+        "max_steps": trial.max_steps,
+        "batch_size": trial.batch_size,
+        "validation_batches": args.validation_batches,
+        "seed": args.seed,
+        "gradient_clip_norm": args.gradient_clip_norm,
+    }
+    for key, expected in config_expectations.items():
+        if config.get(key) != expected:
+            return f"config.{key} expected {expected!r}, found {config.get(key)!r}"
+    if not _float_matches(config.get("learning_rate"), trial.learning_rate):
+        actual_learning_rate = config.get("learning_rate")
+        return (
+            f"config.learning_rate expected {trial.learning_rate!r}, found {actual_learning_rate!r}"
+        )
+    lora = config.get("lora")
+    if not isinstance(lora, dict):
+        return "LoRA config missing"
+    lora_expectations: dict[str, object] = {
+        "r": trial.lora_r,
+        "lora_alpha": trial.lora_alpha,
+    }
+    for key, expected in lora_expectations.items():
+        if lora.get(key) != expected:
+            return f"config.lora.{key} expected {expected!r}, found {lora.get(key)!r}"
+    if not _float_matches(lora.get("lora_dropout"), trial.lora_dropout):
+        return (
+            f"config.lora.lora_dropout expected {trial.lora_dropout!r}, "
+            f"found {lora.get('lora_dropout')!r}"
+        )
+    return None
+
+
+def _evaluation_artifact_mismatch(
+    symbol: str,
+    trial: HpoTrial,
+    evaluation_path: Path,
+    run_dir: Path,
+    *,
+    data_record: dict[str, Any],
+    args: argparse.Namespace,
+) -> str | None:
+    artifact = json.loads(evaluation_path.read_text(encoding="utf-8"))
+    if not isinstance(artifact, dict):
+        return "evaluation artifact is not a JSON object"
+    training_metadata_path = run_dir / "training-metadata.json"
+    expectations: dict[str, object] = {
+        "schema_version": "ml.timesfm.evaluation.v1",
+        "ticker": symbol,
+        "model_id": args.model_id,
+        "evaluation_source_kind": "csv",
+        "evaluation_source_sha256": data_record.get("csv_sha256"),
+        "training_metadata_sha256": file_sha256(training_metadata_path),
+        "as_of": args.as_of,
+    }
+    for key, expected in expectations.items():
+        if artifact.get(key) != expected:
+            return f"{key} expected {expected!r}, found {artifact.get(key)!r}"
+    config = artifact.get("config")
+    if not isinstance(config, dict):
+        return "evaluation config missing"
+    config_expectations: dict[str, object] = {
+        "requested_device": args.device,
+        "min_evaluation_windows": args.min_evaluation_windows,
+        "suitability_max_latest_bar_age_days": args.suitability_max_latest_bar_age_days,
+        "as_of": args.as_of,
+    }
+    for key, expected in config_expectations.items():
+        if config.get(key) != expected:
+            return f"config.{key} expected {expected!r}, found {config.get(key)!r}"
+    training_metadata = artifact.get("training_metadata")
+    mismatch = _training_metadata_mismatch(
+        symbol,
+        trial,
+        training_metadata,
+        data_record=data_record,
+        args=args,
+    )
+    if mismatch is not None:
+        return f"embedded training metadata mismatch: {mismatch}"
+    return None
+
+
 def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     """Write the focused HPO manifest."""
 
@@ -649,6 +998,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-on-first-error", action="store_true")
     parser.add_argument("--sleep-seconds", type=float, default=0.15)
     parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--gradient-clip-norm", type=float, default=1.0)
     parser.add_argument("--validation-batches", type=int, default=9999)
     parser.add_argument("--max-latest-bar-age-days", type=int, default=5)
     parser.add_argument("--suitability-max-latest-bar-age-days", type=int, default=5)
@@ -700,6 +1051,10 @@ def _train_command(
         str(trial.batch_size),
         "--learning-rate",
         str(trial.learning_rate),
+        "--seed",
+        str(args.seed),
+        "--gradient-clip-norm",
+        str(args.gradient_clip_norm),
         "--validation-batches",
         str(args.validation_batches),
         "--lora-r",
@@ -774,17 +1129,27 @@ def _run_logged(command: Sequence[str], log_path: Path) -> None:
         raise subprocess.CalledProcessError(completed.returncode, list(command))
 
 
-def _trial_record(choice: EvaluationChoice, *, reused: bool) -> dict[str, Any]:
+def _training_trial_record(choice: TrainingChoice, *, reused: bool) -> dict[str, Any]:
     return {
         "run_id": choice.trial.run_id,
-        "status": choice.status,
-        "suitable_for_scoring": choice.suitable_for_scoring,
-        "directional_accuracy": choice.directional_accuracy,
-        "rmse": choice.rmse,
-        "best_baseline_rmse": choice.best_baseline_rmse,
-        "rmse_ratio": round(choice.rmse_ratio, 8),
-        "evaluation": str(choice.evaluation_path),
+        "status": "trained",
+        "selection_metric": "validation_mean_loss",
+        "validation_mean_loss": choice.validation_mean_loss,
+        "validation_final_loss": choice.validation_final_loss,
+        "training_metadata": str(choice.training_metadata_path),
         "reused": reused,
+        "selected_for_final_evaluation": False,
+        "trial": _trial_payload(choice.trial),
+    }
+
+
+def _training_choice_payload(choice: TrainingChoice) -> dict[str, Any]:
+    return {
+        "run_id": choice.trial.run_id,
+        "selection_metric": "validation_mean_loss",
+        "validation_mean_loss": choice.validation_mean_loss,
+        "validation_final_loss": choice.validation_final_loss,
+        "training_metadata": str(choice.training_metadata_path),
         "trial": _trial_payload(choice.trial),
     }
 
@@ -813,6 +1178,47 @@ def _policy_payload(policy: TickerPolicy) -> dict[str, Any]:
         "minimum_rows": policy.minimum_rows,
         "notes": list(policy.notes),
     }
+
+
+_TRIAL_DIVERSITY_ACCESSORS: tuple[Callable[[HpoTrial], int | float], ...] = (
+    lambda trial: trial.context_length,
+    lambda trial: trial.horizon_length,
+    lambda trial: trial.max_steps,
+    lambda trial: trial.batch_size,
+    lambda trial: trial.learning_rate,
+    lambda trial: trial.lora_r,
+    lambda trial: trial.lora_dropout,
+)
+
+
+def _diverse_priority_prefix(trials: Sequence[HpoTrial], max_trials: int) -> tuple[HpoTrial, ...]:
+    selected: list[HpoTrial] = []
+    remaining = list(trials)
+    seen_values: list[set[int | float]] = [set() for _ in _TRIAL_DIVERSITY_ACCESSORS]
+
+    def add(trial: HpoTrial) -> None:
+        selected.append(trial)
+        remaining.remove(trial)
+        for index, accessor in enumerate(_TRIAL_DIVERSITY_ACCESSORS):
+            seen_values[index].add(accessor(trial))
+
+    add(remaining[0])
+    while remaining and len(selected) < max_trials:
+        made_progress = False
+        for index, accessor in enumerate(_TRIAL_DIVERSITY_ACCESSORS):
+            candidate = next(
+                (trial for trial in remaining if accessor(trial) not in seen_values[index]),
+                None,
+            )
+            if candidate is None:
+                continue
+            add(candidate)
+            made_progress = True
+            if len(selected) >= max_trials:
+                break
+        if not made_progress:
+            add(remaining[0])
+    return tuple(selected)
 
 
 def _trial_priority(trial: HpoTrial) -> tuple[int, int, int, int, int, int, int]:
@@ -860,6 +1266,32 @@ def _parse_float_list(raw: str) -> tuple[float, ...]:
 def _read_rows(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+def _json_object(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} must be a JSON object")
+    return value
+
+
+def _required_finite_float(payload: dict[str, Any], key: str) -> float:
+    value = payload.get(key)
+    if not isinstance(value, int | float):
+        raise ValueError(f"{key} must be numeric")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"{key} must be finite")
+    return parsed
+
+
+def _float_matches(actual: object, expected: float) -> bool:
+    return isinstance(actual, int | float) and math.isclose(
+        float(actual),
+        expected,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    )
 
 
 def _get_text(url: str) -> str:

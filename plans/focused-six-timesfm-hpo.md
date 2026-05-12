@@ -10,9 +10,9 @@ MU, SPY, ASTS, SNDK, GOOG, NVDA
 ```
 
 The workflow should collect up to 10 years of daily adjusted OHLCV for each symbol, train
-ticker-specific LoRA adapters, run deterministic bounded HPO, and promote the best evaluated run per
-ticker by validation/held-out metrics. Weak adapters remain auditable but must not support
-recommendation scoring.
+ticker-specific LoRA adapters, run deterministic bounded HPO, choose the best candidate by validation
+loss, and run a final held-out evaluation only for the selected adapter. Weak adapters remain
+auditable but must not support recommendation scoring.
 
 ## Non-Goals
 
@@ -21,6 +21,7 @@ recommendation scoring.
   trading history.
 - Do not use TimesFM as a standalone recommendation engine.
 - Do not tune against the final report-scoring outcome.
+- Do not use the final held-out TimesFM evaluation split for HPO candidate selection.
 
 ## Context
 
@@ -69,8 +70,8 @@ first-pass recipe and nearby HPO candidates so the command is suitable for an ov
 1. Remove generated broad-batch S&P data and artifacts.
 2. Add focused data collection with adjusted OHLCV and ticker-lineage policy metadata.
 3. Add deterministic HPO candidate generation with the strong first-pass recipe first.
-4. Train/evaluate each candidate with the existing TimesFM train/evaluate CLIs.
-5. Promote the best evaluated run per ticker by held-out suitability and baseline metrics.
+4. Train each candidate with the existing TimesFM training CLI and select by validation loss.
+5. Run the held-out TimesFM evaluator once for the selected adapter and promote that evaluated run.
 6. Document the overnight PowerShell command and verification workflow.
 
 ## Acceptance Criteria
@@ -82,8 +83,8 @@ first-pass recipe and nearby HPO candidates so the command is suitable for an ov
 - Data metadata records adjusted OHLCV policy, source, effective start, and ticker-lineage notes.
 - HPO starts with `context_length=128`, `horizon_length=16`, `max_steps=1000`, `batch_size=8`,
   `learning_rate=3e-5`, `lora_r=8`, `lora_alpha=16`, `lora_dropout=0.10`.
-- The best run is chosen by suitability first, then RMSE ratio versus the best baseline, then
-  directional accuracy.
+- The best HPO run is chosen by validation mean loss; held-out suitability, RMSE ratio, and
+  directional accuracy are final quality-gate outputs rather than HPO selection inputs.
 - Weak or failed adapters remain visible in the manifest but are not promoted as scoring support.
 
 ## Verification Commands
@@ -106,6 +107,10 @@ mypy .
 - 2026-05-12: Treat `SNDK` as current standalone history only, starting 2025-02-24.
 - 2026-05-12: Use bounded deterministic HPO by default for overnight practicality, with
   `--max-trials-per-ticker 0` available for full-grid runs.
+- 2026-05-12: Select HPO candidates by training validation loss, then run the final held-out
+  evaluator only once for the selected adapter.
+- 2026-05-12: Reuse cached data and run artifacts only when their lineage metadata matches the
+  current ticker policy, CSV hash, model, hyperparameters, and `as_of` settings.
 
 ## Progress Log
 
@@ -114,3 +119,5 @@ mypy .
   orchestration, best-run promotion, and focused ticker policy metadata.
 - 2026-05-12: Removed obsolete generated TimesFM smoke artifacts and local TSLA example data so
   the next overnight run starts with only the focused six-ticker workflow outputs.
+- 2026-05-12: Tightened focused HPO selection, cache validation, artifact reuse checks, and
+  bounded-trial diversity after code review.

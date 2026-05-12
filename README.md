@@ -62,6 +62,10 @@ Focused six-ticker TimesFM HPO from adjusted daily OHLCV:
 .\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda
 ```
 
+The focused HPO workflow selects the best adapter by training validation loss, then runs the
+held-out TimesFM evaluator once for that selected adapter so the final quality gate remains untouched
+by candidate selection.
+
 The local CSV belongs under an ignored path such as `data/ml/TSLA.csv` and must include
 `timestamp`, `open`, `high`, `low`, `close`, and `volume`, with optional `adjusted_close`.
 Generated TimesFM artifacts are ignored under `artifacts/ml/...`; see `docs/configuration.md` for
