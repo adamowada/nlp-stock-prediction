@@ -205,6 +205,8 @@ Status: implemented.
 
 ### Stage 7: Scoring Guardrails
 
+Status: implemented.
+
 - Changes:
   - Allow TimesFM output to contribute only to the technical-analysis component of scoring.
   - Add penalties or weak-signal states for stale data, poor evaluation, wide forecast intervals, and
@@ -273,7 +275,7 @@ Status: implemented.
 - [x] Evaluation compares TimesFM to simple baselines and records suitability flags.
 - [x] Report integration preserves model provenance, dataset provenance, confidence inputs, warnings,
       and limitations.
-- [ ] TimesFM output cannot create a standalone recommendation or bypass evidence/risk gates.
+- [x] TimesFM output cannot create a standalone recommendation or bypass evidence/risk gates.
 - [ ] Documentation explains setup, commands, artifacts, limitations, and troubleshooting.
 
 ## Verification Commands
@@ -291,7 +293,7 @@ mypy .
 Focused TimesFM deterministic checks:
 
 ```sh
-python -m pytest tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py tests/test_timesfm_evaluation.py tests/test_timesfm_report_integration.py
+python -m pytest tests/test_lane_d_scoring.py tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py tests/test_timesfm_evaluation.py tests/test_timesfm_report_integration.py
 ```
 
 Opt-in local Windows CUDA checks:
@@ -406,3 +408,12 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   live skips; non-live pytest reported 362 passed and 7 deselected; `ruff check . --no-cache`,
   `ruff format --check .`, `mypy .`, `git diff --check`, doc-drift wording scan, and the
   `--ml-artifact` report smoke against `artifacts/ml/timesfm-eval-smoke/evaluation.json` passed.
+- 2026-05-12-00-00: Implemented Stage 7 with Lane D TimesFM scoring guardrails. Supportive,
+  suitable TimesFM sidecars can adjust only the technical-alignment component, while weak, stale,
+  unavailable, wide-interval, underqualified, or conflicting sidecars create auditable penalties and
+  failed gates. Scoring now blocks candidates that only cross the threshold because of the TimesFM
+  technical adjustment, and tests cover no-qualified and already-evidence-supported outcomes.
+- 2026-05-12-00-00: Stage 7 verification passed: full pytest reported 370 passed and 7 opt-in live
+  skips; non-live pytest reported 370 passed and 7 deselected; `ruff check . --no-cache`,
+  `ruff format --check .`, `mypy .`, `python -m nlp_stock_prediction --help`, `git diff --check`,
+  and the live-mode wording drift scan passed.

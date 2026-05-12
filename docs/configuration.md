@@ -139,8 +139,9 @@ The ML technical-analysis lane builds local research artifacts from user-supplie
 and records model, dataset, hardware, and usage-limitation metadata. Outputs are not investment
 advice. When an evaluated model is explicitly attached to an analysis bundle, the report treats it
 as a conservative sidecar with model/dataset hashes, probability, calibration, freshness, and
-validation metrics. Recommendation scoring applies weak, stale, unavailable, or conflicting ML
-gates when that sidecar is present; ML output cannot qualify a trade by itself.
+validation metrics. Recommendation scoring applies weak, stale, unavailable, wide-interval,
+underqualified, or conflicting ML gates when that sidecar is present; ML output cannot qualify a
+trade by itself.
 
 ### TimesFM 2.5 Windows Smoke
 
@@ -297,6 +298,23 @@ Weak, stale, or unavailable TimesFM artifacts remain visible as sidecars but are
 strong signals. Existing offline and scrape fixture reports remain deterministic unless
 `--ml-artifact` is provided, and the live-provider scrape path still suppresses app analysis unless
 a later phase explicitly changes that policy.
+
+### TimesFM Scoring Guardrails
+
+Stage 7 lets Lane D scoring use an evaluated TimesFM sidecar only as a bounded adjustment to the
+`technical-alignment` score component. A supportive, fresh, suitable TimesFM signal can strengthen
+an already evidence-supported candidate by recording a `timesfm_adjustment` in that component's raw
+value and adding the source artifact ID/hash as data references. The sidecar does not affect Reddit
+strength, catalyst strength, fundamentals, sector context, macro context, liquidity, risk gates, or
+provider warning gates.
+
+TimesFM sidecars that are weak, stale, unavailable, underqualified by rolling evaluation,
+too uncertain because of a wide forecast interval, or contradictory with deterministic technical
+analysis are recorded as score penalties and failed score gates. If a candidate only clears the
+score threshold because of the TimesFM technical adjustment, Lane D adds
+`timesfm-cannot-qualify-standalone` and keeps the candidate watch-only. This preserves the product
+rule that TimesFM is a local prediction/technical-analysis aid, not live trading and not a
+standalone recommendation engine.
 
 Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
 access, or local training data. CUDA/RTX metadata is detected only when available and when the local

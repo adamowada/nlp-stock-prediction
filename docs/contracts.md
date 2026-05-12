@@ -18,7 +18,9 @@ frozen contract invariants.
   providers for evidence collection and provider health; those live-provider runs do not generate
   live recommendations.
   Adding `--ml-artifact` attaches an evaluated local TimesFM artifact as a technical-analysis
-  sidecar and adds an `ml_artifact` audit entry without changing recommendation scoring.
+  sidecar and adds an `ml_artifact` audit entry. When Lane D scoring receives an analysis bundle
+  with that sidecar, TimesFM may affect only the technical-alignment component and cannot bypass
+  evidence, warning, or risk gates.
   Without an explicit source mode, it exits with code `3`.
 - No console script is frozen in the contract gate.
 - Environment variables and optional ignored `.env` files are documented in
@@ -92,6 +94,11 @@ Frozen warning codes are:
   warnings and must not qualify silently as clean trade candidates.
 - Evidence quote spans must be monotonic when both start and end offsets are provided.
 - Score breakdowns must include at least one component.
+- TimesFM ML sidecars may contribute only through the technical-analysis score component. Weak,
+  stale, unavailable, wide-interval, underqualified, or conflicting TimesFM sidecars must be
+  recorded as penalties and failed score gates rather than recommendation support.
+- TimesFM cannot be the sole reason a candidate qualifies; a candidate that only crosses the score
+  threshold because of the TimesFM technical adjustment must remain watch-only.
 - Actionable trade candidates must cite evidence and include score, risk, invalidation, and
   disclaimer references.
 - Qualified trade candidates must pass risk gates, have no failed risk or score gates, and meet or
