@@ -92,6 +92,14 @@ The default public HTML request identity is
 string is appropriate. `NLP_STOCK_PREDICTION_SCRAPE_MIN_DELAY_SECONDS` is reserved as the shared
 polite crawl-delay floor for future live adapters; keep it non-negative.
 
+## Candlecharts Data Limitation
+
+The Candlecharts adapter is a feasibility probe for public first-party OHLCV only. Fixture-backed
+HTML tests cover JSON/table candle data when it is present, but if a page only exposes an embedded
+TradingView/widget chart, the provider returns a structured `no_data` warning and does not scrape
+TradingView internals. Downstream ML or technical-analysis work should use approved provider data or
+user-supplied OHLCV CSV fixtures when Candlecharts is widget-only.
+
 ## `.env` Files
 
 `.env` and `.env.*` are ignored by git. `.env.example` contains placeholder keys only and is safe to
