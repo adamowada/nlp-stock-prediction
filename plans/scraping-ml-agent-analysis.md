@@ -2,15 +2,15 @@
 
 ## Goal
 
-Replace the future live API path with compliance-aware scraping adapters where public HTML is the
-right source, use the official X API for stock-news/social evidence, add a local RTX 3090 training
-pipeline for ML-assisted technical analysis, and introduce a Codex-agent-based NLP fundamental
-analysis lane that produces contract-valid, evidence-grounded outputs for the daily report.
+Add a live source mode that uses compliance-aware scraping adapters where public HTML is the right
+source, official APIs where they are the safer or supported interface, a local RTX 3090 training
+pipeline for ML-assisted technical analysis, and a Codex-agent-based NLP fundamental analysis lane
+that produces contract-valid, evidence-grounded outputs for the daily report.
 
-The end state is a report pipeline that can run from scraped public web inputs where allowed,
-degrades visibly when a source blocks scraping or lacks usable data, trains and evaluates a local
-technical-analysis model reproducibly, and separates observed scraped evidence from generated
-analysis and recommendations.
+The end state is a report pipeline that can run from scraped public web inputs where allowed and
+official APIs where configured, degrades visibly when a source blocks access or lacks usable data,
+trains and evaluates a local technical-analysis model reproducibly, and separates observed evidence
+from generated analysis and recommendations.
 
 ## Non-goals
 
@@ -30,7 +30,9 @@ analysis and recommendations.
 Current V1 behavior is deterministic and offline-only. `run --offline` builds a synthetic fixture
 bundle, while non-offline orchestration exits with the live-disabled gate. Provider adapters for
 Alpha Vantage, FRED, NewsAPI-like news, X, and SEC exist, but the CLI does not wire them into live
-report generation. Reddit and LLM extraction are fixture-backed.
+report generation. The X provider request shape is implemented and fixture-tested for the
+production default of 50 relevant posts per ticker, but it is not yet wired into live report
+orchestration. Reddit and LLM extraction are fixture-backed.
 
 Requested scrape targets:
 
@@ -62,6 +64,86 @@ Relevant existing modules:
 - Analysis/scoring: `src/nlp_stock_prediction/analysis/`, `src/nlp_stock_prediction/scoring/`
 - Reporting/audit: `src/nlp_stock_prediction/reporting/`
 - Live test gates: `tests/conftest.py`, `tests/test_lane_f_live_smoke.py`
+
+## Parallel Development Model
+
+Use one coordinator worktree for integration and one isolated git worktree per Codex subagent or
+human workstream. Start each worktree from the current integration branch, use the `codex/` branch
+prefix for new work, and give every subagent a disjoint write set. Subagents may read the full repo,
+but they should only edit files in their assigned write set and should not revert edits from other
+worktrees.
+
+Recommended worktree setup:
+
+```sh
+git fetch origin
+git worktree add ../nlp-stock-prediction-policy -b codex/scraping-policy feature/release-v1
+git worktree add ../nlp-stock-prediction-reddit -b codex/reddit-scraper feature/release-v1
+git worktree add ../nlp-stock-prediction-apnews -b codex/apnews-scraper feature/release-v1
+git worktree add ../nlp-stock-prediction-candlecharts -b codex/candlecharts-feasibility feature/release-v1
+git worktree add ../nlp-stock-prediction-ml -b codex/ml-technical-analysis feature/release-v1
+git worktree add ../nlp-stock-prediction-agent -b codex/fundamental-agent feature/release-v1
+```
+
+Do not copy committed secrets into worktrees. If a live smoke needs credentials, use a local ignored
+`.env` or shell environment variables in that worktree only, never test fixtures, logs, reports, or
+commits.
+
+Parallel workstreams:
+
+| ID | Branch | Owner Scope | Depends On | Primary Write Set |
+| --- | --- | --- | --- | --- |
+| P0 | `feature/release-v1` or integration branch | Coordinator, merge sequencing, final E2E | all | `plans/`, final docs, integration conflict resolution only |
+| W1 | `codex/scraping-policy` | Source policy registry, scraping warnings, shared fetch/cache contracts | none | `src/nlp_stock_prediction/compliance.py`, `src/nlp_stock_prediction/providers/_base.py`, `src/nlp_stock_prediction/contracts/`, `tests/test_lane_f_*` |
+| W2 | `codex/reddit-scraper` | Reddit public-page discovery/evidence adapter and fixtures | W1 interfaces, or temporary local shim | `src/nlp_stock_prediction/reddit/`, `src/nlp_stock_prediction/providers/reddit_scrape.py`, `tests/test_lane_a_reddit_*`, Reddit fixtures |
+| W3 | `codex/apnews-scraper` | AP hub/article scraper and news evidence normalization | W1 interfaces, or temporary local shim | `src/nlp_stock_prediction/providers/apnews.py`, narrow additions to `providers/news.py`, AP tests/fixtures |
+| W4 | `codex/candlecharts-feasibility` | Candlecharts feasibility probe and unavailable/widget-only warning path | W1 interfaces, market contracts read-only unless needed | `src/nlp_stock_prediction/providers/candlecharts.py`, Candlecharts tests/fixtures, docs for data limitations |
+| W5 | `codex/x-orchestration` | Bind the existing X provider into live-source provider slots and smoke coverage | current X provider, W6 provider hook shape | narrow additions to X orchestration registration and X-specific tests |
+| W6 | `codex/live-source-orchestration` | CLI mode, provider hook shape, provider composition, degraded-provider reporting, audit manifest | W1 for policy types; adapter PRs for final E2E | `src/nlp_stock_prediction/cli.py`, `pipeline.py`, `reporting/`, E2E tests |
+| W7 | `codex/ml-technical-analysis` | Dataset schema, leakage checks, CPU/GPU training/evaluation commands | existing market contracts | `src/nlp_stock_prediction/ml/`, ML tests, ignored artifact paths, ML docs |
+| W8 | `codex/ml-signal-integration` | Conservative ML signal integration into analysis/scoring/reporting | W7 metrics/artifacts schema, W6 report hooks | `contracts/analysis.py`, `analysis/technical.py`, `scoring/`, report tests |
+| W9 | `codex/fundamental-agent` | Codex-agent request/response schema, fixture-backed provider, audit artifacts | existing evidence contracts; W6 integration later | `src/nlp_stock_prediction/agents/`, `analysis/fundamentals.py`, agent tests |
+| W10 | `codex/docs-ci-rollout` | Docs, CI, rollout checklist after interfaces stabilize | W1-W9 | README, docs, CI workflow |
+
+Merge order:
+
+1. Land W1 first because it defines the shared policy and scraping primitives.
+2. Land a W6 skeleton after W1 if adapters need a shared provider hook shape; keep final E2E in W6
+   open until source adapters are ready.
+3. Land W2, W3, and W4 independently once they compile against W1 and any W6 hook shape they need.
+   They should not depend on each other.
+4. Land W5 after the existing X provider and W6 provider hook shape are stable.
+5. Finish W6 after at least one scraper adapter and the X provider can run through fixture-backed
+   E2E.
+6. Develop W7 in parallel with W1-W6 because it is mostly isolated. Land W8 only after W7 and W6.
+7. Develop W9 schema/fixtures in parallel. Land its pipeline integration after W6.
+8. Land W10 last, after commands and behavior settle.
+
+Codex subagent packet template:
+
+- Goal: one workstream ID and milestone name.
+- Branch/worktree: exact worktree path and branch.
+- Allowed writes: copy the workstream's primary write set.
+- Read-only context: full repo, current plan, AGENTS.md, relevant tests.
+- Forbidden writes: `.env`, unrelated workstream files, generated reports/artifacts outside ignored
+  paths, and broad refactors outside the assigned scope.
+- Expected output: changed file list, tests run, remaining blockers, and any contract changes other
+  workstreams must consume.
+- Verification: run the narrow tests for the workstream plus `ruff check`, `ruff format --check`,
+  and `mypy .` when shared contracts are touched.
+
+Integration discipline:
+
+- Shared contracts and base helpers should change in W1 or the coordinator branch, not separately in
+  every adapter branch.
+- If a subagent needs a shared contract that does not exist yet, it should add a minimal local shim
+  only inside its adapter and flag the desired shared shape in its final report.
+- Provider adapters must return contract-valid degraded results for unavailable, blocked, stale,
+  malformed, and rate-limited sources. They should not raise through the pipeline for expected
+  provider failures.
+- Fixtures should be small, source-specific, and named by provider and scenario. Live snapshots and
+  large training data stay out of git unless deliberately curated as fixtures.
+- The coordinator owns cross-workstream conflict resolution, final E2E, and report/audit consistency.
 
 ## Milestones
 
@@ -171,6 +253,8 @@ Relevant existing modules:
 
 ### Milestone 6: X API Relevant Search
 
+Status: provider-level behavior implemented; live orchestration wiring remains in Milestone 7.
+
 - Changes:
   - Use the official X API v2 recent-search endpoint instead of browser scraping X search pages.
   - Read `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` for app-only read access.
@@ -192,6 +276,8 @@ Relevant existing modules:
   - Tests for missing credentials, relevancy request shape, default 50-post limit,
     six-ticker bounded orchestration, no ticker matches, duplicate posts, malformed API responses,
     stale social evidence, rate limits, and upstream failures.
+  - Current provider-level verification passed with `tests/test_lane_b_providers.py`, full pytest,
+    Ruff, Mypy, and `git diff --check` after the X provider update.
 
 ### Milestone 7: Live Scrape Orchestration
 
@@ -378,6 +464,10 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
 - 2026-05-11-00-00: Use official X API recent search for X stock-news/social evidence instead of
   browser scraping. Read-only recent-search calls use the app-only Bearer Token; API Key and API
   Secret are documented for app identity and token regeneration.
+- 2026-05-12-00-00: Use `https://api.x.com/2/tweets/search/recent` for X recent search and default
+  production evidence requests to `$TICKER lang:en -is:retweet`, `sort_order=relevancy`, and
+  `max_results=50`. Avoid `sort_order=recency` in production because smoke-test results were too
+  noisy for stock-prediction evidence.
 - 2026-05-11-00-00: Treat Candlecharts as a feasibility-gated source because the public live chart
   page appears to rely on TradingView for chart tracking; do not scrape embedded third-party widget
   internals without approval.
@@ -385,11 +475,15 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
   gates, not as an autonomous recommendation engine.
 - 2026-05-11-00-00: Keep the Codex fundamental analysis lane schema-first and fixture-backed, with
   live/local agent execution optional until a supported programmatic runner is confirmed.
+- 2026-05-12-00-00: Use one git worktree per parallel workstream and assign disjoint write sets to
+  Codex subagents. Shared contracts and base helpers land before adapter work, and the coordinator
+  owns integration conflicts, final E2E, and cross-workstream report consistency.
 
 ## Progress log
 
 - 2026-05-11-00-00: Created plan from requested scrape-only provider direction, RTX 3090 local ML
-  training requirement, and Codex-agent fundamental-analysis requirement. No implementation started.
+  training requirement, and Codex-agent fundamental-analysis requirement. No implementation had
+  started at the time this plan was created.
 - 2026-05-11-00-00: Superseded the earlier X local-capture idea after the user provided X Developer
   App credentials and selected the official API path.
 - 2026-05-11-00-00: Initially updated X milestone to official API recent search using both
@@ -398,3 +492,10 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
 - 2026-05-11-00-00: Superseded recency for production after smoke-test result quality was too noisy.
   Production X evidence now uses `$TICKER lang:en -is:retweet`, `sort_order=relevancy`, and
   `max_results=50`.
+- 2026-05-12-00-00: Implemented and committed the X provider-level defaults in `168141d`
+  (`Configure X API relevancy provider path`): provider endpoint, query defaults, provenance,
+  `.env.example`, docs, roadmap/testing-plan updates, and contract tests. Verification passed with
+  `257 passed, 3 skipped`, Ruff clean, Mypy clean, and `git diff --check` clean. Live report
+  orchestration and the broader scraping/ML/Codex-agent milestones remain planned work.
+- 2026-05-12-00-00: Reworked this plan for parallel development with git worktrees, Codex subagent
+  packet templates, workstream IDs, branch names, ownership boundaries, and merge order.
