@@ -53,9 +53,9 @@ Staged six-ticker signal funnel:
 .\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda --profile walkaway
 ```
 
-The funnel writes an incremental leaderboard, runs cheap baselines before raw TimesFM, and runs a
-cheap adapter smoke only for raw TimesFM survivors. Use `--profile quick` to stop after the raw
-TimesFM screen.
+The funnel writes an incremental leaderboard, runs cheap baselines before raw TimesFM, runs a cheap
+adapter smoke only for raw TimesFM survivors, and runs bounded survivor HPO only for smoke winners.
+Use `--profile quick` to stop after the raw TimesFM screen.
 
 Focused six-ticker HPO:
 

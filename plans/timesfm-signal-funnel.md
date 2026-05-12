@@ -440,3 +440,6 @@ Optional CUDA verification:
 - 2026-05-12: Implemented Stage 3 `adapter_smoke` with one cheap LoRA smoke recipe for raw-stage
   survivors, validation-window adapter-vs-raw lift gates, reusable smoke artifacts, docs updates,
   and fake-runner tests for promotion, kill, failure, skip, and reuse paths.
+- 2026-05-12: Implemented Stage 4 `survivor_hpo` with bounded LoRA HPO for smoke-stage winners,
+  per-trial validation-window artifacts, baseline-lift-first selection, summary output, docs
+  updates, and tests proving validation RMSE lift beats validation loss as the selection key.
