@@ -334,6 +334,28 @@ a latest-context forward forecast from the trained adapter, and `suitable_for_sc
 Underperforming, insufficient, or stale evaluations are marked `weak`; later report/scoring
 integration must not treat weak or unevaluated TimesFM artifacts as strong signals.
 
+### Focused TimesFM HPO Workflow
+
+Use the focused workflow when you want quality-first ticker-specific adapters for the current
+r/wallstreetbets ticker set instead of a broad S&P 500 sweep. The command collects adjusted daily
+OHLCV, trains bounded HPO candidates, evaluates each candidate on held-out rolling windows, and
+promotes the best run per ticker under `artifacts/ml/wsb-six-10y/<TICKER>/best/`.
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda
+```
+
+Defaults write data under `data/ml/wsb_10y/`, artifacts under `artifacts/ml/wsb-six-10y/`, and a
+manifest at `artifacts/ml/wsb-six-10y/focused-hpo-manifest.json`. The first HPO candidate is the
+strong first-pass recipe: 128-session context, 16-session horizon, 1,000 steps, batch size 8,
+learning rate `3e-5`, LoRA rank 8, LoRA alpha 16, and dropout 0.10. The default bounded search runs
+nearby candidates; pass `--max-trials-per-ticker 0` only when you intentionally want the full grid.
+
+The focused data policy is intentionally conservative. `SPY` is treated as ETF technical data,
+not an operating-company fundamentals target. `SNDK` is clipped to current standalone Sandisk
+history beginning 2025-02-24 rather than stitched to old pre-2016 SanDisk history. Split-heavy names
+such as `NVDA` and `GOOG` use adjusted OHLCV derived from the provider's adjusted-close ratio.
+
 ### TimesFM Report Attachment
 
 Stage 6 adds explicit report attachment for evaluated TimesFM artifacts. Use `--ml-artifact` with a
