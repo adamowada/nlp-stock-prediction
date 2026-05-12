@@ -10,7 +10,7 @@ The v1 posture is exploratory but auditable. The app may surface speculative sto
 
 This roadmap is organized for git worktrees and Codex subagents. Contracts were settled single-threaded first; implementation then happened in parallel lanes from the same frozen contract commit; Phase 3 now returns to a coordinated integration and hardening flow.
 
-Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase 2 parallel implementation, Phase 3 local V1 acceptance, and the follow-on scrape/ML/agent integration slices are complete on `feature/release-v1`. The CLI generates deterministic offline Markdown, JSON, and audit artifacts; `--source-mode scrape` generates fixture-backed provider/audit artifacts; and `--source-mode scrape --live-providers` explicitly calls live Reddit/AP/Candlecharts/X providers for evidence collection while staying evidence-only, with no live scored predictions or recommendations, until live extraction/scoring is enabled. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record and `plans/scraping-ml-agent-analysis.md` for the follow-on scrape/ML/agent record.
+Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase 2 parallel implementation, Phase 3 local V1 acceptance, and the follow-on scrape/ML/agent integration slices are complete on `feature/release-v1`. The CLI generates deterministic offline Markdown, JSON, and audit artifacts; `--source-mode scrape` generates fixture-backed provider/audit artifacts; and `--source-mode scrape --live-providers` explicitly calls live Reddit/AP/Candlecharts/X providers for evidence collection while staying evidence-only, with no live scored predictions or recommendations, until live extraction/scoring is enabled. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. The active current phase is local TimesFM 2.5 technical analysis on a Windows RTX 3090 workstation; see `plans/timesfm-technical-analysis.md`. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record and `plans/scraping-ml-agent-analysis.md` for the follow-on scrape/ML/agent record.
 
 ## Phase Status
 
@@ -18,6 +18,7 @@ Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase
 - **Phase 1:** Complete. Comprehensive schema, import, CLI, provider-contract, fixture, and report-shape tests are implemented.
 - **Phase 2:** Complete. Lanes A-F are merged and verified with deterministic tests, lint, format check, typecheck, CLI help, and offline report smoke coverage.
 - **Phase 3:** Complete. Integration hardening, CLI/configuration polish, live smoke readiness, report QA, failure drills, and final V1 acceptance are complete for the local CLI.
+- **Phase 4:** Active. Build, fine-tune, evaluate, and integrate a local Google TimesFM 2.5 technical-analysis model for a given stock, using native Windows RTX 3090 training as the primary path.
 
 ## Delivery Strategy
 
@@ -36,6 +37,11 @@ Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase
    - Harden the integrated CLI and report pipeline from one coordinator thread.
    - Keep deterministic fixture-backed report generation green before marked live API or live scraping checks.
    - Resolve contract gaps single-threaded and record decisions in the active Phase 3 plan.
+5. **Phase 4: Local TimesFM technical analysis.**
+   - Use `plans/timesfm-technical-analysis.md` as the active phase plan.
+   - Keep TimesFM dependencies optional so deterministic tests remain lightweight and network-free.
+   - Run local Windows RTX 3090 smoke, LoRA fine-tuning, rolling evaluation, and report integration.
+   - Treat TimesFM as a technical-analysis sidecar, not a standalone recommendation engine.
 
 ## Contract Gate
 

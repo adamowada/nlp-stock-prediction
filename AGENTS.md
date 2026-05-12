@@ -4,7 +4,7 @@
 
 This project is a TDD-first Python CLI application for generating a daily, evidence-grounded stock opportunity report for a retail trader with a small account.
 
-The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI supports deterministic `--offline`, fixture-backed `--source-mode scrape`, and explicit opt-in live provider evidence collection with `--source-mode scrape --live-providers`; live provider runs currently collect evidence and audit metadata only, with live extraction, analysis, and scoring reserved for the next phase. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
+The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI supports deterministic `--offline`, fixture-backed `--source-mode scrape`, and explicit opt-in live provider evidence collection with `--source-mode scrape --live-providers`; live provider runs currently collect evidence and audit metadata only, with live extraction, analysis, and scoring reserved for a future phase. The active current phase is local TimesFM 2.5 technical analysis on a Windows RTX 3090 workstation; use [plans/timesfm-technical-analysis.md](plans/timesfm-technical-analysis.md) as the source of truth for that work. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
 
 The project should favor correctness, traceability, and testability over speed of adding features. Any generated recommendation must preserve its source evidence, assumptions, risks, and confidence inputs.
 
@@ -22,6 +22,7 @@ mypy .
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
+python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
 ```
 
 Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is introduced.

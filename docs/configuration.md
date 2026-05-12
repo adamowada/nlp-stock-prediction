@@ -142,6 +142,36 @@ as a conservative sidecar with model/dataset hashes, probability, calibration, f
 validation metrics. Recommendation scoring applies weak, stale, unavailable, or conflicting ML
 gates when that sidecar is present; ML output cannot qualify a trade by itself.
 
+### TimesFM 2.5 Windows Smoke
+
+The active TimesFM phase uses native Windows with the RTX 3090 as the primary local environment.
+TimesFM dependencies are optional so the default test suite remains lightweight and network-free.
+Install the CUDA-enabled PyTorch wheel from the official PyTorch selector first, then install the
+project's TimesFM extra:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+.\.venv\Scripts\python.exe -m pip install -e ".[timesfm]"
+```
+
+Verify the environment with:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
+```
+
+The smoke command loads `google/timesfm-2.5-200m-transformers`, runs one forecast, performs a tiny
+LoRA optimization loop on synthetic data, and writes
+`artifacts/ml/timesfm-smoke/smoke-result.json` by default. The artifact records Python, PyTorch,
+CUDA, RTX 3090 metadata, model ID, forecast shapes, losses, memory usage, and a usage limitation.
+If CUDA is unavailable, dependencies are missing, or Hugging Face download/cache access fails, the
+command exits with an actionable error. Hugging Face may warn about degraded symlink caching on
+Windows; that is acceptable for development, though enabling Windows Developer Mode can reduce cache
+duplication.
+
+Ubuntu remains a fallback only if a later TimesFM dependency, CUDA kernel, or local training command
+blocks native Windows execution.
+
 The experimental fixture-backed `--source-mode scrape` path includes a TSLA ML sidecar so Markdown,
 JSON, and audit payloads exercise the integration shape without requiring a local model artifact.
 The explicit live-provider scrape path suppresses fixture ML, fundamental-agent, extraction, and
