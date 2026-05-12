@@ -188,8 +188,35 @@ Transformers, Hugging Face access, or CUDA.
 The experimental fixture-backed `--source-mode scrape` path includes a TSLA ML sidecar so Markdown,
 JSON, and audit payloads exercise the integration shape without requiring a local model artifact.
 The explicit live-provider scrape path suppresses fixture ML, fundamental-agent, extraction, and
-scoring sidecars for now; it records live provider evidence without emitting live scored predictions
-or recommendations until live analysis wiring is enabled under a future plan.
+scoring sidecars for now; it records live provider evidence while live analysis wiring remains a
+future-plan item.
+
+### TimesFM Inference Adapter
+
+Stage 3 of the active TimesFM phase adds a local inference adapter for
+`google/timesfm-2.5-200m-transformers`. The adapter reads a TimesFM dataset window, loads the model
+only at runtime, and writes a forecast artifact. Normal imports and default tests still do not
+require Torch, Transformers, Hugging Face access, or CUDA.
+
+Synthetic Windows CUDA smoke:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json
+```
+
+CSV-backed local inference:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.adapter --csv data/ml/TSLA.csv --ticker TSLA --device cuda --as-of 2026-05-11 --max-latest-bar-age-days 5 --output artifacts/ml/TSLA/timesfm/forecast.json
+```
+
+The forecast artifact records the ticker, model ID, model revision when exposed by the loaded
+model, dataset hash, input hash, forecast timestamp, context dates, horizon length, point forecast,
+quantile forecasts when available, expected return, interval width, a directional probability
+proxy, uncertainty, warnings, and usage limitations. Status values are `usable`, `weak`, or
+`unavailable`; expected model, dependency, CUDA, or data failures become structured unavailable
+artifacts instead of uncaught report-pipeline errors. The artifact is a local technical-analysis
+prediction sidecar, not live trading instructions or financial advice.
 
 Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
 access, or local training data. CUDA/RTX metadata is detected only when available and when the local

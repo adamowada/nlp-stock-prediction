@@ -105,6 +105,8 @@ Status: implemented.
 
 ### Stage 3: TimesFM Inference Adapter
 
+Status: implemented.
+
 - Changes:
   - Add a local adapter that loads `google/timesfm-2.5-200m-transformers` through Transformers.
   - Run inference on a given ticker's latest context window and capture point/quantile forecasts.
@@ -114,7 +116,7 @@ Status: implemented.
 - Files likely affected:
   - new `src/nlp_stock_prediction/ml/timesfm/adapter.py`
   - new `src/nlp_stock_prediction/ml/timesfm/contracts.py`
-  - `src/nlp_stock_prediction/contracts/analysis.py`
+  - `src/nlp_stock_prediction/ml/timesfm/__init__.py`
   - `tests/test_timesfm_adapter.py`
 - Done when:
   - Unit tests pass with a fake TimesFM model and no CUDA.
@@ -255,10 +257,10 @@ Status: implemented.
 
 ## Acceptance Criteria
 
-- [ ] TimesFM 2.5 is the only foundation model used in this phase.
-- [ ] Windows RTX 3090 is the primary local training path, with Ubuntu retained only as fallback.
-- [ ] TimesFM dependencies are optional and do not affect the default deterministic test suite.
-- [ ] Local OHLCV input is validated for freshness, ordering, sufficient history, and leakage risks.
+- [x] TimesFM 2.5 is the only foundation model used in this phase.
+- [x] Windows RTX 3090 is the primary local training path, with Ubuntu retained only as fallback.
+- [x] TimesFM dependencies are optional and do not affect the default deterministic test suite.
+- [x] Local OHLCV input is validated for freshness, ordering, sufficient history, and leakage risks.
 - [ ] Training writes adapter, metadata, metrics, hashes, package versions, and hardware metadata.
 - [ ] Evaluation compares TimesFM to simple baselines and records suitability flags.
 - [ ] Report integration preserves model provenance, dataset provenance, confidence inputs, warnings,
@@ -281,13 +283,14 @@ mypy .
 Focused TimesFM deterministic checks:
 
 ```sh
-python -m pytest tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py tests/test_timesfm_evaluation.py
+python -m pytest tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py
 ```
 
 Opt-in local Windows CUDA checks:
 
 ```sh
 python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2 --output artifacts/ml/timesfm-smoke/smoke-result.json
+python -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json
 python -m nlp_stock_prediction.ml.timesfm.train --ticker TSLA --csv data/ml/TSLA.csv --output-dir artifacts/ml/TSLA/timesfm --device cuda --epochs 1 --max-steps 20
 python -m nlp_stock_prediction.ml.timesfm.evaluate --ticker TSLA --csv data/ml/TSLA.csv --model-dir artifacts/ml/TSLA/timesfm --output artifacts/ml/TSLA/timesfm/evaluation.json
 ```
@@ -335,3 +338,17 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 - 2026-05-12-00-00: Stage 2 verification passed on native Windows: full pytest reported 341 passed
   and 7 opt-in live skips; non-live pytest reported 341 passed and 7 deselected; `ruff check . --no-cache`,
   `ruff format --check . --no-cache`, and `mypy .` passed.
+- 2026-05-12-00-00: Implemented Stage 3 with a dependency-gated TimesFM inference adapter, a
+  report-safe forecast artifact contract, synthetic and CSV-backed adapter CLI inputs, point and
+  quantile forecast capture, forecast summary fields, structured unavailable artifacts for model or
+  dependency failures, and fake-model unit coverage that does not require CUDA.
+- 2026-05-12-00-00: Stage 3 Windows CUDA adapter smoke passed:
+  `python -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json`
+  loaded `google/timesfm-2.5-200m-transformers`, captured model revision
+  `5a9806b9b291fad9233b5249d88263f1846304d3`, wrote a usable 16-session forecast artifact with
+  dataset/input hashes, point and 10 quantile forecasts, forecast timestamp, and limitation text.
+- 2026-05-12-00-00: Stage 3 review tightened full-prediction shape validation so malformed
+  quantile paths degrade to a structured unavailable artifact. Final verification passed:
+  full pytest reported 345 passed and 7 opt-in live skips; non-live pytest reported 345 passed
+  and 7 deselected; `ruff check . --no-cache`, `ruff format --check .`, `mypy .`, and
+  `git diff --check` passed.

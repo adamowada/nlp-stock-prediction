@@ -15,6 +15,8 @@ __all__ = [
     "TimesFmDataset",
     "TimesFmDatasetConfig",
     "TimesFmWindow",
+    "adapter",
     "build_timesfm_dataset",
+    "contracts",
     "smoke",
 ]

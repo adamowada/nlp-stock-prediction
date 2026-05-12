@@ -257,8 +257,8 @@ Integration discipline:
 
 ### Milestone 6: X API Relevant Search
 
-Status: implemented and wired into the opt-in live scrape provider path; live extraction/scoring
-remains a later milestone.
+Status: implemented and wired into the opt-in live scrape provider path; live extraction, analysis,
+and scoring remain later milestones.
 
 - Changes:
   - Use the official X API v2 recent-search endpoint instead of browser scraping X search pages.
@@ -425,7 +425,7 @@ remains a later milestone.
       fixture-backed scrape inputs.
 - [x] `run --source-mode scrape --live-providers` explicitly calls wired live providers, records
       provider health and normalized evidence, writes `audit/provider-results.json`, and emits
-      evidence-only output until live extraction/scoring is enabled.
+      evidence-only output while live extraction, analysis, and scoring remain future-plan items.
 - [x] Live scraping tests are opt-in, rate-limited, and source-specific.
 - [x] ML dataset generation has leakage tests and data-quality gates.
 - [x] RTX 3090 training command records reproducible metrics and model artifact metadata.
@@ -559,7 +559,7 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
 - 2026-05-12-00-00: Merged the opt-in live-provider orchestration PR into `feature/release-v1`.
   The branch now has the live scrape path for Reddit, AP News, Candlecharts, and X recent search,
   with live normalized evidence, provider health, provider-result audit artifacts, and evidence-only
-  output until live extraction/scoring is implemented.
+  output while live extraction, analysis, and scoring remain future-plan items.
 - 2026-05-12-00-00: Cross-checked the merged branch against active plans, source docs, and CLI
   behavior. Updated stale plan/docs language that still described live orchestration as unwired, and
   narrowed the no-mode CLI error to point users at the three explicit local modes.

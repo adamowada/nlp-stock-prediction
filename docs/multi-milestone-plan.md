@@ -10,7 +10,7 @@ The v1 posture is exploratory but auditable. The app may surface speculative sto
 
 This roadmap is organized for git worktrees and Codex subagents. Contracts were settled single-threaded first; implementation then happened in parallel lanes from the same frozen contract commit; Phase 3 now returns to a coordinated integration and hardening flow.
 
-Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase 2 parallel implementation, Phase 3 local V1 acceptance, and the follow-on scrape/ML/agent integration slices are complete on `feature/release-v1`. The CLI generates deterministic offline Markdown, JSON, and audit artifacts; `--source-mode scrape` generates fixture-backed provider/audit artifacts; and `--source-mode scrape --live-providers` explicitly calls live Reddit/AP/Candlecharts/X providers for evidence collection while staying evidence-only, with no live scored predictions or recommendations, until live extraction/scoring is enabled. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. The active current phase is local TimesFM 2.5 technical analysis on a Windows RTX 3090 workstation; see `plans/timesfm-technical-analysis.md`. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record and `plans/scraping-ml-agent-analysis.md` for the follow-on scrape/ML/agent record.
+Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase 2 parallel implementation, Phase 3 local V1 acceptance, and the follow-on scrape/ML/agent integration slices are complete on `feature/release-v1`. The CLI generates deterministic offline Markdown, JSON, and audit artifacts; `--source-mode scrape` generates fixture-backed provider/audit artifacts; and `--source-mode scrape --live-providers` explicitly calls live Reddit/AP/Candlecharts/X providers for evidence collection while live extraction, analysis, and scoring remain reserved for a future phase. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. The active current phase is local TimesFM 2.5 technical analysis on a Windows RTX 3090 workstation; see `plans/timesfm-technical-analysis.md`. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record and `plans/scraping-ml-agent-analysis.md` for the follow-on scrape/ML/agent record.
 
 ## Phase Status
 
@@ -272,7 +272,7 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/live-aapl 
 - Provider failures degrade gracefully through actual provider adapters and are visible in reports or logs.
 - Recommendation scoring has fixture-backed outcomes where nothing qualifies, conflicting-evidence, and qualified-strategy outcomes.
 - The explicit live-provider scrape path preserves provider health, warnings, normalized evidence,
-  and audit artifacts, and remains evidence-only until live extraction/scoring is enabled.
+  and audit artifacts while live extraction, analysis, and scoring remain future-plan items.
 - CLI configuration, report quality, failure drills, and final clean-checkout verification meet
   `plans/phase-3-integration-live-smoke.md`.
 

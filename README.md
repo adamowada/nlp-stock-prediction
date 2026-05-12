@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-Phase 3 is complete for the local V1 CLI on `feature/release-v1`, and the follow-on scrape/ML/agent slices are merged into that branch. The CLI has three explicit local modes: deterministic `--offline`, fixture-backed `--source-mode scrape`, and opt-in `--source-mode scrape --live-providers`. The live-provider path calls Reddit public pages, AP News public HTML, Candlecharts feasibility, and X recent search, then writes provider health, normalized evidence, and audit artifacts; it intentionally stays evidence-only, with no live scored predictions or recommendations, until live extraction/scoring is enabled. The active current phase is local TimesFM 2.5 technical analysis on a Windows RTX 3090 workstation; see `plans/timesfm-technical-analysis.md`. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 3 is complete for the local V1 CLI on `feature/release-v1`, and the follow-on scrape/ML/agent slices are merged into that branch. The CLI has three explicit local modes: deterministic `--offline`, fixture-backed `--source-mode scrape`, and opt-in `--source-mode scrape --live-providers`. The live-provider path calls Reddit public pages, AP News public HTML, Candlecharts feasibility, and X recent search, then writes provider health, normalized evidence, and audit artifacts; it intentionally stays evidence-only while live extraction, analysis, and scoring remain reserved for a future phase. The active current phase is local TimesFM 2.5 technical analysis on a Windows RTX 3090 workstation; see `plans/timesfm-technical-analysis.md`. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 
@@ -36,6 +36,7 @@ Optional TimesFM 2.5 Windows smoke:
 
 ```sh
 python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
+python -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json
 ```
 
 The canonical CLI invocation is the Python module form, `python -m nlp_stock_prediction`. If a console script is added later, it should remain a thin alias for that module command and the docs should be updated together.

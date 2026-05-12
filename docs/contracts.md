@@ -15,8 +15,8 @@ frozen contract invariants.
 - With `--offline`, `run` writes a deterministic fixture-backed report bundle. With
   `--source-mode scrape`, it writes an experimental scrape-source report bundle backed by
   deterministic provider fixtures. Adding `--live-providers` to scrape mode calls configured live
-  providers for evidence collection and provider health while keeping live extraction/scoring
-  disabled and emitting evidence-only output without live scored predictions or recommendations.
+  providers for evidence collection and provider health while live extraction, analysis, and scoring
+  remain future-plan items.
   Without an explicit source mode, it exits with code `3`.
 - No console script is frozen in the contract gate.
 - Environment variables and optional ignored `.env` files are documented in
