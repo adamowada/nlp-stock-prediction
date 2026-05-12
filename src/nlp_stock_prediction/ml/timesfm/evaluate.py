@@ -148,6 +148,38 @@ class TimesFmEvaluationRecord(ContractModel):
     interval_covered: bool | None = None
 
 
+class TimesFmForwardForecast(ContractModel):
+    """Forward TimesFM forecast from the latest available local context window."""
+
+    context_start: date | datetime
+    context_end: date | datetime
+    forecast_horizon_sessions: int = Field(ge=1)
+    point_forecast: tuple[float, ...]
+    expected_return: float
+    interval_lower: float | None = None
+    interval_upper: float | None = None
+    interval_width: float | None = Field(default=None, ge=0.0)
+    directional_probability_proxy: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_forward_forecast(self) -> TimesFmForwardForecast:
+        if len(self.point_forecast) != self.forecast_horizon_sessions:
+            raise ValueError("forward forecast length must match forecast horizon")
+        if any(not math.isfinite(value) for value in self.point_forecast):
+            raise ValueError("forward forecast values must be finite")
+        if not math.isfinite(self.expected_return):
+            raise ValueError("forward forecast expected_return must be finite")
+        if (self.interval_lower is None) != (self.interval_upper is None):
+            raise ValueError("forward forecast interval bounds must be present together")
+        if (
+            self.interval_lower is not None
+            and self.interval_upper is not None
+            and self.interval_lower > self.interval_upper
+        ):
+            raise ValueError("forward forecast interval_lower cannot exceed interval_upper")
+        return self
+
+
 class TimesFmEvaluationArtifact(ContractModel):
     """Serializable TimesFM rolling evaluation artifact."""
 
@@ -172,6 +204,7 @@ class TimesFmEvaluationArtifact(ContractModel):
     metrics: TimesFmEvaluationMetrics
     baselines: tuple[TimesFmBaselineEvaluation, ...]
     records: tuple[TimesFmEvaluationRecord, ...]
+    forward_forecast: TimesFmForwardForecast | None = None
     training_metadata: JsonObject
     runtime_metadata: JsonObject = Field(default_factory=dict)
     usage_limitations: NonEmptyStr = _EVALUATION_LIMITATION
@@ -195,6 +228,7 @@ class TimesFmEvaluationModelSource:
 
     model_dir: Path
     adapter_dir: Path
+    training_ticker: str
     model_id: str
     model_revision: str | None
     adapter_sha256: str
@@ -242,6 +276,12 @@ def evaluate_timesfm_dataset(
 ) -> TimesFmEvaluationArtifact:
     """Evaluate a trained TimesFM adapter on rolling held-out windows."""
 
+    if model_source.training_ticker != dataset.ticker:
+        raise TimesFmEvaluateError(
+            "TimesFM training metadata ticker "
+            f"{model_source.training_ticker} does not match evaluation ticker {dataset.ticker}."
+        )
+
     selected_predictor: WindowPredictor
     runtime_metadata: JsonObject
     if predictor is None:
@@ -252,6 +292,8 @@ def evaluate_timesfm_dataset(
 
     windows = _evaluation_windows(dataset, config)
     records = tuple(_evaluate_window(window, selected_predictor(window)) for window in windows)
+    forward_window = _forward_forecast_window(dataset)
+    forward_forecast = _forward_forecast(forward_window, selected_predictor(forward_window))
     metrics = _metrics(
         tuple(record.timesfm_final_value for record in records),
         tuple(record.actual_final_value for record in records),
@@ -300,6 +342,7 @@ def evaluate_timesfm_dataset(
         metrics=metrics,
         baselines=baselines,
         records=records,
+        forward_forecast=forward_forecast,
         training_metadata=model_source.training_metadata,
         runtime_metadata={
             **runtime_metadata,
@@ -407,6 +450,9 @@ def load_timesfm_evaluation_model_source(model_dir: Path) -> TimesFmEvaluationMo
     warnings: list[str] = []
     if isinstance(recorded_adapter_sha256, str) and recorded_adapter_sha256 != adapter_sha256:
         warnings.append("timesfm_adapter_hash_mismatch")
+    training_ticker = payload.get("ticker")
+    if not isinstance(training_ticker, str) or not training_ticker.strip():
+        raise TimesFmEvaluateError("TimesFM training metadata missing ticker")
     model_id = payload.get("model_id")
     if not isinstance(model_id, str) or not model_id.strip():
         raise TimesFmEvaluateError("TimesFM training metadata missing model_id")
@@ -416,6 +462,7 @@ def load_timesfm_evaluation_model_source(model_dir: Path) -> TimesFmEvaluationMo
     return TimesFmEvaluationModelSource(
         model_dir=model_dir,
         adapter_dir=adapter_dir,
+        training_ticker=training_ticker.upper(),
         model_id=model_id,
         model_revision=model_revision,
         adapter_sha256=adapter_sha256,
@@ -655,6 +702,127 @@ def _evaluate_window(
         interval_upper=upper,
         interval_covered=interval_covered,
     )
+
+
+def _forward_forecast_window(dataset: TimesFmDataset) -> TimesFmWindow:
+    latest_window = max(dataset.windows, key=lambda window: window.horizon_end_index)
+    known_values = (*latest_window.context_values, *latest_window.future_values)
+    if len(known_values) < dataset.context_length:
+        raise TimesFmEvaluateError("TimesFM dataset cannot provide a latest forecast context")
+    context_values = tuple(known_values[-dataset.context_length :])
+    context_timestamps = _latest_context_timestamps(latest_window, dataset.context_length)
+    if context_timestamps:
+        context_start = context_timestamps[0]
+        context_end = context_timestamps[-1]
+    else:
+        context_start = latest_window.context_start
+        context_end = latest_window.horizon_end
+    context_end_index = latest_window.horizon_end_index
+    context_start_index = context_end_index - dataset.context_length + 1
+    horizon_start = _advance_timestamp(context_end, 1)
+    horizon_end = _advance_timestamp(context_end, dataset.horizon_length)
+    return TimesFmWindow(
+        ticker=dataset.ticker,
+        split="test",
+        target_field=dataset.target_field,
+        context_length=dataset.context_length,
+        horizon_length=dataset.horizon_length,
+        context_start=context_start,
+        context_end=context_end,
+        horizon_start=horizon_start,
+        horizon_end=horizon_end,
+        context_start_index=context_start_index,
+        context_end_index=context_end_index,
+        horizon_start_index=context_end_index + 1,
+        horizon_end_index=context_end_index + dataset.horizon_length,
+        context_values=context_values,
+        future_values=tuple(context_values[-1] for _ in range(dataset.horizon_length)),
+        metadata={
+            "target_policy": "univariate_price_forecast",
+            "forecast_context": True,
+            "future_values": "placeholder_latest_close_not_used_for_forward_prediction",
+        },
+    )
+
+
+def _forward_forecast(
+    window: TimesFmWindow,
+    prediction: TimesFmWindowPrediction,
+) -> TimesFmForwardForecast:
+    point_forecast = prediction.point_forecast[: window.horizon_length]
+    if len(point_forecast) != window.horizon_length:
+        raise TimesFmEvaluateError(
+            "TimesFM returned fewer point forecasts than requested forward horizon"
+        )
+    full_predictions = _validated_full_predictions(
+        prediction.full_predictions,
+        horizon_length=window.horizon_length,
+    )
+    context_final = window.context_values[-1]
+    expected_return = _safe_return(point_forecast[-1], context_final)
+    final_values: tuple[float, ...] = ()
+    if full_predictions:
+        final_values = tuple(row[-1] for row in _transpose(full_predictions))
+    interval_lower = min(final_values) if final_values else None
+    interval_upper = max(final_values) if final_values else None
+    interval_width = (
+        abs(interval_upper - interval_lower) / abs(context_final)
+        if interval_lower is not None and interval_upper is not None and context_final != 0
+        else None
+    )
+    directional_probability_proxy = (
+        sum(1 for value in final_values if value > context_final) / len(final_values)
+        if final_values
+        else None
+    )
+    return TimesFmForwardForecast(
+        context_start=window.context_start,
+        context_end=window.context_end,
+        forecast_horizon_sessions=window.horizon_length,
+        point_forecast=point_forecast,
+        expected_return=round(expected_return, 8),
+        interval_lower=round(interval_lower, 8) if interval_lower is not None else None,
+        interval_upper=round(interval_upper, 8) if interval_upper is not None else None,
+        interval_width=round(interval_width, 8) if interval_width is not None else None,
+        directional_probability_proxy=round(directional_probability_proxy, 6)
+        if directional_probability_proxy is not None
+        else None,
+    )
+
+
+def _latest_context_timestamps(
+    window: TimesFmWindow,
+    context_length: int,
+) -> tuple[date | datetime, ...]:
+    context_values = window.metadata.get("context_timestamps")
+    future_values = window.metadata.get("future_timestamps")
+    if not isinstance(context_values, list) or not isinstance(future_values, list):
+        return ()
+    raw_timestamps = (*context_values, *future_values)
+    if len(raw_timestamps) < context_length:
+        return ()
+    try:
+        return tuple(_parse_metadata_timestamp(str(value)) for value in raw_timestamps)[
+            -context_length:
+        ]
+    except ValueError:
+        return ()
+
+
+def _parse_metadata_timestamp(value: str) -> date | datetime:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("TimesFM metadata datetimes must include a timezone") from None
+        return parsed
+
+
+def _advance_timestamp(value: date | datetime, sessions: int) -> date | datetime:
+    if isinstance(value, datetime):
+        return value + timedelta(days=sessions)
+    return value + timedelta(days=sessions)
 
 
 def _baseline_evaluations(
@@ -990,6 +1158,7 @@ __all__ = [
     "TimesFmEvaluationRecord",
     "TimesFmEvaluationSourceKind",
     "TimesFmEvaluationStatus",
+    "TimesFmForwardForecast",
     "TimesFmWindowPrediction",
     "evaluate_timesfm_dataset",
     "load_timesfm_evaluation_model_source",

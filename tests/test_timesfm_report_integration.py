@@ -26,6 +26,7 @@ from nlp_stock_prediction.ml.timesfm.evaluate import (
     TimesFmEvaluationMetrics,
     TimesFmEvaluationRecord,
     TimesFmEvaluationStatus,
+    TimesFmForwardForecast,
     write_timesfm_evaluation_artifact,
 )
 from nlp_stock_prediction.pipeline import generate_daily_report
@@ -46,8 +47,10 @@ def test_timesfm_evaluation_artifact_maps_to_report_safe_ml_signal(tmp_path: Pat
     assert attachment.signal.status == "usable"
     assert attachment.signal.signal.value == "supports"
     assert attachment.signal.prediction_horizon_sessions == 2
-    assert attachment.signal.expected_return == 0.08
-    assert attachment.signal.forecast_interval_width == 0.08
+    assert attachment.signal.expected_return == 0.12
+    assert attachment.signal.forecast_interval_width == 0.10
+    assert attachment.signal.feature_end == RUN_DATE
+    assert attachment.signal.metadata["forward_forecast"] is not None
     assert attachment.signal.source_artifact_sha256 == attachment.artifact_sha256
     assert attachment.signal.metadata["model_kind"] == "timesfm_2_5_lora_evaluation"
     assert attachment.artifact_payload["schema_version"] == "ml.timesfm.evaluation.v1"
@@ -84,6 +87,15 @@ def test_offline_report_attaches_explicit_timesfm_artifact_to_markdown_json_and_
     assert "TimesFM signal: supports" in markdown
     assert f"model hash `{'a' * 64}`" in markdown
     assert "TimesFM limitations:" in markdown
+    assert report.trade_candidates
+    candidate = report.trade_candidates[0]
+    assert candidate.score.score_version == "lane-d-score-v2"
+    technical_component = next(
+        component
+        for component in candidate.score.components
+        if component.name == "technical-alignment"
+    )
+    assert "timesfm_adjustment=" in str(technical_component.raw_value)
 
     manifest = AuditManifest.model_validate(
         json.loads(bundle.audit_manifest_path.read_text(encoding="utf-8"))
@@ -113,7 +125,10 @@ def test_offline_report_attaches_explicit_timesfm_artifact_to_markdown_json_and_
         json.loads((bundle.audit_dir / "scoring-inputs.json").read_text(encoding="utf-8")),
     )
     scoring_record = cast(list[JsonObject], scoring_payload["records"])[0]
-    assert "timesfm" not in cast(JsonObject, scoring_record["confidence_inputs"])
+    assert scoring_record["action"] == "qualified"
+    assert cast(JsonObject, scoring_record["score"])["score_version"] == "lane-d-score-v2"
+    confidence_inputs = cast(JsonObject, scoring_record["confidence_inputs"])
+    assert confidence_inputs["timesfm"] == "explicit_ml_artifact"
 
 
 @pytest.mark.e2e
@@ -171,6 +186,50 @@ def test_reports_render_cleanly_for_non_usable_timesfm_artifacts(
     markdown = bundle.markdown_path.read_text(encoding="utf-8")
     assert "TimesFM signal:" in markdown
     assert f"status {expected_signal_status}" in markdown
+
+
+@pytest.mark.e2e
+def test_weak_timesfm_artifact_rescores_existing_candidate_to_no_trade(
+    tmp_path: Path,
+) -> None:
+    artifact_path = tmp_path / "evaluation.json"
+    write_timesfm_evaluation_artifact(
+        _evaluation_artifact(
+            status="weak",
+            suitable_for_scoring=False,
+            suitability_reasons=("underperforms_best_rmse_baseline",),
+        ),
+        artifact_path,
+    )
+
+    bundle = generate_daily_report(
+        RunConfig(
+            run_date=RUN_DATE,
+            output_dir=tmp_path / "reports",
+            risk_profile=RiskProfile.EXPLORATORY,
+            offline=True,
+            ml_artifact=artifact_path,
+        )
+    )
+
+    report = DailyReport.model_validate_json(bundle.json_path.read_text(encoding="utf-8"))
+    assert report.trade_candidates == ()
+    assert report.no_trade_summary is not None
+    assert "No qualified trade candidates" in report.no_trade_summary
+    assert report.audit_manifest.recommendation_trace_ids == ()
+    tsla_section = next(section for section in report.ticker_sections if section.ticker == "TSLA")
+    assert tsla_section.recommendation_ids == ()
+
+    scoring_payload = cast(
+        JsonObject,
+        json.loads((bundle.audit_dir / "scoring-inputs.json").read_text(encoding="utf-8")),
+    )
+    scoring_record = cast(list[JsonObject], scoring_payload["records"])[0]
+    score = cast(JsonObject, scoring_record["score"])
+    failed_gates = cast(list[str], score["failed_gates"])
+    assert scoring_record["action"] == "watch"
+    assert "timesfm-signal-not-actionable" in failed_gates
+    assert "timesfm-evaluation-underqualified" in failed_gates
 
 
 @pytest.mark.e2e
@@ -265,6 +324,21 @@ def _evaluation_artifact(
             ),
         ),
         records=records,
+        forward_forecast=(
+            TimesFmForwardForecast(
+                context_start=RUN_DATE - timedelta(days=3),
+                context_end=RUN_DATE,
+                forecast_horizon_sessions=2,
+                point_forecast=(109.0, 112.0),
+                expected_return=0.12,
+                interval_lower=107.0,
+                interval_upper=117.0,
+                interval_width=0.10,
+                directional_probability_proxy=0.8,
+            )
+            if include_record
+            else None
+        ),
         training_metadata={
             "schema_version": "ml.timesfm.training_metadata.v1",
             "split": {"horizon_length": 2},

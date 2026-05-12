@@ -330,9 +330,9 @@ CSV-backed local evaluation:
 The evaluation artifact records the model ID/revision, model hash, adapter hash, training metadata
 hash, evaluation dataset hash, source hash, per-window records, TimesFM MAE/RMSE/directional
 accuracy, interval coverage when full predictions are available, baseline metrics, benchmark deltas,
-and `suitable_for_scoring`. Underperforming, insufficient, or stale evaluations are marked `weak`;
-later report/scoring integration must not treat weak or unevaluated TimesFM artifacts as strong
-signals.
+a latest-context forward forecast from the trained adapter, and `suitable_for_scoring`.
+Underperforming, insufficient, or stale evaluations are marked `weak`; later report/scoring
+integration must not treat weak or unevaluated TimesFM artifacts as strong signals.
 
 ### TimesFM Report Attachment
 
@@ -345,12 +345,12 @@ ticker section:
 ```
 
 The report keeps deterministic technical indicators separate from TimesFM interpretation. Markdown
-shows the TimesFM direction, horizon, probability proxy, confidence, status, model hash, expected
-return, interval width, and limitations. `report.json` preserves the `TechnicalMlSignal` sidecar,
-including model/dataset hashes, source artifact hash, evaluation status, suitability reasons,
-baseline metrics, and latest evaluation record. The audit bundle adds `audit/ml-artifacts.json`
-with the full TimesFM evaluation payload and refreshes `audit/analysis-contexts.json` so the sidecar
-is reproducible from report artifacts.
+shows the TimesFM direction, horizon, probability proxy, confidence, status, model hash, latest
+forward expected return, forward interval width, and limitations. `report.json` preserves the
+`TechnicalMlSignal` sidecar, including model/dataset hashes, source artifact hash, evaluation
+status, suitability reasons, baseline metrics, latest evaluation record, and latest forward
+forecast. The audit bundle adds `audit/ml-artifacts.json` with the full TimesFM evaluation payload
+and refreshes `audit/analysis-contexts.json` so the sidecar is reproducible from report artifacts.
 
 Weak, stale, or unavailable TimesFM artifacts remain visible as sidecars but are not promoted to
 strong signals. Existing offline and scrape fixture reports remain deterministic unless
@@ -360,11 +360,13 @@ a later phase explicitly changes that policy.
 ### TimesFM Scoring Guardrails
 
 Stage 7 lets Lane D scoring use an evaluated TimesFM sidecar only as a bounded adjustment to the
-`technical-alignment` score component. A supportive, fresh, suitable TimesFM signal can strengthen
-an already evidence-supported candidate by recording a `timesfm_adjustment` in that component's raw
-value and adding the source artifact ID/hash as data references. The sidecar does not affect Reddit
-strength, catalyst strength, fundamentals, sector context, macro context, liquidity, risk gates, or
-provider warning gates.
+`technical-alignment` score component. When `--ml-artifact` is present, report generation attaches
+the sidecar and re-scores the matching existing candidate so Markdown, JSON, and
+`audit/scoring-inputs.json` all reflect the TimesFM guardrails. A supportive, fresh, suitable
+TimesFM signal can strengthen an already evidence-supported candidate by recording a
+`timesfm_adjustment` in that component's raw value and adding the source artifact ID/hash as data
+references. The sidecar does not affect Reddit strength, catalyst strength, fundamentals, sector
+context, macro context, liquidity, risk gates, or provider warning gates.
 
 TimesFM sidecars that are weak, stale, unavailable, underqualified by rolling evaluation,
 too uncertain because of a wide forecast interval, or contradictory with deterministic technical

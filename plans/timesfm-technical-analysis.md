@@ -161,7 +161,8 @@ Status: implemented.
     - last-close persistence
     - recent mean return
     - existing local logistic technical baseline where applicable
-  - Track directional accuracy, MAE/RMSE, interval coverage, calibration proxy, and benchmark deltas.
+  - Track directional accuracy, MAE/RMSE, interval coverage, calibration proxy, benchmark deltas,
+    and a latest-context forward forecast from the trained adapter.
   - Mark weak, stale, or underperforming models as not suitable for recommendation scoring support.
 - Files likely affected:
   - new `src/nlp_stock_prediction/ml/timesfm/evaluate.py`
@@ -170,7 +171,7 @@ Status: implemented.
   - `docs/configuration.md`
 - Done when:
   - Evaluation writes `evaluation.json` with model hash, adapter hash, dataset hash, baseline metrics,
-    and pass/fail suitability flags.
+    pass/fail suitability flags, and the latest forward forecast used by the report sidecar.
   - Tests cover a model that beats the naive baseline, a model that does not, and a stale evaluation.
   - Evaluation can run separately from training so a user can re-score new local CSV data.
   - The report pipeline never treats an unevaluated or underperforming adapter as a strong signal.
@@ -182,7 +183,8 @@ Status: implemented.
 - Changes:
   - Extend the existing `TechnicalMlSignal` sidecar or add a TimesFM-specific sidecar while preserving
     the current report contract style.
-  - Attach evaluated TimesFM output to per-ticker technical analysis.
+  - Attach evaluated TimesFM output and the latest trained-adapter forward forecast to per-ticker
+    technical analysis.
   - Surface the signal in Markdown, JSON, and audit artifacts with model provenance and limitations.
   - Preserve separation between deterministic technical indicators and ML interpretation.
 - Files likely affected:
@@ -196,8 +198,8 @@ Status: implemented.
   - `tests/test_timesfm_report_integration.py`
   - `tests/test_phase1_cli_contracts.py`
 - Done when:
-  - Markdown includes a concise TimesFM technical signal with horizon, forecast direction, confidence,
-    uncertainty, model hash, and limitations.
+  - Markdown includes a concise TimesFM technical signal with horizon, latest forward forecast
+    direction, confidence, uncertainty, model hash, and limitations.
   - JSON preserves the full model/evaluation/audit provenance needed to reproduce the signal.
   - Reports still render cleanly when the TimesFM artifact is missing, stale, weak, or unavailable.
   - Existing offline and scrape fixture reports remain deterministic unless an ML artifact is
@@ -277,6 +279,7 @@ Status: implemented.
 - [x] Local OHLCV input is validated for freshness, ordering, sufficient history, and leakage risks.
 - [x] Training writes adapter, metadata, metrics, hashes, package versions, and hardware metadata.
 - [x] Evaluation compares TimesFM to simple baselines and records suitability flags.
+- [x] Evaluation records a latest-context forward forecast from the trained adapter.
 - [x] Report integration preserves model provenance, dataset provenance, confidence inputs, warnings,
       and limitations.
 - [x] TimesFM output cannot create a standalone recommendation or bypass evidence/risk gates.
@@ -404,9 +407,9 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   TimesFM-specific Markdown rendering, JSON provenance fields, and a new `audit/ml-artifacts.json`
   payload that preserves the full evaluation artifact.
 - 2026-05-12-00-00: Stage 6 report integration preserves the existing fixture posture: default
-  offline and scrape reports remain unchanged without `--ml-artifact`, explicit TimesFM artifacts
-  attach only to the matching ticker's technical-analysis section, and scoring inputs are left
-  unchanged for Stage 7 guardrail work.
+  offline and scrape reports remain unchanged without `--ml-artifact`, and explicit TimesFM
+  artifacts attach only to the matching ticker's technical-analysis section. Later Stage 7 work
+  added guarded re-scoring and scoring audit refreshes when `--ml-artifact` is present.
 - 2026-05-12-00-00: Stage 6 verification passed: focused TimesFM tests reported 35 passed; focused
   TimesFM report integration tests reported 6 passed; full pytest reported 362 passed and 7 opt-in
   live skips; non-live pytest reported 362 passed and 7 deselected; `ruff check . --no-cache`,
@@ -446,3 +449,9 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 - 2026-05-12-00-00: Confirmed cleanup posture for Phase 4 acceptance: generated reports, local ML
   artifacts, adapter weights, caches, bytecode, and `.env` remain ignored by git; no secrets, model
   weights, or unrelated generated artifacts are staged.
+- 2026-05-12-00-00: Post-acceptance branch review fixes closed three readiness gaps: Stage 5
+  evaluation artifacts now include a latest-context forward forecast from the trained adapter;
+  Stage 6 report sidecars use that forward forecast instead of the latest held-out backtest record;
+  Stage 7 report generation re-scores the matching existing candidate and refreshes
+  `audit/scoring-inputs.json`; and evaluation now rejects training metadata whose ticker does not
+  match the evaluation dataset ticker.

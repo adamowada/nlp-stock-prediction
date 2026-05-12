@@ -85,6 +85,7 @@ def _model_source(tmp_path: Path) -> TimesFmEvaluationModelSource:
     (adapter_dir / "adapter_model.safetensors").write_bytes(b"fake-adapter")
     metadata = {
         "schema_version": "ml.timesfm.training_metadata.v1",
+        "ticker": "TSLA",
         "model_id": "google/timesfm-2.5-200m-transformers",
         "model_revision": "fake-revision",
         "dataset_hash": "b" * 64,
@@ -142,6 +143,9 @@ def test_timesfm_evaluation_marks_model_suitable_when_it_beats_baselines(
     assert artifact.metrics.rmse == 0.0
     assert artifact.metrics.directional_accuracy == 1.0
     assert artifact.metrics.interval_coverage == 1.0
+    assert artifact.forward_forecast is not None
+    assert artifact.forward_forecast.context_end == max(bar.timestamp for bar in _bars())
+    assert artifact.forward_forecast.forecast_horizon_sessions == dataset.horizon_length
     assert len(artifact.model_hash) == 64
     assert artifact.baselines
     assert all(baseline.metrics.rmse > artifact.metrics.rmse for baseline in artifact.baselines)
@@ -208,6 +212,7 @@ def test_timesfm_evaluation_writes_artifact_json(tmp_path: Path) -> None:
     assert payload["dataset_hash"] == dataset.dataset_hash
     assert payload["status"] == "suitable"
     assert payload["suitable_for_scoring"] is True
+    assert payload["forward_forecast"]["forecast_horizon_sessions"] == dataset.horizon_length
 
 
 @pytest.mark.unit
@@ -297,6 +302,29 @@ def test_timesfm_evaluation_model_source_warns_on_adapter_hash_mismatch(tmp_path
     assert artifact.status == "weak"
     assert artifact.suitable_for_scoring is False
     assert "timesfm_adapter_hash_mismatch" in artifact.suitability_reasons
+
+
+@pytest.mark.unit
+def test_timesfm_evaluation_rejects_training_ticker_mismatch(tmp_path: Path) -> None:
+    model_source = _model_source(tmp_path)
+    metadata_path = model_source.model_dir / "training-metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["ticker"] = "AMD"
+    metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    mismatched = load_timesfm_evaluation_model_source(model_source.model_dir)
+
+    with pytest.raises(TimesFmEvaluateError, match="does not match evaluation ticker"):
+        evaluate_timesfm_dataset(
+            _dataset(),
+            mismatched,
+            _data_source(),
+            TimesFmEvaluationConfig(
+                min_evaluation_windows=1,
+                min_directional_accuracy=0.0,
+                max_rmse_ratio_vs_best_baseline=1.0,
+            ),
+            predictor=_perfect_predictor,
+        )
 
 
 @pytest.mark.unit

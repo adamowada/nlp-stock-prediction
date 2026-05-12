@@ -213,6 +213,12 @@ def _build_raw_windows(
                     "target_policy": "univariate_price_forecast",
                     "normalization": "none_timesfm_internal_instance_normalization",
                     "stride": config.stride,
+                    "context_timestamps": [
+                        _timestamp_to_string(bar.timestamp) for bar in context_bars
+                    ],
+                    "future_timestamps": [
+                        _timestamp_to_string(bar.timestamp) for bar in future_bars
+                    ],
                 },
             )
         )

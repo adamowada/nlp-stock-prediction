@@ -149,8 +149,21 @@ def build_timesfm_ml_signal(
     """Map a TimesFM rolling evaluation artifact into the generic technical ML sidecar."""
 
     latest_record = _latest_timesfm_record(artifact)
-    expected_return = latest_record.timesfm_return if latest_record is not None else None
-    interval_width = _timesfm_record_interval_width(latest_record) if latest_record else None
+    forward_forecast = artifact.forward_forecast
+    expected_return = (
+        forward_forecast.expected_return
+        if forward_forecast is not None
+        else latest_record.timesfm_return
+        if latest_record is not None
+        else None
+    )
+    interval_width = (
+        forward_forecast.interval_width
+        if forward_forecast is not None
+        else _timesfm_record_interval_width(latest_record)
+        if latest_record
+        else None
+    )
     status = _timesfm_status(artifact)
     warning_ids = tuple(
         dict.fromkeys(
@@ -178,6 +191,11 @@ def build_timesfm_ml_signal(
     }
     if latest_record is not None:
         metadata["latest_record"] = cast(JsonObject, latest_record.model_dump(mode="json"))
+    if forward_forecast is not None:
+        metadata["forward_forecast"] = cast(
+            JsonObject,
+            forward_forecast.model_dump(mode="json"),
+        )
     if artifact_path is not None:
         metadata["artifact_path"] = str(artifact_path)
     if artifact_sha256 is not None:
@@ -187,7 +205,9 @@ def build_timesfm_ml_signal(
         model_hash=artifact.model_hash,
         dataset_hash=artifact.dataset_hash,
         as_of=artifact.as_of or artifact.evaluated_at,
-        feature_end=latest_record.context_end
+        feature_end=forward_forecast.context_end
+        if forward_forecast is not None
+        else latest_record.context_end
         if latest_record is not None
         else artifact.evaluated_at,
         prediction_horizon_sessions=_timesfm_horizon_sessions(artifact),
@@ -370,6 +390,8 @@ def _timesfm_record_interval_width(record: TimesFmEvaluationRecord | None) -> fl
 
 
 def _timesfm_horizon_sessions(artifact: TimesFmEvaluationArtifact) -> int:
+    if artifact.forward_forecast is not None:
+        return artifact.forward_forecast.forecast_horizon_sessions
     split_metadata = artifact.training_metadata.get("split")
     if isinstance(split_metadata, dict):
         value = split_metadata.get("horizon_length")
