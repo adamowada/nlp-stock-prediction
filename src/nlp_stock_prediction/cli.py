@@ -112,8 +112,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--cache-dir",
         type=Path,
         help=(
-            "Optional provider cache directory for future live/provider runs; current offline "
-            "runs record this path in command metadata."
+            "Optional provider cache directory for live provider runs; deterministic runs record "
+            "this path in command metadata."
         ),
     )
     run_parser.add_argument(
@@ -122,7 +122,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Explicit source mode. Use 'scrape' for the experimental compliance-aware "
-            "provider path; default remains disabled unless --offline is supplied."
+            "provider path with deterministic fixtures by default; add --live-providers for "
+            "real provider calls."
         ),
     )
     run_parser.add_argument(

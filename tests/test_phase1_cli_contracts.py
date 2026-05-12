@@ -146,7 +146,7 @@ def test_run_help_documents_stage2_configuration_surface() -> None:
 
 
 @pytest.mark.unit
-def test_run_without_offline_fails_with_live_orchestration_guidance(
+def test_run_without_explicit_source_mode_fails_with_guidance(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     output_dir = tmp_path / "reports"
@@ -155,9 +155,10 @@ def test_run_without_offline_fails_with_live_orchestration_guidance(
 
     captured = capsys.readouterr()
     assert exit_code == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
-    assert "Live-provider report orchestration is not enabled yet" in captured.err
+    assert "No source mode selected" in captured.err
     assert "--offline" in captured.err
     assert "--source-mode scrape" in captured.err
+    assert "--live-providers" in captured.err
     assert captured.out == ""
     assert not output_dir.exists()
 

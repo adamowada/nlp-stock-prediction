@@ -22,9 +22,9 @@ from nlp_stock_prediction.reporting.scrape_fixtures import (
 )
 
 LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
-    "Live-provider report orchestration is not enabled yet; pass --offline for the "
-    "deterministic fixture-backed report or --source-mode scrape for the experimental "
-    "fixture-backed scrape-source provider path."
+    "No source mode selected; pass --offline for the deterministic fixture-backed report, "
+    "--source-mode scrape for the fixture-backed scrape-source provider path, or "
+    "--source-mode scrape --live-providers for explicit live provider evidence collection."
 )
 
 

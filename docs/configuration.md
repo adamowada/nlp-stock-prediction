@@ -28,8 +28,8 @@ This writes:
 - `reports/YYYY-MM-DD/audit/`
 
 If both `--offline` and `--source-mode` are omitted, the CLI exits with code `3` and explains the
-available explicit modes. `--source-mode scrape` uses deterministic Reddit/AP/X fixtures plus
-provider degradation probes by default; it does not make live network calls unless
+available explicit modes. `--source-mode scrape` uses deterministic Reddit/AP/Candlecharts/X
+fixtures plus provider degradation probes by default; it does not make live network calls unless
 `--live-providers` is also present.
 
 ## CLI Options
@@ -69,8 +69,9 @@ opt-in:
 | `NLP_STOCK_PREDICTION_DISABLE_DOTENV` | Disables CLI `.env` auto-loading when set to `1`. | Deterministic tests, CI, or debugging an exported shell environment. |
 
 Provider adapters already return structured `missing_credentials` warnings when keys are absent.
-The current CLI does not wire live provider orchestration yet, but these names are the project
-conventions for future live setup or manual adapter wiring:
+`--source-mode scrape --live-providers` uses the configured live provider variables below where
+the corresponding provider is wired. Missing optional credentials degrade into provider warnings
+instead of blocking the whole report:
 
 | Variable | Intended provider |
 | --- | --- |
@@ -143,6 +144,9 @@ gates when that sidecar is present; ML output cannot qualify a trade by itself.
 
 The experimental fixture-backed `--source-mode scrape` path includes a TSLA ML sidecar so Markdown,
 JSON, and audit payloads exercise the integration shape without requiring a local model artifact.
+The explicit live-provider scrape path suppresses fixture ML, fundamental-agent, extraction, and
+scoring sidecars for now; it records live provider evidence and emits no-trade guidance until live
+analysis wiring is enabled under a future plan.
 
 Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
 access, or local training data. CUDA/RTX metadata is detected only when available and when the local

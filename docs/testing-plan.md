@@ -122,9 +122,11 @@ mypy .
 ```
 
 Fixture-backed e2e coverage now exercises offline CLI report generation and experimental
-`--source-mode scrape` orchestration. Live API and live scraping checks remain opt-in, and live LLM
-checks are reserved until a live adapter and credential contract exist. See
-`docs/configuration.md` for the current live-smoke environment variables and `.env` guidance.
+`--source-mode scrape` orchestration. Live API and live scraping checks remain opt-in; the explicit
+`--source-mode scrape --live-providers` report path is local opt-in and should be validated with
+credentials/configuration outside the default deterministic suite. Live LLM checks are reserved
+until a live adapter and credential contract exist. See `docs/configuration.md` for the current
+live-smoke environment variables and `.env` guidance.
 
 ML lane smoke coverage is CPU-only by default:
 
@@ -154,7 +156,7 @@ joke/sarcasm risk, and no qualified strategies.
   provider path is enabled.
 - Scraping fallbacks have narrow live tests that detect markup drift.
 - The full report can be generated from offline fixtures and from fixture-backed scrape source mode.
-- Selected live provider edges can be smoke-tested when credentials/configuration and network access
-  are available; default report generation remains network-free unless a live path is explicitly
-  enabled later.
+- Selected live provider edges and the explicit live-provider scrape report path can be
+  smoke-tested when credentials/configuration and network access are available; default report
+  generation remains network-free.
 - Recommendation scoring has tests for both confident-trade and no-trade outcomes.

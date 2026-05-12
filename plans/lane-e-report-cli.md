@@ -2,7 +2,8 @@
 
 Status: complete. This is a historical Phase 2 lane plan; the integrated application now supports
 deterministic offline report generation through `run --offline`, and Phase 3 local V1 acceptance is
-complete. Future live-provider orchestration remains separate.
+complete. Later follow-on work added separate fixture-backed scrape mode and explicit opt-in live
+provider evidence collection on `feature/release-v1`; this lane remains historical.
 
 ## Goal
 

@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-Phase 3 is complete for the local V1 CLI on `feature/release-v1`. The current CLI generates a deterministic offline report bundle with Markdown, JSON, and audit artifacts, and it also has an experimental fixture-backed `--source-mode scrape` path that wires the Reddit public-page, AP News, Candlecharts feasibility, and X recent-search adapters into provider health and audit artifacts. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 3 is complete for the local V1 CLI on `feature/release-v1`, and the follow-on scrape/ML/agent slices are merged into that branch. The CLI has three explicit local modes: deterministic `--offline`, fixture-backed `--source-mode scrape`, and opt-in `--source-mode scrape --live-providers`. The live-provider path calls Reddit public pages, AP News public HTML, Candlecharts feasibility, and X recent search, then writes provider health, normalized evidence, and audit artifacts; it intentionally emits no-trade guidance until live extraction/scoring is enabled. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 

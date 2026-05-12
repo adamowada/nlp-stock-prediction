@@ -578,7 +578,8 @@ def test_cli_run_requires_offline_until_live_orchestration_is_enabled(tmp_path: 
     )
 
     assert result.returncode == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
-    assert "Live-provider report orchestration is not enabled yet" in result.stderr
+    assert "No source mode selected" in result.stderr
     assert "--source-mode scrape" in result.stderr
+    assert "--live-providers" in result.stderr
     assert result.stdout == ""
     assert not output_dir.exists()

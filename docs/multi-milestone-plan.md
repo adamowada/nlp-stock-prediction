@@ -10,7 +10,7 @@ The v1 posture is exploratory but auditable. The app may surface speculative sto
 
 This roadmap is organized for git worktrees and Codex subagents. Contracts were settled single-threaded first; implementation then happened in parallel lanes from the same frozen contract commit; Phase 3 now returns to a coordinated integration and hardening flow.
 
-Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase 2 parallel implementation, and Phase 3 local V1 acceptance are complete. The CLI generates deterministic offline Markdown, JSON, and audit artifacts; live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record.
+Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase 2 parallel implementation, Phase 3 local V1 acceptance, and the follow-on scrape/ML/agent integration slices are complete on `feature/release-v1`. The CLI generates deterministic offline Markdown, JSON, and audit artifacts; `--source-mode scrape` generates fixture-backed provider/audit artifacts; and `--source-mode scrape --live-providers` explicitly calls live Reddit/AP/Candlecharts/X providers for evidence collection while preserving no-trade guidance until live extraction/scoring is enabled. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record and `plans/scraping-ml-agent-analysis.md` for the follow-on scrape/ML/agent record.
 
 ## Phase Status
 
@@ -237,6 +237,7 @@ ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
 ```
 
 Opt-in live smoke selections:
@@ -244,6 +245,7 @@ Opt-in live smoke selections:
 ```sh
 python -m pytest -m live_api
 python -m pytest -m live_scraping
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/live-aapl --source-mode scrape --live-providers --cache-dir cache/live
 ```
 
 ## Phase 1 Contract-Gate Acceptance Criteria
@@ -263,6 +265,8 @@ python -m pytest -m live_scraping
 - Live API and live scraping tests are opt-in, marked, and implemented by their provider/reliability lanes.
 - Provider failures degrade gracefully through actual provider adapters and are visible in reports or logs.
 - Recommendation scoring has fixture-backed no-trade, conflicting-evidence, and qualified-strategy outcomes.
+- The explicit live-provider scrape path preserves provider health, warnings, normalized evidence,
+  and audit artifacts, and remains no-trade until live extraction/scoring is enabled.
 - CLI configuration, report quality, failure drills, and final clean-checkout verification meet
   `plans/phase-3-integration-live-smoke.md`.
 

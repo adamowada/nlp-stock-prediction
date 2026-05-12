@@ -27,12 +27,15 @@ from generated analysis and recommendations.
 
 ## Context
 
-Current V1 behavior is deterministic and offline-only. `run --offline` builds a synthetic fixture
-bundle, while non-offline orchestration exits with the live-disabled gate. Provider adapters for
-Alpha Vantage, FRED, NewsAPI-like news, X, and SEC exist, but the CLI does not wire them into live
-report generation. The X provider request shape is implemented and fixture-tested for the
-production default of 50 relevant posts per ticker, but it is not yet wired into live report
-orchestration. Reddit and LLM extraction are fixture-backed.
+Current V1 behavior uses explicit local source modes. `run --offline` builds a deterministic
+fixture bundle. `run --source-mode scrape` builds a fixture-backed scrape-source bundle with
+provider health, normalized evidence, ML and fundamental-agent sidecars, and provider-result audit
+artifacts. `run --source-mode scrape --live-providers` explicitly calls the wired live Reddit public
+page, AP News public HTML, Candlecharts feasibility, and X recent-search providers, records live
+provider health and normalized evidence, and emits no-trade guidance until live extraction,
+analysis, and scoring are enabled under a future plan. The X provider request shape is implemented,
+fixture-tested, and wired into the live scrape provider path for the six report tickers with the
+production default of 50 relevant posts per ticker.
 
 Requested scrape targets:
 
@@ -114,7 +117,7 @@ Merge order:
    They should not depend on each other.
 4. Land W5 after the existing X provider and W6 provider hook shape are stable.
 5. Finish W6 after at least one scraper adapter and the X provider can run through fixture-backed
-   E2E.
+   E2E, then add an explicit `--live-providers` local path for bounded live evidence collection.
 6. Develop W7 in parallel with W1-W6 because it is mostly isolated. Land W8 only after W7 and W6.
 7. Develop W9 schema/fixtures in parallel. Land its pipeline integration after W6.
 8. Land W10 last, after commands and behavior settle.
@@ -253,7 +256,8 @@ Integration discipline:
 
 ### Milestone 6: X API Relevant Search
 
-Status: provider-level behavior implemented; live orchestration wiring remains in Milestone 7.
+Status: implemented and wired into the opt-in live scrape provider path; live extraction/scoring
+remains a later milestone.
 
 - Changes:
   - Use the official X API v2 recent-search endpoint instead of browser scraping X search pages.
@@ -282,10 +286,14 @@ Status: provider-level behavior implemented; live orchestration wiring remains i
 ### Milestone 7: Live Scrape Orchestration
 
 - Changes:
-  - Add an explicit non-offline mode such as `run --source-mode scrape` while keeping `--offline`
-    deterministic.
-  - Wire Reddit, AP News, Candlecharts, X API recent-search provider, extraction, analysis, scoring,
-    reporting, and audit manifest into one degraded-provider-aware pipeline.
+  - Add explicit scrape modes while keeping `--offline` deterministic: fixture-backed
+    `run --source-mode scrape` and bounded live-provider collection through
+    `run --source-mode scrape --live-providers`.
+  - Wire Reddit, AP News, Candlecharts, and X API recent-search provider results into one
+    degraded-provider-aware reporting and audit path.
+  - Keep live extraction, analysis, scoring, ML sidecars, and fundamental-agent sidecars disabled
+    for live provider runs until a future plan enables them against real evidence. Live provider
+    reports remain no-trade.
   - Ensure all missing, blocked, stale, and drifted sources appear in provider health and report
     warnings.
   - Keep raw snapshots and normalized artifacts out of git unless they are curated fixtures.
@@ -298,8 +306,9 @@ Status: provider-level behavior implemented; live orchestration wiring remains i
   - end-to-end tests
 - Verification:
   - Fixture-backed scrape-mode e2e writes Markdown, JSON, and audit artifacts.
-  - Live scrape/API smoke is opt-in and can pass with allowed sources while surfacing X credential
-    or quota failures and widget-only Candlecharts as warnings.
+  - Opt-in live provider scrape writes Markdown, JSON, normalized evidence, provider health, and
+    `audit/provider-results.json` while surfacing X credential/quota failures and widget-only
+    Candlecharts as warnings.
 
 ### Milestone 8: Local ML Technical Analysis Dataset
 
@@ -413,6 +422,9 @@ Status: provider-level behavior implemented; live orchestration wiring remains i
       50 relevant results with `sort_order=relevancy` and `max_results=50`.
 - [x] `run --source-mode scrape` or equivalent produces Markdown, JSON, and audit artifacts from
       fixture-backed scrape inputs.
+- [x] `run --source-mode scrape --live-providers` explicitly calls wired live providers, records
+      provider health and normalized evidence, writes `audit/provider-results.json`, and emits
+      no-trade guidance until live extraction/scoring is enabled.
 - [x] Live scraping tests are opt-in, rate-limited, and source-specific.
 - [x] ML dataset generation has leakage tests and data-quality gates.
 - [x] RTX 3090 training command records reproducible metrics and model artifact metadata.
@@ -441,12 +453,14 @@ ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
 ```
 
 Opt-in live checks after source configuration:
 
 ```sh
 python -m pytest -m live_scraping
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/live-aapl --source-mode scrape --live-providers --cache-dir cache/live
 ```
 
 Local GPU training smoke after ML implementation:
@@ -481,6 +495,10 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
 - 2026-05-12-00-00: Per user direction, follow-up implementation work after the closed PR is being
   done directly on `feature/release-v1` without git worktrees or subagents. Keep edits linear,
   reviewed locally, and verified before any ACP.
+- 2026-05-12-00-00: Keep live-provider scrape orchestration explicit behind
+  `--source-mode scrape --live-providers`. The live path records provider evidence, health, and
+  audit artifacts, but suppresses fixture sidecars and emits no-trade guidance until live
+  extraction, analysis, and scoring are enabled intentionally.
 
 ## Progress log
 
@@ -498,8 +516,9 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
 - 2026-05-12-00-00: Implemented and committed the X provider-level defaults in `168141d`
   (`Configure X API relevancy provider path`): provider endpoint, query defaults, provenance,
   `.env.example`, docs, roadmap/testing-plan updates, and contract tests. Verification passed with
-  `257 passed, 3 skipped`, Ruff clean, Mypy clean, and `git diff --check` clean. Live report
-  orchestration and the broader scraping/ML/Codex-agent milestones remain planned work.
+  `257 passed, 3 skipped`, Ruff clean, Mypy clean, and `git diff --check` clean. At that point,
+  live report orchestration and the broader scraping/ML/Codex-agent milestones were still planned
+  work.
 - 2026-05-12-00-00: Reworked this plan for parallel development with git worktrees, Codex subagent
   packet templates, workstream IDs, branch names, ownership boundaries, and merge order.
 - 2026-05-12-00-00: Tagged and pushed `parallel-worktree-start-2026-05-12` at `81a9bd1`, then
@@ -536,3 +555,14 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
   metadata is rebuilt through validated contracts, CUDA detection is recorded separately from the
   CPU execution backend, artifact hashes are recomputed in tests, subprocess ML tests use a minimal
   environment, and the GPU/evaluation smoke commands now match the actual CLI.
+- 2026-05-12-00-00: Merged the opt-in live-provider orchestration PR into `feature/release-v1`.
+  The branch now has the live scrape path for Reddit, AP News, Candlecharts, and X recent search,
+  with live normalized evidence, provider health, provider-result audit artifacts, and no-trade
+  output until live extraction/scoring is implemented.
+- 2026-05-12-00-00: Cross-checked the merged branch against active plans, source docs, and CLI
+  behavior. Updated stale plan/docs language that still described live orchestration as unwired, and
+  narrowed the no-mode CLI error to point users at the three explicit local modes.
+- 2026-05-12-00-00: Verification after the cross-check passed with targeted CLI tests
+  (`31 passed`), full deterministic pytest (`327 passed, 7 skipped`), Ruff check, Ruff format
+  check, Mypy, `git diff --check`, and a temp-directory `--source-mode scrape` CLI smoke verifying
+  `report.md`, `report.json`, and `audit/provider-results.json`.
