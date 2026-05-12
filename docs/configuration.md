@@ -172,6 +172,19 @@ duplication.
 Ubuntu remains a fallback only if a later TimesFM dependency, CUDA kernel, or local training command
 blocks native Windows execution.
 
+### TimesFM Dataset Windows
+
+Stage 2 of the active TimesFM phase adds dependency-light TimesFM window construction. The dataset
+builder consumes validated local OHLCV bars, emits univariate context/future windows, and uses
+`adjusted_close` only when every bar supplies it; otherwise it forecasts `close`. It does not apply
+external normalization because TimesFM 2.5 performs internal instance normalization.
+
+The window builder preserves the local ML lane's safety posture: sorted timestamps, duplicate
+timestamp rejection, sufficient-history checks, stale and future-dated bar checks, split-like move
+detection, partial adjusted-close rejection, stable dataset hashes, and train/validation/test splits
+with purged window starts. The default test suite covers this path without requiring Torch,
+Transformers, Hugging Face access, or CUDA.
+
 The experimental fixture-backed `--source-mode scrape` path includes a TSLA ML sidecar so Markdown,
 JSON, and audit payloads exercise the integration shape without requiring a local model artifact.
 The explicit live-provider scrape path suppresses fixture ML, fundamental-agent, extraction, and

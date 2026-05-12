@@ -81,6 +81,8 @@ Status: implemented.
 
 ### Stage 2: TimesFM Dataset Windows
 
+Status: implemented.
+
 - Changes:
   - Extend the existing OHLCV dataset layer with TimesFM-compatible context and horizon windows.
   - Keep the first implementation target simple: forecast adjusted close when available, otherwise
@@ -325,3 +327,11 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   and `mypy .` passed; `python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2`
   loaded TimesFM 2.5 on the RTX 3090, produced forecast shapes `[1, 128]` and `[1, 128, 10]`, ran
   two LoRA optimizer steps, and wrote the ignored smoke artifact under `artifacts/ml/timesfm-smoke/`.
+- 2026-05-12-00-00: Implemented Stage 2 with dependency-light TimesFM window contracts, deterministic
+  univariate context/future window generation, adjusted-close-when-complete target selection,
+  train/validation/test window splits with purged window starts, dataset hashing, and tests for
+  shape, target selection, temporal ordering, future-label separation, CSV determinism, stale data,
+  future-dated bars, duplicate timestamps, split leakage, and partial adjusted-close history.
+- 2026-05-12-00-00: Stage 2 verification passed on native Windows: full pytest reported 341 passed
+  and 7 opt-in live skips; non-live pytest reported 341 passed and 7 deselected; `ruff check . --no-cache`,
+  `ruff format --check . --no-cache`, and `mypy .` passed.
