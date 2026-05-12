@@ -470,11 +470,11 @@ class RedditPublicPageProvider:
             return None
         return provider_warning(
             provider_name=self.provider_name,
-            code=WarningCode.AUTH_FAILED,
+            code=WarningCode.UPSTREAM_UNAVAILABLE,
             severity=WarningSeverity.ERROR,
             message="Reddit scraper policy blocked a non-public or unsupported URL.",
             occurred_at=fetched_at,
-            provider_error_type="scraping_policy_blocked",
+            provider_error_type="scraping_blocked_by_policy",
             source_url=source_url,
             metadata={"policy_reason": decision.reason},
         )
@@ -586,7 +586,11 @@ def _discussion_provider_status(warnings: tuple[ProviderWarning, ...]) -> Provid
 
 def _only_hard_failures(warnings: Sequence[ProviderWarning]) -> bool:
     return bool(warnings) and all(
-        warning.code in {WarningCode.AUTH_FAILED, WarningCode.UPSTREAM_UNAVAILABLE}
+        warning.code
+        in {
+            WarningCode.AUTH_FAILED,
+            WarningCode.UPSTREAM_UNAVAILABLE,
+        }
         for warning in warnings
     )
 

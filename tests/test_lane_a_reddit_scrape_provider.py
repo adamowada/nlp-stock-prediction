@@ -169,7 +169,8 @@ def test_public_page_policy_blocks_reddit_json_endpoints_before_fetch() -> None:
 
     assert result.status == ProviderStatus.FAILED
     assert result.data is None
-    assert result.warnings[0].code == WarningCode.AUTH_FAILED
+    assert result.warnings[0].code == WarningCode.UPSTREAM_UNAVAILABLE
+    assert result.warnings[0].provider_error_type == "scraping_blocked_by_policy"
     assert result.warnings[0].metadata["policy_reason"] == "reddit_json_endpoint_disallowed"
     assert transport.calls == 0
 
