@@ -44,6 +44,7 @@ def test_parser_accepts_minimal_run_command_and_defaults() -> None:
     assert args.cache_dir is None
     assert args.offline is False
     assert args.source_mode is None
+    assert args.live_providers is False
 
 
 @pytest.mark.unit
@@ -138,6 +139,7 @@ def test_run_help_documents_stage2_configuration_surface() -> None:
     assert "--offline" in result.stdout
     assert "disallows" in result.stdout
     assert "live network providers" in result.stdout
+    assert "--live-providers" in result.stdout
     assert "Scrape source mode" in result.stdout
     assert "docs/configuration.md" in result.stdout
     assert result.stderr == ""
@@ -347,6 +349,46 @@ def test_parser_accepts_explicit_scrape_source_mode(tmp_path: Path) -> None:
 
     assert config.offline is False
     assert config.source_mode == "scrape"
+    assert config.live_providers is False
+
+
+@pytest.mark.unit
+def test_parser_accepts_explicit_live_scrape_provider_mode(tmp_path: Path) -> None:
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--date",
+            "2026-05-11",
+            "--output",
+            str(tmp_path / "reports"),
+            "--source-mode",
+            "scrape",
+            "--live-providers",
+        ]
+    )
+
+    config = build_run_config(args)
+
+    assert config.offline is False
+    assert config.source_mode == "scrape"
+    assert config.live_providers is True
+
+
+@pytest.mark.unit
+def test_live_provider_mode_requires_scrape_source_mode(tmp_path: Path) -> None:
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--date",
+            "2026-05-11",
+            "--output",
+            str(tmp_path / "reports"),
+            "--live-providers",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="requires --source-mode scrape"):
+        build_run_config(args)
 
 
 @pytest.mark.unit
@@ -384,3 +426,4 @@ def test_build_run_config_constructs_public_contract(tmp_path: Path) -> None:
     assert config.cache_dir == cache_dir
     assert config.offline is True
     assert config.source_mode == "offline"
+    assert config.live_providers is False

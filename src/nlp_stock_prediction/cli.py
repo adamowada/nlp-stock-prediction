@@ -26,6 +26,7 @@ _CLI_EPILOG = """Examples:
 Configuration:
   Offline runs are deterministic and do not use network providers.
   Scrape source mode uses compliance-aware provider adapters with deterministic fixtures by default.
+  Add --live-providers with --source-mode scrape to call configured live providers.
   A local .env file is loaded automatically without overriding exported shell variables.
   Pass --offline to generate the deterministic fixture-backed report bundle.
   Keep provider credentials in environment variables or ignored local .env files;
@@ -132,11 +133,23 @@ def build_parser() -> argparse.ArgumentParser:
             "providers."
         ),
     )
+    run_parser.add_argument(
+        "--live-providers",
+        action="store_true",
+        help=(
+            "Opt into real provider calls for --source-mode scrape. Fixture-backed scrape mode "
+            "remains the default."
+        ),
+    )
     return parser
 
 
 def build_run_config(args: argparse.Namespace) -> RunConfig:
     source_mode = "offline" if args.offline else args.source_mode or "disabled"
+    if args.live_providers and (args.offline or source_mode != "scrape"):
+        raise ValueError(
+            "--live-providers requires --source-mode scrape and cannot be used with --offline"
+        )
     return RunConfig(
         run_date=args.run_date,
         output_dir=args.output_dir,
@@ -146,6 +159,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         cache_dir=args.cache_dir,
         offline=args.offline,
         source_mode=source_mode,
+        live_providers=args.live_providers,
     )
 
 

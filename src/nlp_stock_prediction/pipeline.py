@@ -17,6 +17,7 @@ from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.reporting.scrape_fixtures import (
     ScrapeFixtureBundle,
+    build_live_scrape_bundle,
     build_scrape_fixture_bundle,
 )
 
@@ -43,7 +44,11 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
     if config.offline or config.source_mode == "offline":
         fixture_bundle = build_offline_fixture_bundle(config)
     elif config.source_mode == "scrape":
-        fixture_bundle = build_scrape_fixture_bundle(config)
+        fixture_bundle = (
+            build_live_scrape_bundle(config)
+            if config.live_providers
+            else build_scrape_fixture_bundle(config)
+        )
     else:
         raise ValueError(LIVE_ORCHESTRATION_DISABLED_MESSAGE)
     report = fixture_bundle.report

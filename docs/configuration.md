@@ -14,6 +14,13 @@ It also supports an experimental fixture-backed scrape-source path:
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
 ```
 
+To explicitly call live providers from the local machine, add `--live-providers` and preferably a
+cache directory:
+
+```sh
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape --live-providers --cache-dir cache/live
+```
+
 This writes:
 
 - `reports/YYYY-MM-DD/report.md`
@@ -21,8 +28,9 @@ This writes:
 - `reports/YYYY-MM-DD/audit/`
 
 If both `--offline` and `--source-mode` are omitted, the CLI exits with code `3` and explains the
-available explicit modes. `--source-mode scrape` currently uses deterministic Reddit/AP/X fixtures
-plus provider degradation probes; it does not make default live network calls.
+available explicit modes. `--source-mode scrape` uses deterministic Reddit/AP/X fixtures plus
+provider degradation probes by default; it does not make live network calls unless
+`--live-providers` is also present.
 
 ## CLI Options
 
@@ -38,6 +46,9 @@ plus provider degradation probes; it does not make default live network calls.
   path against deterministic fixtures and writes provider-result audit artifacts.
 - `--offline`: uses the deterministic offline fixture-backed report path and prevents live network
   provider usage.
+- `--live-providers`: opt into real provider calls for `--source-mode scrape`. This calls public
+  Reddit/AP/Candlecharts HTML providers and the X recent-search API while degrading expected
+  provider failures into provider-result warnings.
 
 ## Environment Variables
 
@@ -73,8 +84,9 @@ conventions for future live setup or manual adapter wiring:
 ## X API Stock News
 
 The X provider direction is official X API recent search, not browser scraping. X is treated as a
-stock-news/social evidence source for every discovered ticker. The current scrape source mode uses
-deterministic X API-shaped fixtures; live X verification is covered by opt-in smoke tests.
+stock-news/social evidence source for every discovered ticker. The default scrape source mode uses
+deterministic X API-shaped fixtures; `--source-mode scrape --live-providers` uses the configured X
+Bearer Token for live recent-search calls. Live X verification is covered by opt-in smoke tests.
 
 For each ticker, the app should request the top 50 relevant posts from the X recent-search endpoint:
 
@@ -97,6 +109,14 @@ allowlisted paths, disallowed paths, robots review status, login and JavaScript 
 fallback behavior. Blocked, login-required, and markup-drift cases return `ProviderResult` warnings
 instead of raising for expected provider conditions. `--source-mode scrape` carries these provider
 warnings into report provider health and `audit/provider-results.json`.
+
+Live scrape-mode orchestration currently calls:
+
+- Reddit public `r/wallstreetbets` pages for ticker discovery and public discussion evidence.
+- AP News public financial-markets hub and linked public article pages.
+- Candlecharts public live chart page as a feasibility probe for first-party OHLCV only.
+- X API v2 recent search for the six report tickers when `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` is
+  configured.
 
 The default public HTML request identity is
 `nlp-stock-prediction/0.1 compliance-aware-scraper`. Override it with

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,6 +18,7 @@ from nlp_stock_prediction.contracts import (
     AuditManifest,
     DailyReport,
     DataFreshnessSummary,
+    EvidenceReference,
     EvidenceRequest,
     FreshnessStatus,
     FundamentalNlpAnalysisRequest,
@@ -36,7 +38,9 @@ from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.providers._base import (
     JsonResponse,
     JsonTransport,
+    ProviderCache,
     ProviderTransportError,
+    utc_now,
 )
 from nlp_stock_prediction.providers.apnews import APNewsProvider
 from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
@@ -46,7 +50,7 @@ from nlp_stock_prediction.providers.reddit_scrape import (
 from nlp_stock_prediction.providers.reddit_scrape import (
     StaticHtmlTransport as StaticRedditHtmlTransport,
 )
-from nlp_stock_prediction.providers.scraping import HtmlResponse
+from nlp_stock_prediction.providers.scraping import HtmlCache, HtmlResponse
 from nlp_stock_prediction.providers.social import XRecentSearchProvider
 from nlp_stock_prediction.reporting.audit import json_payload_sha256
 from nlp_stock_prediction.reporting.fixtures import (
@@ -59,6 +63,7 @@ _REDDIT_URL = "https://www.reddit.com/r/wallstreetbets/"
 _REDDIT_POST_URL = "https://www.reddit.com/r/wallstreetbets/comments/scrape001/daily_watch/"
 _AP_HUB_URL = "https://apnews.com/hub/financial-markets"
 _AP_ARTICLE_URL = "https://apnews.com/article/markets-megacap-stocks-2026-05-11"
+_X_BEARER_TOKEN_ENV = "NLP_STOCK_PREDICTION_X_BEARER_TOKEN"
 
 
 @dataclass(frozen=True)
@@ -148,35 +153,159 @@ def build_scrape_fixture_bundle(config: RunConfig) -> ScrapeFixtureBundle:
     """Run the scrape-source providers against deterministic fixtures and render a report."""
 
     offline_bundle = build_offline_fixture_bundle(config)
-    provider_results = _provider_results(config, offline_bundle.report.generated_at)
+    fetched_at = offline_bundle.report.generated_at
+    provider_results = _provider_results(config, fetched_at)
+    return _build_scrape_bundle_from_results(
+        config=config,
+        offline_bundle=offline_bundle,
+        provider_results=provider_results,
+        run_id=f"run-{config.run_date.isoformat()}-scrape-fixture",
+        source_profile="fixture",
+        generated_at=fetched_at,
+        apply_fixture_sidecars=True,
+    )
+
+
+def build_live_scrape_bundle(config: RunConfig) -> ScrapeFixtureBundle:
+    """Run scrape-source providers against live public/API sources and render a report."""
+
+    offline_bundle = build_offline_fixture_bundle(config)
+    fetched_at = utc_now()
+    provider_results = _live_provider_results(config, fetched_at)
+    return _build_scrape_bundle_from_results(
+        config=config,
+        offline_bundle=offline_bundle,
+        provider_results=provider_results,
+        run_id=f"run-{config.run_date.isoformat()}-scrape-live",
+        source_profile="live",
+        generated_at=fetched_at,
+        apply_fixture_sidecars=False,
+    )
+
+
+def _build_scrape_bundle_from_results(
+    *,
+    config: RunConfig,
+    offline_bundle: OfflineFixtureBundle,
+    provider_results: tuple[ProviderResult[object], ...],
+    run_id: str,
+    source_profile: str,
+    generated_at: datetime,
+    apply_fixture_sidecars: bool,
+) -> ScrapeFixtureBundle:
     provider_evidence = _provider_evidence(provider_results)
     provider_health = tuple(result.health for result in provider_results)
-    run_id = f"run-{config.run_date.isoformat()}-scrape-fixture"
     report = _scrape_report(
         offline_bundle=offline_bundle,
         config=config,
         run_id=run_id,
+        source_profile=source_profile,
+        generated_at=generated_at,
         provider_results=provider_results,
         provider_health=provider_health,
         provider_evidence=provider_evidence,
+        apply_fixture_sidecars=apply_fixture_sidecars,
     )
     audit_payloads = _scrape_audit_payloads(
         offline_bundle=offline_bundle,
         report=report,
         provider_results=provider_results,
         provider_evidence=provider_evidence,
+        source_profile=source_profile,
     )
     audit_manifest = _scrape_audit_manifest(
         offline_manifest=cast(AuditManifest, offline_bundle.report.audit_manifest),
         config=config,
         run_id=run_id,
-        generated_at=report.generated_at,
+        source_profile=source_profile,
+        generated_at=generated_at,
         provider_health=provider_health,
         provider_results=provider_results,
         audit_payloads=audit_payloads,
     )
     report = report.model_copy(update={"audit_manifest": audit_manifest})
     return ScrapeFixtureBundle(report=report, audit_payloads=audit_payloads)
+
+
+def _live_provider_results(
+    config: RunConfig,
+    fetched_at: datetime,
+) -> tuple[ProviderResult[object], ...]:
+    html_cache = _html_cache(config)
+    json_cache = _json_cache(config)
+    reddit_provider = RedditPublicPageProvider(
+        allow_live_scraping=True,
+        now=lambda: fetched_at,
+    )
+    reddit_discovery = reddit_provider.discover_tickers(
+        TickerDiscoveryRequest(
+            request_id=f"live-scrape-reddit-discovery-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            source_url=_REDDIT_URL,
+            query="r/wallstreetbets Devvit daily ticker card",
+        )
+    )
+    reddit_discussion = reddit_provider.fetch_discussion(
+        EvidenceRequest(
+            request_id=f"live-scrape-reddit-discussion-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            tickers=TICKERS,
+            query=" OR ".join(TICKERS),
+            include_posts=True,
+            include_comments=True,
+        )
+    )
+
+    ap_articles = APNewsProvider(
+        cache=html_cache,
+        now=lambda: fetched_at,
+    ).fetch_articles(
+        EvidenceRequest(
+            request_id=f"live-scrape-apnews-articles-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            tickers=TICKERS,
+            limit=6,
+        )
+    )
+
+    candlecharts = CandlechartsMarketDataProvider(
+        cache=html_cache,
+        allow_live=True,
+        now=lambda: fetched_at,
+    ).fetch_daily_candles(
+        MarketDataRequest(
+            request_id=f"live-scrape-candlecharts-aapl-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            tickers=("AAPL",),
+        )
+    )
+
+    x_provider = XRecentSearchProvider(
+        bearer_token=_env_value(_X_BEARER_TOKEN_ENV),
+        cache=json_cache,
+        now=lambda: fetched_at,
+    )
+    x_results = tuple(
+        x_provider.fetch_social_posts(
+            EvidenceRequest(
+                request_id=f"live-scrape-x-{ticker.lower()}-{config.run_date.isoformat()}",
+                run_date=config.run_date,
+                tickers=(ticker,),
+            )
+        )
+        for ticker in TICKERS
+    )
+
+    return cast(
+        tuple[ProviderResult[object], ...],
+        (
+            reddit_discovery,
+            reddit_discussion,
+            ap_articles,
+            candlecharts,
+            *x_results,
+        ),
+    )
 
 
 def _provider_results(
@@ -452,15 +581,115 @@ def _provider_evidence(results: tuple[ProviderResult[object], ...]) -> tuple[Sou
     return tuple(evidence)
 
 
+def _provider_evidence_refs(
+    evidence: tuple[SourceEvidence, ...],
+    ticker: str,
+    *,
+    limit: int = 5,
+) -> tuple[EvidenceReference, ...]:
+    matching_records = tuple(
+        record
+        for record in evidence
+        if record.ticker == ticker.upper() or ticker.upper() in record.matched_tickers
+    )
+    display_records = tuple(
+        record for record in matching_records if not _looks_promotional_social_noise(record)
+    )
+    refs: list[EvidenceReference] = []
+    for record in display_records:
+        refs.append(
+            EvidenceReference(
+                evidence_id=record.evidence_id,
+                quote=_quote(record.text),
+                relevance=0.70,
+            )
+        )
+        if len(refs) >= limit:
+            break
+    return tuple(refs)
+
+
+def _looks_promotional_social_noise(evidence: SourceEvidence) -> bool:
+    if evidence.provenance.provider_name != "x-recent-search":
+        return False
+    lowered = evidence.text.lower()
+    promotional_phrases = (
+        "recommend stock blogger",
+        "excellent stock expert",
+        "financial mentor",
+        "profit easily",
+        "profitable stock picks",
+        "profitable results",
+        "good returns",
+        "make substantial profits",
+        "want to make money in the stock market",
+        "following his advice",
+        "following her advice",
+        "highly recommend checking",
+        "every trader should follow",
+        "daily bullish signals",
+        "bullish signals on x",
+        "proven us stock trader",
+        "high-probability long calls",
+        "top market analyst",
+        "experienced market analyst",
+        "long plays daily",
+        "stock recommendations",
+        "steady green candles",
+        "solid gains",
+        "real-time trades",
+        "consistent profits",
+        "easy strategies",
+        "most consistent accounts",
+        "account that actually delivers",
+        "go check out",
+        "live calls",
+        "follow him",
+        "follow her",
+    )
+    if any(phrase in lowered for phrase in promotional_phrases):
+        return True
+    return "@" in lowered and any(
+        marker in lowered
+        for marker in ("recommend", "follow", "profit", "gains", "mentor", "trader")
+    )
+
+
+def _live_observed_summary(ticker: str, evidence: tuple[SourceEvidence, ...]) -> str:
+    evidence_count = sum(
+        1
+        for record in evidence
+        if record.ticker == ticker or ticker.upper() in record.matched_tickers
+    )
+    if evidence_count:
+        return (
+            f"Live scrape mode collected {evidence_count} source evidence records for {ticker}; "
+            "see the evidence references and provider-results audit artifact for provenance."
+        )
+    return (
+        f"Live scrape mode did not collect ticker-matched evidence for {ticker}; provider "
+        "warnings explain missing, blocked, stale, or unavailable sources."
+    )
+
+
+def _quote(text: str) -> str:
+    stripped = " ".join(text.split())
+    return stripped[:160] if stripped else ""
+
+
 def _scrape_report(
     *,
     offline_bundle: OfflineFixtureBundle,
     config: RunConfig,
     run_id: str,
+    source_profile: str,
+    generated_at: datetime,
     provider_results: tuple[ProviderResult[object], ...],
     provider_health: tuple[ProviderHealth, ...],
     provider_evidence: tuple[SourceEvidence, ...],
+    apply_fixture_sidecars: bool,
 ) -> DailyReport:
+    live_providers = source_profile == "live"
     source_health_names = tuple(health.provider_name for health in provider_health)
     stale_names = _provider_names_with_status_or_warning(
         provider_health,
@@ -475,15 +704,35 @@ def _scrape_report(
     command_args = dict(offline_bundle.report.command_args)
     command_args["source_mode"] = "scrape"
     command_args["offline"] = False
+    command_args["live_providers"] = live_providers
     report = offline_bundle.report
     fundamental_agent_result = _fundamental_agent_result_from_results(provider_results)
-    ml_signal = _fixture_ml_signal(report.generated_at)
+    ml_signal = _fixture_ml_signal(generated_at) if apply_fixture_sidecars else None
+    summary_label = (
+        "live Reddit/AP public HTML providers, the Candlecharts feasibility probe, and "
+        "the X recent-search API"
+        if live_providers
+        else "Reddit/AP/X fixtures and Candlecharts feasibility probes"
+    )
+    freshness_summary = (
+        "Experimental scrape source mode called live public/API providers and recorded "
+        "provider-level degraded results for unavailable, stale, blocked, empty, or "
+        "unconfigured sources."
+        if live_providers
+        else (
+            "Experimental scrape source mode used deterministic Reddit/AP/X fixtures, "
+            "a Candlecharts widget-only probe, and degraded-provider probes for missing "
+            "credentials, quota, stale data, blocked scraping, and markup drift."
+        )
+    )
     ticker_sections = tuple(
         section.model_copy(
             update={
                 "technical_analysis": (
                     apply_technical_ml_signal(section.technical_analysis, ml_signal)
-                    if section.ticker == "TSLA" and section.technical_analysis is not None
+                    if ml_signal is not None
+                    and section.ticker == "TSLA"
+                    and section.technical_analysis is not None
                     else section.technical_analysis
                 ),
                 "fundamental_analysis": (
@@ -497,40 +746,81 @@ def _scrape_report(
                     else section.fundamental_analysis
                 ),
                 "social_news_summary": (
-                    f"Experimental scrape source mode wired Reddit public pages, AP News, "
-                    f"X relevancy API fixtures, and Candlecharts feasibility probes for "
+                    f"Experimental scrape source mode wired {summary_label} for "
                     f"{section.ticker}. Provider warnings are reported separately."
                 ),
                 "data_quality": {
                     **dict(section.data_quality),
                     "source_mode": "scrape",
+                    "live_providers": live_providers,
                     "provider_names": list(source_health_names),
                     "provider_result_artifact": "provider-results",
-                    "ml_signal": "fixture_sidecar" if section.ticker == "TSLA" else None,
-                    "fundamental_agent": ("fixture_sidecar" if section.ticker == "TSLA" else None),
+                    "ml_signal": (
+                        "fixture_sidecar"
+                        if apply_fixture_sidecars and section.ticker == "TSLA"
+                        else None
+                    ),
+                    "fundamental_agent": (
+                        "fixture_sidecar"
+                        if apply_fixture_sidecars and section.ticker == "TSLA"
+                        else None
+                    ),
                 },
             }
         )
         for section in report.ticker_sections
     )
+    if live_providers:
+        ticker_sections = tuple(
+            section.model_copy(
+                update={
+                    "observed_discussion_summary": _live_observed_summary(
+                        section.ticker,
+                        provider_evidence,
+                    ),
+                    "strategy_clusters": (),
+                    "technical_analysis": None,
+                    "fundamental_analysis": None,
+                    "sector_context": None,
+                    "macro_context": None,
+                    "opportunity_notes": (
+                        "Live provider orchestration collected source evidence only; live "
+                        "strategy extraction, analysis, and scoring remain disabled for this "
+                        "mode.",
+                    ),
+                    "recommendation_ids": (),
+                    "evidence": _provider_evidence_refs(provider_evidence, section.ticker),
+                }
+            )
+            for section in ticker_sections
+        )
+    evidence_sources = (
+        provider_evidence if live_providers else report.evidence_sources + provider_evidence
+    )
+    trade_candidates = () if live_providers else report.trade_candidates
+    no_trade_summary = (
+        "Live scrape mode collected provider evidence, but live extraction/scoring is not enabled; "
+        "no qualified trades are produced from this run."
+        if live_providers
+        else report.no_trade_summary
+    )
     return report.model_copy(
         update={
             "run_id": run_id,
-            "config_hash": f"scrape-fixture-{config.run_date.isoformat()}",
+            "generated_at": generated_at,
+            "config_hash": f"scrape-{source_profile}-{config.run_date.isoformat()}",
             "command_args": command_args,
             "data_freshness": DataFreshnessSummary(
-                as_of=report.generated_at,
-                summary=(
-                    "Experimental scrape source mode used deterministic Reddit/AP/X fixtures, "
-                    "a Candlecharts widget-only probe, and degraded-provider probes for missing "
-                    "credentials, quota, stale data, blocked scraping, and markup drift."
-                ),
+                as_of=generated_at,
+                summary=freshness_summary,
                 stale_provider_names=stale_names,
                 missing_provider_names=missing_names,
             ),
             "provider_health": provider_health,
-            "evidence_sources": report.evidence_sources + provider_evidence,
+            "evidence_sources": evidence_sources,
             "ticker_sections": ticker_sections,
+            "trade_candidates": trade_candidates,
+            "no_trade_summary": no_trade_summary,
             "audit_manifest": None,
         }
     )
@@ -572,6 +862,7 @@ def _scrape_audit_payloads(
     report: DailyReport,
     provider_results: tuple[ProviderResult[object], ...],
     provider_evidence: tuple[SourceEvidence, ...],
+    source_profile: str,
 ) -> dict[str, JsonObject]:
     payloads: dict[str, JsonObject] = {
         filename: cast(JsonObject, dict(payload))
@@ -583,7 +874,13 @@ def _scrape_audit_payloads(
     normalized = payloads.get("normalized-evidence.json")
     if normalized is not None:
         records_value = normalized.get("records")
-        records: list[JsonValue] = list(records_value) if isinstance(records_value, list) else []
+        records: list[JsonValue] = (
+            []
+            if source_profile == "live"
+            else list(records_value)
+            if isinstance(records_value, list)
+            else []
+        )
         records.extend(
             cast(JsonValue, evidence.model_dump(mode="json")) for evidence in provider_evidence
         )
@@ -592,14 +889,32 @@ def _scrape_audit_payloads(
     if raw_snapshots is not None:
         records_value = raw_snapshots.get("records")
         raw_records: list[JsonValue] = (
-            list(records_value) if isinstance(records_value, list) else []
+            []
+            if source_profile == "live"
+            else list(records_value)
+            if isinstance(records_value, list)
+            else []
         )
         raw_records.extend(
-            cast(JsonValue, record) for record in _raw_snapshot_records(provider_results)
+            cast(JsonValue, record)
+            for record in _raw_snapshot_records(provider_results, source_profile=source_profile)
         )
         raw_snapshots["records"] = raw_records
+    if source_profile == "live":
+        for filename in (
+            "extracted-strategies.json",
+            "analysis-contexts.json",
+            "scoring-inputs.json",
+        ):
+            live_payload = payloads.get(filename)
+            if live_payload is not None:
+                live_payload["records"] = []
     _refresh_analysis_context_payload(payloads, report)
-    payloads["provider-results.json"] = _provider_results_payload(report.run_id, provider_results)
+    payloads["provider-results.json"] = _provider_results_payload(
+        report.run_id,
+        provider_results,
+        source_profile=source_profile,
+    )
     return payloads
 
 
@@ -654,13 +969,19 @@ def _scrape_audit_manifest(
     offline_manifest: AuditManifest,
     config: RunConfig,
     run_id: str,
+    source_profile: str,
     generated_at: datetime,
     provider_health: tuple[ProviderHealth, ...],
     provider_results: tuple[ProviderResult[object], ...],
     audit_payloads: dict[str, JsonObject],
 ) -> AuditManifest:
     audit_dir = config.output_dir / config.run_date.isoformat() / "audit"
-    provider_payload = _provider_results_payload(run_id, provider_results)
+    live_providers = source_profile == "live"
+    provider_payload = _provider_results_payload(
+        run_id,
+        provider_results,
+        source_profile=source_profile,
+    )
     provider_artifact = AuditArtifact(
         artifact_id="provider-results",
         artifact_type="provider_result",
@@ -669,11 +990,17 @@ def _scrape_audit_manifest(
         produced_by="scrape-source-orchestration",
         sha256=json_payload_sha256(provider_payload),
         record_count=_record_count(provider_payload),
-        metadata={"source_mode": "scrape", "fixture": True},
+        metadata={
+            "source_mode": "scrape",
+            "source_profile": source_profile,
+            "fixture": source_profile == "fixture",
+            "live_providers": live_providers,
+        },
     )
     command_args = dict(offline_manifest.command_args)
     command_args["source_mode"] = "scrape"
     command_args["offline"] = False
+    command_args["live_providers"] = live_providers
     artifacts = tuple(
         _with_final_payload_hash(artifact, audit_payloads)
         for artifact in offline_manifest.artifacts
@@ -687,7 +1014,7 @@ def _scrape_audit_manifest(
                 f"{health.provider_name}:{config.run_date.isoformat()}"
                 for health in provider_health
             ),
-            "config_hash": f"scrape-fixture-{config.run_date.isoformat()}",
+            "config_hash": f"scrape-{source_profile}-{config.run_date.isoformat()}",
             "command_args": command_args,
         }
     )
@@ -724,18 +1051,26 @@ def _record_count(payload: JsonObject) -> int | None:
 def _provider_results_payload(
     run_id: str,
     provider_results: tuple[ProviderResult[object], ...],
+    *,
+    source_profile: str,
 ) -> JsonObject:
     return {
         "schema_version": "audit.provider_results.v1",
         "run_id": run_id,
         "source_mode": "scrape",
+        "source_profile": source_profile,
+        "live_providers": source_profile == "live",
         "records": [
             cast(JsonObject, result.model_dump(mode="json")) for result in provider_results
         ],
     }
 
 
-def _raw_snapshot_records(results: tuple[ProviderResult[object], ...]) -> list[JsonObject]:
+def _raw_snapshot_records(
+    results: tuple[ProviderResult[object], ...],
+    *,
+    source_profile: str,
+) -> list[JsonObject]:
     records: list[JsonObject] = []
     for result in results:
         if not result.raw_snapshot_id:
@@ -752,7 +1087,12 @@ def _raw_snapshot_records(results: tuple[ProviderResult[object], ...]) -> list[J
                     "cache_key": result.cache_key,
                     "warning_codes": [warning.code.value for warning in result.warnings],
                 },
-                "provider_metadata": {"fixture": True, "source_mode": "scrape"},
+                "provider_metadata": {
+                    "fixture": source_profile == "fixture",
+                    "live_providers": source_profile == "live",
+                    "source_mode": "scrape",
+                    "source_profile": source_profile,
+                },
             }
         )
     return records
@@ -781,6 +1121,25 @@ def _ticker_from_x_query(url: str) -> str:
         if part.startswith("$") and len(part) > 1:
             return part.removeprefix("$").upper()
     return "TSLA"
+
+
+def _html_cache(config: RunConfig) -> HtmlCache | None:
+    if config.cache_dir is None:
+        return None
+    return HtmlCache(config.cache_dir / "html")
+
+
+def _json_cache(config: RunConfig) -> ProviderCache | None:
+    if config.cache_dir is None:
+        return None
+    return ProviderCache(config.cache_dir / "json")
+
+
+def _env_value(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return None
+    return value.strip()
 
 
 _REDDIT_TICKER_CARD_HTML = """
@@ -875,4 +1234,4 @@ _CANDLECHARTS_WIDGET_ONLY_HTML = """
 """
 
 
-__all__ = ["ScrapeFixtureBundle", "build_scrape_fixture_bundle"]
+__all__ = ["ScrapeFixtureBundle", "build_live_scrape_bundle", "build_scrape_fixture_bundle"]

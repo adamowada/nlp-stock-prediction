@@ -119,6 +119,7 @@ class RunConfig(ContractModel):
     cache_dir: Path | None = None
     offline: bool = False
     source_mode: Literal["disabled", "offline", "scrape"] = "disabled"
+    live_providers: bool = False
 
 
 class TickerDiscoveryRequest(ProviderRequest):
