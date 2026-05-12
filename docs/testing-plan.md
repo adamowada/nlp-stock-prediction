@@ -159,4 +159,4 @@ joke/sarcasm risk, and no qualified strategies.
 - Selected live provider edges and the explicit live-provider scrape report path can be
   smoke-tested when credentials/configuration and network access are available; default report
   generation remains network-free.
-- Recommendation scoring has tests for both confident-trade and no-trade outcomes.
+- Recommendation scoring has tests for both qualified opportunities and reports where nothing qualifies.

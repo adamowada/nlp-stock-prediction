@@ -66,7 +66,7 @@ shape.
 - [x] CLI tests cover help, valid run parsing, invalid dates/capital, offline/fixture/cache options,
       and Phase 1's intentional run exit code.
 - [x] Provider contract tests use deterministic fake providers and verify graceful failure envelopes.
-- [x] Report-shape tests verify exactly six ticker sections, no-trade summaries, disclaimer fields,
+- [x] Report-shape tests verify exactly six ticker sections, summaries for reports where nothing qualifies, disclaimer fields,
       provider health, data freshness, audit manifest serialization, recommendation linkage, and a
       minimal Markdown section outline.
 - [x] Default tests do not require network access or credentials.

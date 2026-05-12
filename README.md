@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-Phase 3 is complete for the local V1 CLI on `feature/release-v1`, and the follow-on scrape/ML/agent slices are merged into that branch. The CLI has three explicit local modes: deterministic `--offline`, fixture-backed `--source-mode scrape`, and opt-in `--source-mode scrape --live-providers`. The live-provider path calls Reddit public pages, AP News public HTML, Candlecharts feasibility, and X recent search, then writes provider health, normalized evidence, and audit artifacts; it intentionally emits no-trade guidance until live extraction/scoring is enabled. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 3 is complete for the local V1 CLI on `feature/release-v1`, and the follow-on scrape/ML/agent slices are merged into that branch. The CLI has three explicit local modes: deterministic `--offline`, fixture-backed `--source-mode scrape`, and opt-in `--source-mode scrape --live-providers`. The live-provider path calls Reddit public pages, AP News public HTML, Candlecharts feasibility, and X recent search, then writes provider health, normalized evidence, and audit artifacts; it intentionally stays evidence-only, with no live scored predictions or recommendations, until live extraction/scoring is enabled. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 
@@ -14,7 +14,7 @@ Phase 3 is complete for the local V1 CLI on `feature/release-v1`, and the follow
 2. Retrieve recent WSB posts and daily-thread comments for each ticker.
 3. Use evidence-grounded NLP/LLM extraction to identify discussed strategies.
 4. Gather public market, news, X top relevant ticker discussion, fundamental, sector, and macro data.
-5. Generate one daily report with ticker sections, qualified trading ideas or a clear no-trade summary, provider warnings, freshness, evidence, and disclaimers.
+5. Generate one daily report with ticker sections, qualified opportunity ideas or a clear explanation when nothing qualifies, provider warnings, freshness, evidence, and disclaimers.
 
 ## Development
 

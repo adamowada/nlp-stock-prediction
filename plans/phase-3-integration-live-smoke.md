@@ -13,7 +13,7 @@ report bundle, and expose opt-in live smoke checks for provider/API/scraping edg
 and network access are configured.
 
 End of Phase 3 means the CLI is complete for local V1 use: it writes Markdown, JSON, and audit
-artifacts; handles no-trade and degraded-provider outcomes clearly; and documents the remaining
+artifacts; handles outcomes where nothing qualifies and degraded-provider outcomes clearly; and documents the remaining
 live-provider requirements. It does not mean automated brokerage execution, production hosting, or
 unqualified investment advice.
 
@@ -115,7 +115,7 @@ unqualified investment advice.
     recommendation inputs.
   - Observed discussion is clearly separated from app analysis and recommendations.
   - Recommendations cite evidence and pass risk gates.
-  - No-trade days are represented cleanly.
+  - Days with no qualified opportunities are represented cleanly.
   - Provider warnings and stale/missing data are visible in report output.
   - Educational-only, non-advice, no-auto-trading disclaimers are present.
 
@@ -292,14 +292,14 @@ Live checks remain opt-in:
   CLI smoke all passed. The offline smoke wrote Markdown, JSON, and audit artifacts to a temporary
   workspace directory that was removed after verification.
 - 2026-05-11-16-00: Started Stage 4 report quality pass. Parallel read-only audits found report JSON
-  evidence-reference provenance gaps, no-trade CLI coverage gaps, loose per-ticker Markdown section
+  evidence-reference provenance gaps, CLI coverage gaps for runs where nothing qualifies, loose per-ticker Markdown section
   assertions, missing/degraded provider visibility under-test, and doc drift that still described
   Stage 3 as active.
 - 2026-05-11-16-00: Added `DailyReport.evidence_sources` with contract validation that cited
   evidence IDs resolve when the source map is present; expanded offline fixture report JSON with
   normalized evidence provenance; made degraded provider visibility include stale market data and an
   unconfigured supplemental SEC provider; expanded Markdown candidate detail; added scoped
-  per-ticker Markdown assertions and CLI no-trade coverage.
+  per-ticker Markdown assertions and CLI coverage for runs where nothing qualifies.
 - 2026-05-11-16-01: Stage 4 verification passed with the repo venv: full pytest reported
   247 passed and 3 opt-in live skips; non-live pytest reported 247 passed and 3 deselected; e2e
   reported 4 passed; `ruff check .`, `ruff format --check .`, `mypy .`, top-level CLI help,

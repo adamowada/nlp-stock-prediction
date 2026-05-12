@@ -32,8 +32,9 @@ fixture bundle. `run --source-mode scrape` builds a fixture-backed scrape-source
 provider health, normalized evidence, ML and fundamental-agent sidecars, and provider-result audit
 artifacts. `run --source-mode scrape --live-providers` explicitly calls the wired live Reddit public
 page, AP News public HTML, Candlecharts feasibility, and X recent-search providers, records live
-provider health and normalized evidence, and emits no-trade guidance until live extraction,
-analysis, and scoring are enabled under a future plan. The X provider request shape is implemented,
+provider health and normalized evidence, and emits evidence-only output without live scored
+predictions or recommendations until live extraction, analysis, and scoring are enabled under a
+future plan. The X provider request shape is implemented,
 fixture-tested, and wired into the live scrape provider path for the six report tickers with the
 production default of 50 relevant posts per ticker.
 
@@ -293,7 +294,7 @@ remains a later milestone.
     degraded-provider-aware reporting and audit path.
   - Keep live extraction, analysis, scoring, ML sidecars, and fundamental-agent sidecars disabled
     for live provider runs until a future plan enables them against real evidence. Live provider
-    reports remain no-trade.
+    reports remain evidence-only.
   - Ensure all missing, blocked, stale, and drifted sources appear in provider health and report
     warnings.
   - Keep raw snapshots and normalized artifacts out of git unless they are curated fixtures.
@@ -339,7 +340,7 @@ remains a later milestone.
   - Start with a compact temporal model such as a 1D CNN/TCN or small transformer over OHLCV-derived
     windows, plus a logistic/gradient baseline for sanity checks.
   - Add reproducible train/evaluate commands and store model artifacts outside git by default.
-  - Add calibration metrics and no-trade thresholds so weak predictions do not become recommendations.
+  - Add calibration metrics and qualification thresholds so weak predictions do not become recommendations.
 - Files likely affected:
   - `pyproject.toml`
   - new `src/nlp_stock_prediction/ml/train.py`
@@ -424,7 +425,7 @@ remains a later milestone.
       fixture-backed scrape inputs.
 - [x] `run --source-mode scrape --live-providers` explicitly calls wired live providers, records
       provider health and normalized evidence, writes `audit/provider-results.json`, and emits
-      no-trade guidance until live extraction/scoring is enabled.
+      evidence-only output until live extraction/scoring is enabled.
 - [x] Live scraping tests are opt-in, rate-limited, and source-specific.
 - [x] ML dataset generation has leakage tests and data-quality gates.
 - [x] RTX 3090 training command records reproducible metrics and model artifact metadata.
@@ -497,7 +498,7 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
   reviewed locally, and verified before any ACP.
 - 2026-05-12-00-00: Keep live-provider scrape orchestration explicit behind
   `--source-mode scrape --live-providers`. The live path records provider evidence, health, and
-  audit artifacts, but suppresses fixture sidecars and emits no-trade guidance until live
+  audit artifacts, but suppresses fixture sidecars and emits evidence-only output until live
   extraction, analysis, and scoring are enabled intentionally.
 
 ## Progress log
@@ -557,7 +558,7 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
   environment, and the GPU/evaluation smoke commands now match the actual CLI.
 - 2026-05-12-00-00: Merged the opt-in live-provider orchestration PR into `feature/release-v1`.
   The branch now has the live scrape path for Reddit, AP News, Candlecharts, and X recent search,
-  with live normalized evidence, provider health, provider-result audit artifacts, and no-trade
+  with live normalized evidence, provider health, provider-result audit artifacts, and evidence-only
   output until live extraction/scoring is implemented.
 - 2026-05-12-00-00: Cross-checked the merged branch against active plans, source docs, and CLI
   behavior. Updated stale plan/docs language that still described live orchestration as unwired, and

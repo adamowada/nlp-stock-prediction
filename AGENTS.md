@@ -4,7 +4,7 @@
 
 This project is a TDD-first Python CLI application for generating a daily, evidence-grounded stock opportunity report for a retail trader with a small account.
 
-The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI supports deterministic `--offline`, fixture-backed `--source-mode scrape`, and explicit opt-in live provider evidence collection with `--source-mode scrape --live-providers`; live provider runs remain no-trade until live extraction/scoring is enabled. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
+The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI supports deterministic `--offline`, fixture-backed `--source-mode scrape`, and explicit opt-in live provider evidence collection with `--source-mode scrape --live-providers`; live provider runs currently collect evidence and audit metadata only, with live extraction, analysis, and scoring reserved for the next phase. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
 
 The project should favor correctness, traceability, and testability over speed of adding features. Any generated recommendation must preserve its source evidence, assumptions, risks, and confidence inputs.
 
@@ -53,7 +53,7 @@ If the final project uses a task runner, keep this section updated with the cano
   data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
   recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
   ticker false positives.
-- Any recommendation logic change must include tests for no-trade days, conflicting evidence, and at least one qualified strategy.
+- Any recommendation logic change must include tests for days with no qualified strategies, conflicting evidence, and at least one qualified strategy.
 
 ## Planning rules
 

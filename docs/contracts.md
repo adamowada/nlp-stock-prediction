@@ -16,7 +16,8 @@ frozen contract invariants.
   `--source-mode scrape`, it writes an experimental scrape-source report bundle backed by
   deterministic provider fixtures. Adding `--live-providers` to scrape mode calls configured live
   providers for evidence collection and provider health while keeping live extraction/scoring
-  disabled and emitting no-trade guidance. Without an explicit source mode, it exits with code `3`.
+  disabled and emitting evidence-only output without live scored predictions or recommendations.
+  Without an explicit source mode, it exits with code `3`.
 - No console script is frozen in the contract gate.
 - Environment variables and optional ignored `.env` files are documented in
   `docs/configuration.md`; the default offline path does not require credentials or network access.
@@ -97,7 +98,7 @@ Frozen warning codes are:
 - Reports may include `evidence_sources`; when present, every cited evidence ID in ticker sections,
   strategy clusters, analysis components, trade candidates, and score inputs must resolve to a
   normalized evidence source with provenance.
-- Reports without trade candidates must include a no-trade summary.
+- Reports without trade candidates must include a summary explaining that no qualified opportunity was found.
 - Report trade candidates must use discovered tickers, have unique candidate IDs, match the report
   disclaimer, and be referenced by exactly one matching ticker section.
 - Valid ticker discovery must include candidate records and a raw snapshot ID.
@@ -113,10 +114,10 @@ The Phase 1 harness covers:
   invocation.
 - Deterministic fake-provider protocol behavior for Reddit, X/social, news, market data,
   fundamentals, macro, and LLM extraction adapters.
-- Daily report shape, including six ticker sections, no-trade summaries, provider health, data
+- Daily report shape, including six ticker sections, summaries for reports where nothing qualifies, provider health, data
   freshness, disclaimers, audit manifests, and JSON round trips.
 - Minimal Markdown report outline, including required header, freshness, provider warnings,
-  per-ticker subsections, final qualified-strategy or no-trade section, disclaimer, and audit
+  per-ticker subsections, final qualified-strategy section or a section explaining that nothing qualified, disclaimer, and audit
   artifact sections.
 
 ## Fixture Shape

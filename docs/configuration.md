@@ -145,8 +145,8 @@ gates when that sidecar is present; ML output cannot qualify a trade by itself.
 The experimental fixture-backed `--source-mode scrape` path includes a TSLA ML sidecar so Markdown,
 JSON, and audit payloads exercise the integration shape without requiring a local model artifact.
 The explicit live-provider scrape path suppresses fixture ML, fundamental-agent, extraction, and
-scoring sidecars for now; it records live provider evidence and emits no-trade guidance until live
-analysis wiring is enabled under a future plan.
+scoring sidecars for now; it records live provider evidence without emitting live scored predictions
+or recommendations until live analysis wiring is enabled under a future plan.
 
 Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
 access, or local training data. CUDA/RTX metadata is detected only when available and when the local

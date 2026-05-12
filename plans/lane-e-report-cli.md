@@ -41,7 +41,7 @@ Relevant files:
 
 - Changes: Add deterministic report builder, Markdown renderer, JSON renderer, and audit writer.
 - Files likely affected: `src/nlp_stock_prediction/pipeline.py`, `src/nlp_stock_prediction/reporting/`.
-- Verification: JSON validates as `DailyReport`; Markdown includes required header, six ticker sections, final strategies/no-trade, disclaimer, and audit artifacts.
+- Verification: JSON validates as `DailyReport`; Markdown includes required header, six ticker sections, final strategies or a section explaining that nothing qualified, disclaimer, and audit artifacts.
 
 ### Milestone 3: CLI Wiring
 

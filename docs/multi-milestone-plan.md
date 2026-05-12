@@ -10,7 +10,7 @@ The v1 posture is exploratory but auditable. The app may surface speculative sto
 
 This roadmap is organized for git worktrees and Codex subagents. Contracts were settled single-threaded first; implementation then happened in parallel lanes from the same frozen contract commit; Phase 3 now returns to a coordinated integration and hardening flow.
 
-Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase 2 parallel implementation, Phase 3 local V1 acceptance, and the follow-on scrape/ML/agent integration slices are complete on `feature/release-v1`. The CLI generates deterministic offline Markdown, JSON, and audit artifacts; `--source-mode scrape` generates fixture-backed provider/audit artifacts; and `--source-mode scrape --live-providers` explicitly calls live Reddit/AP/Candlecharts/X providers for evidence collection while preserving no-trade guidance until live extraction/scoring is enabled. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record and `plans/scraping-ml-agent-analysis.md` for the follow-on scrape/ML/agent record.
+Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase 2 parallel implementation, Phase 3 local V1 acceptance, and the follow-on scrape/ML/agent integration slices are complete on `feature/release-v1`. The CLI generates deterministic offline Markdown, JSON, and audit artifacts; `--source-mode scrape` generates fixture-backed provider/audit artifacts; and `--source-mode scrape --live-providers` explicitly calls live Reddit/AP/Candlecharts/X providers for evidence collection while staying evidence-only, with no live scored predictions or recommendations, until live extraction/scoring is enabled. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record and `plans/scraping-ml-agent-analysis.md` for the follow-on scrape/ML/agent record.
 
 ## Phase Status
 
@@ -95,7 +95,7 @@ Shared behavior:
 - Treat ticker discovery as valid only when the Devvit ticker-card parser produces exactly six unique tickers by first-seen order.
 - Reject unsupported strategy and recommendation claims unless they cite normalized evidence records.
 - Reject qualified recommendations that fail risk gates, fail score gates, or do not meet their configured score threshold.
-- Keep report sections, recommendation IDs, candidate tickers, disclaimers, and no-trade summaries internally consistent.
+- Keep report sections, recommendation IDs, candidate tickers, disclaimers, and summaries for reports where nothing qualifies internally consistent.
 - Degrade gracefully when providers fail and surface failures in report warnings or logs.
 
 ## Parallel Implementation Lanes
@@ -175,7 +175,7 @@ Deliverables:
 - Macro context summarizes whether current macro conditions support or conflict with each strategy horizon.
 - Scoring covers Reddit strength, social/news catalyst strength, technical alignment, company fundamentals, sector context, macro context, liquidity/risk suitability, and contradiction penalties.
 - Default risk controls: no margin, no naked options, long shares or defined-risk options only, max 1% account risk per idea when account capital is provided, and percentage-only sizing when capital is omitted.
-- Emit zero or more confident strategies; no-trade days are valid outcomes.
+- Emit zero or more confident strategies; days with no qualified strategies are valid outcomes.
 
 ### Lane E: Report Rendering, Audit Artifacts, And CLI Orchestration
 
@@ -264,9 +264,9 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/live-aapl 
 - Full fixture-backed report generation produces Markdown, JSON, and audit artifacts.
 - Live API and live scraping tests are opt-in, marked, and implemented by their provider/reliability lanes.
 - Provider failures degrade gracefully through actual provider adapters and are visible in reports or logs.
-- Recommendation scoring has fixture-backed no-trade, conflicting-evidence, and qualified-strategy outcomes.
+- Recommendation scoring has fixture-backed outcomes where nothing qualifies, conflicting-evidence, and qualified-strategy outcomes.
 - The explicit live-provider scrape path preserves provider health, warnings, normalized evidence,
-  and audit artifacts, and remains no-trade until live extraction/scoring is enabled.
+  and audit artifacts, and remains evidence-only until live extraction/scoring is enabled.
 - CLI configuration, report quality, failure drills, and final clean-checkout verification meet
   `plans/phase-3-integration-live-smoke.md`.
 
