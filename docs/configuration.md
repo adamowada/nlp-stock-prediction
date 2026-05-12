@@ -188,8 +188,8 @@ Transformers, Hugging Face access, or CUDA.
 The experimental fixture-backed `--source-mode scrape` path includes a TSLA ML sidecar so Markdown,
 JSON, and audit payloads exercise the integration shape without requiring a local model artifact.
 The explicit live-provider scrape path suppresses fixture ML, fundamental-agent, extraction, and
-scoring sidecars for now; it records live provider evidence while live analysis wiring remains a
-future-plan item.
+scoring sidecars for now; it records live provider evidence without generating live
+recommendations.
 
 ### TimesFM Inference Adapter
 
@@ -274,6 +274,29 @@ accuracy, interval coverage when full predictions are available, baseline metric
 and `suitable_for_scoring`. Underperforming, insufficient, or stale evaluations are marked `weak`;
 later report/scoring integration must not treat weak or unevaluated TimesFM artifacts as strong
 signals.
+
+### TimesFM Report Attachment
+
+Stage 6 adds explicit report attachment for evaluated TimesFM artifacts. Use `--ml-artifact` with a
+Stage 5 `evaluation.json` file to attach a TimesFM technical-analysis sidecar to the matching
+ticker section:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/timesfm-eval-smoke/evaluation.json
+```
+
+The report keeps deterministic technical indicators separate from TimesFM interpretation. Markdown
+shows the TimesFM direction, horizon, probability proxy, confidence, status, model hash, expected
+return, interval width, and limitations. `report.json` preserves the `TechnicalMlSignal` sidecar,
+including model/dataset hashes, source artifact hash, evaluation status, suitability reasons,
+baseline metrics, and latest evaluation record. The audit bundle adds `audit/ml-artifacts.json`
+with the full TimesFM evaluation payload and refreshes `audit/analysis-contexts.json` so the sidecar
+is reproducible from report artifacts.
+
+Weak, stale, or unavailable TimesFM artifacts remain visible as sidecars but are not promoted to
+strong signals. Existing offline and scrape fixture reports remain deterministic unless
+`--ml-artifact` is provided, and the live-provider scrape path still suppresses app analysis unless
+a later phase explicitly changes that policy.
 
 Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
 access, or local training data. CUDA/RTX metadata is detected only when available and when the local

@@ -27,6 +27,7 @@ Configuration:
   Offline runs are deterministic and do not use network providers.
   Scrape source mode uses compliance-aware provider adapters with deterministic fixtures by default.
   Add --live-providers with --source-mode scrape to call configured live providers.
+  Add --ml-artifact to attach an evaluated local TimesFM technical-analysis sidecar.
   A local .env file is loaded automatically without overriding exported shell variables.
   Pass --offline to generate the deterministic fixture-backed report bundle.
   Keep provider credentials in environment variables or ignored local .env files;
@@ -117,6 +118,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_parser.add_argument(
+        "--ml-artifact",
+        type=Path,
+        help=(
+            "Optional evaluated local TimesFM artifact to attach as a technical-analysis sidecar; "
+            "it does not enable trading or bypass evidence/risk gates."
+        ),
+    )
+    run_parser.add_argument(
         "--source-mode",
         choices=("offline", "scrape"),
         default=None,
@@ -158,6 +167,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         risk_profile=RiskProfile(args.risk_profile),
         fixture_dir=args.fixture_dir,
         cache_dir=args.cache_dir,
+        ml_artifact=args.ml_artifact,
         offline=args.offline,
         source_mode=source_mode,
         live_providers=args.live_providers,

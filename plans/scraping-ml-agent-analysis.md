@@ -33,8 +33,7 @@ provider health, normalized evidence, ML and fundamental-agent sidecars, and pro
 artifacts. `run --source-mode scrape --live-providers` explicitly calls the wired live Reddit public
 page, AP News public HTML, Candlecharts feasibility, and X recent-search providers, records live
 provider health and normalized evidence, and emits evidence-only output without live scored
-predictions or recommendations until live extraction, analysis, and scoring are enabled under a
-future plan. The X provider request shape is implemented,
+predictions or recommendations. The X provider request shape is implemented,
 fixture-tested, and wired into the live scrape provider path for the six report tickers with the
 production default of 50 relevant posts per ticker.
 
@@ -257,8 +256,8 @@ Integration discipline:
 
 ### Milestone 6: X API Relevant Search
 
-Status: implemented and wired into the opt-in live scrape provider path; live extraction, analysis,
-and scoring remain later milestones.
+Status: implemented and wired into the opt-in live scrape provider path; live-provider runs remain
+evidence-only and do not generate live recommendations.
 
 - Changes:
   - Use the official X API v2 recent-search endpoint instead of browser scraping X search pages.
@@ -292,9 +291,8 @@ and scoring remain later milestones.
     `run --source-mode scrape --live-providers`.
   - Wire Reddit, AP News, Candlecharts, and X API recent-search provider results into one
     degraded-provider-aware reporting and audit path.
-  - Keep live extraction, analysis, scoring, ML sidecars, and fundamental-agent sidecars disabled
-    for live provider runs until a future plan enables them against real evidence. Live provider
-    reports remain evidence-only.
+  - Keep live-provider runs evidence-only: fixture ML sidecars, fundamental-agent sidecars, and
+    generated recommendations are suppressed for that mode.
   - Ensure all missing, blocked, stale, and drifted sources appear in provider health and report
     warnings.
   - Keep raw snapshots and normalized artifacts out of git unless they are curated fixtures.
@@ -425,7 +423,7 @@ and scoring remain later milestones.
       fixture-backed scrape inputs.
 - [x] `run --source-mode scrape --live-providers` explicitly calls wired live providers, records
       provider health and normalized evidence, writes `audit/provider-results.json`, and emits
-      evidence-only output while live extraction, analysis, and scoring remain future-plan items.
+      evidence-only output without generating live recommendations.
 - [x] Live scraping tests are opt-in, rate-limited, and source-specific.
 - [x] ML dataset generation has leakage tests and data-quality gates.
 - [x] RTX 3090 training command records reproducible metrics and model artifact metadata.
@@ -498,8 +496,7 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
   reviewed locally, and verified before any ACP.
 - 2026-05-12-00-00: Keep live-provider scrape orchestration explicit behind
   `--source-mode scrape --live-providers`. The live path records provider evidence, health, and
-  audit artifacts, but suppresses fixture sidecars and emits evidence-only output until live
-  extraction, analysis, and scoring are enabled intentionally.
+  audit artifacts, but suppresses fixture sidecars and generated recommendations.
 
 ## Progress log
 
@@ -559,7 +556,7 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
 - 2026-05-12-00-00: Merged the opt-in live-provider orchestration PR into `feature/release-v1`.
   The branch now has the live scrape path for Reddit, AP News, Candlecharts, and X recent search,
   with live normalized evidence, provider health, provider-result audit artifacts, and evidence-only
-  output while live extraction, analysis, and scoring remain future-plan items.
+  output without generating live recommendations.
 - 2026-05-12-00-00: Cross-checked the merged branch against active plans, source docs, and CLI
   behavior. Updated stale plan/docs language that still described live orchestration as unwired, and
   narrowed the no-mode CLI error to point users at the three explicit local modes.

@@ -123,7 +123,7 @@ unqualified investment advice.
 
 - Changes: deliberately exercise malformed, missing, stale, conflicting, unsupported, and sarcastic
   input scenarios.
-- Files likely affected: provider fixtures, reliability tests, extraction/scoring tests, e2e tests,
+- Files likely affected: provider fixtures, reliability tests, extraction and scoring tests, e2e tests,
   docs.
 - Done when tests cover:
   - Malformed Reddit ticker-card HTML.

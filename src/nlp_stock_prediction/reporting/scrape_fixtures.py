@@ -707,7 +707,11 @@ def _scrape_report(
     command_args["live_providers"] = live_providers
     report = offline_bundle.report
     fundamental_agent_result = _fundamental_agent_result_from_results(provider_results)
-    ml_signal = _fixture_ml_signal(generated_at) if apply_fixture_sidecars else None
+    ml_signal = (
+        _fixture_ml_signal(generated_at)
+        if apply_fixture_sidecars and config.ml_artifact is None
+        else None
+    )
     summary_label = (
         "live Reddit/AP public HTML providers, the Candlecharts feasibility probe, and "
         "the X recent-search API"
@@ -757,7 +761,7 @@ def _scrape_report(
                     "provider_result_artifact": "provider-results",
                     "ml_signal": (
                         "fixture_sidecar"
-                        if apply_fixture_sidecars and section.ticker == "TSLA"
+                        if ml_signal is not None and section.ticker == "TSLA"
                         else None
                     ),
                     "fundamental_agent": (

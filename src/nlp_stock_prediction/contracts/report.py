@@ -96,6 +96,7 @@ class AuditArtifact(ContractModel):
         "markdown_report",
         "json_report",
         "provider_result",
+        "ml_artifact",
     ]
     path: NonEmptyStr
     created_at: AwareDatetime

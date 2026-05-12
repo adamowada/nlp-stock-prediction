@@ -61,6 +61,10 @@ class TechnicalMlSignal(ContractModel):
     signal: AnalysisSignal
     status: Literal["usable", "weak", "stale", "conflicting", "unavailable"] = "usable"
     freshness_status: FreshnessStatus = FreshnessStatus.UNKNOWN
+    expected_return: float | None = None
+    forecast_interval_width: float | None = Field(default=None, ge=0.0)
+    source_artifact_id: str | None = None
+    source_artifact_sha256: str | None = None
     validation_accuracy: Confidence | None = None
     validation_brier_score: float | None = Field(default=None, ge=0.0, le=1.0)
     warning_ids: tuple[str, ...] = Field(default_factory=tuple)

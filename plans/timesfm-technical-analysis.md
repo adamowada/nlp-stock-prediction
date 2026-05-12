@@ -177,6 +177,8 @@ Status: implemented.
 
 ### Stage 6: Technical Analysis Integration
 
+Status: implemented.
+
 - Changes:
   - Extend the existing `TechnicalMlSignal` sidecar or add a TimesFM-specific sidecar while preserving
     the current report contract style.
@@ -184,13 +186,15 @@ Status: implemented.
   - Surface the signal in Markdown, JSON, and audit artifacts with model provenance and limitations.
   - Preserve separation between deterministic technical indicators and ML interpretation.
 - Files likely affected:
+  - `src/nlp_stock_prediction/cli.py`
+  - `src/nlp_stock_prediction/pipeline.py`
+  - `src/nlp_stock_prediction/contracts/analysis.py`
+  - `src/nlp_stock_prediction/contracts/providers.py`
+  - `src/nlp_stock_prediction/contracts/report.py`
   - `src/nlp_stock_prediction/analysis/ml_signal.py`
-  - `src/nlp_stock_prediction/analysis/technical.py`
   - `src/nlp_stock_prediction/reporting/markdown.py`
-  - `src/nlp_stock_prediction/reporting/json.py`
-  - `src/nlp_stock_prediction/reporting/audit.py`
-  - `tests/test_lane_d_analysis.py`
-  - `tests/test_lane_e_report_rendering.py`
+  - `tests/test_timesfm_report_integration.py`
+  - `tests/test_phase1_cli_contracts.py`
 - Done when:
   - Markdown includes a concise TimesFM technical signal with horizon, forecast direction, confidence,
     uncertainty, model hash, and limitations.
@@ -267,7 +271,7 @@ Status: implemented.
 - [x] Local OHLCV input is validated for freshness, ordering, sufficient history, and leakage risks.
 - [x] Training writes adapter, metadata, metrics, hashes, package versions, and hardware metadata.
 - [x] Evaluation compares TimesFM to simple baselines and records suitability flags.
-- [ ] Report integration preserves model provenance, dataset provenance, confidence inputs, warnings,
+- [x] Report integration preserves model provenance, dataset provenance, confidence inputs, warnings,
       and limitations.
 - [ ] TimesFM output cannot create a standalone recommendation or bypass evidence/risk gates.
 - [ ] Documentation explains setup, commands, artifacts, limitations, and troubleshooting.
@@ -287,7 +291,7 @@ mypy .
 Focused TimesFM deterministic checks:
 
 ```sh
-python -m pytest tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py tests/test_timesfm_evaluation.py
+python -m pytest tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py tests/test_timesfm_evaluation.py tests/test_timesfm_report_integration.py
 ```
 
 Opt-in local Windows CUDA checks:
@@ -299,6 +303,7 @@ python -m nlp_stock_prediction.ml.timesfm.train --synthetic --ticker TSLA --devi
 python -m nlp_stock_prediction.ml.timesfm.evaluate --synthetic --ticker TSLA --model-dir artifacts/ml/timesfm-train-smoke --device cuda --output artifacts/ml/timesfm-eval-smoke/evaluation.json --max-windows 1 --min-evaluation-windows 1
 python -m nlp_stock_prediction.ml.timesfm.train --ticker TSLA --csv data/ml/TSLA.csv --output-dir artifacts/ml/TSLA/timesfm --device cuda --epochs 1 --max-steps 20
 python -m nlp_stock_prediction.ml.timesfm.evaluate --ticker TSLA --csv data/ml/TSLA.csv --model-dir artifacts/ml/TSLA/timesfm --output artifacts/ml/TSLA/timesfm/evaluation.json
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/timesfm-eval-smoke/evaluation.json
 ```
 
 Report smoke with explicit model artifact:
@@ -388,3 +393,16 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   29 passed; full pytest reported 356 passed and 7 opt-in live skips; non-live pytest reported
   356 passed and 7 deselected; `ruff check . --no-cache`, `ruff format --check .`, `mypy .`, and
   `git diff --check` passed.
+- 2026-05-12-00-00: Implemented Stage 6 with explicit `--ml-artifact` report attachment for
+  evaluated TimesFM artifacts, conversion into the conservative `TechnicalMlSignal` sidecar,
+  TimesFM-specific Markdown rendering, JSON provenance fields, and a new `audit/ml-artifacts.json`
+  payload that preserves the full evaluation artifact.
+- 2026-05-12-00-00: Stage 6 report integration preserves the existing fixture posture: default
+  offline and scrape reports remain unchanged without `--ml-artifact`, explicit TimesFM artifacts
+  attach only to the matching ticker's technical-analysis section, and scoring inputs are left
+  unchanged for Stage 7 guardrail work.
+- 2026-05-12-00-00: Stage 6 verification passed: focused TimesFM tests reported 35 passed; focused
+  TimesFM report integration tests reported 6 passed; full pytest reported 362 passed and 7 opt-in
+  live skips; non-live pytest reported 362 passed and 7 deselected; `ruff check . --no-cache`,
+  `ruff format --check .`, `mypy .`, `git diff --check`, doc-drift wording scan, and the
+  `--ml-artifact` report smoke against `artifacts/ml/timesfm-eval-smoke/evaluation.json` passed.

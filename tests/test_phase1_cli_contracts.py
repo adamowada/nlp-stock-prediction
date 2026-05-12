@@ -42,6 +42,7 @@ def test_parser_accepts_minimal_run_command_and_defaults() -> None:
     assert args.risk_profile == RiskProfile.EXPLORATORY.value
     assert args.fixture_dir is None
     assert args.cache_dir is None
+    assert args.ml_artifact is None
     assert args.offline is False
     assert args.source_mode is None
     assert args.live_providers is False
@@ -134,6 +135,8 @@ def test_run_help_documents_stage2_configuration_surface() -> None:
     assert "built-in deterministic fixtures" in result.stdout
     assert "--cache-dir" in result.stdout
     assert "provider cache directory" in result.stdout
+    assert "--ml-artifact" in result.stdout
+    assert "technical-analysis sidecar" in result.stdout
     assert "--source-mode" in result.stdout
     assert "scrape" in result.stdout
     assert "--offline" in result.stdout
@@ -310,6 +313,7 @@ def test_parser_rejects_unknown_risk_profile(capsys: pytest.CaptureFixture[str])
 def test_parser_accepts_fixture_cache_and_offline_options(tmp_path: Path) -> None:
     fixture_dir = tmp_path / "fixtures"
     cache_dir = tmp_path / "cache"
+    ml_artifact = tmp_path / "evaluation.json"
 
     args = build_parser().parse_args(
         [
@@ -322,12 +326,15 @@ def test_parser_accepts_fixture_cache_and_offline_options(tmp_path: Path) -> Non
             str(fixture_dir),
             "--cache-dir",
             str(cache_dir),
+            "--ml-artifact",
+            str(ml_artifact),
             "--offline",
         ]
     )
 
     assert args.fixture_dir == fixture_dir
     assert args.cache_dir == cache_dir
+    assert args.ml_artifact == ml_artifact
     assert args.offline is True
     assert args.source_mode is None
 
@@ -397,6 +404,7 @@ def test_build_run_config_constructs_public_contract(tmp_path: Path) -> None:
     output_dir = tmp_path / "reports"
     fixture_dir = tmp_path / "fixtures"
     cache_dir = tmp_path / "cache"
+    ml_artifact = tmp_path / "evaluation.json"
     args = build_parser().parse_args(
         [
             "run",
@@ -412,6 +420,8 @@ def test_build_run_config_constructs_public_contract(tmp_path: Path) -> None:
             str(fixture_dir),
             "--cache-dir",
             str(cache_dir),
+            "--ml-artifact",
+            str(ml_artifact),
             "--offline",
         ]
     )
@@ -425,6 +435,7 @@ def test_build_run_config_constructs_public_contract(tmp_path: Path) -> None:
     assert config.risk_profile is RiskProfile.BALANCED
     assert config.fixture_dir == fixture_dir
     assert config.cache_dir == cache_dir
+    assert config.ml_artifact == ml_artifact
     assert config.offline is True
     assert config.source_mode == "offline"
     assert config.live_providers is False
