@@ -437,3 +437,6 @@ Optional CUDA verification:
 - 2026-05-12: Implemented Stage 2 `raw_timesfm_screen` with capped validation-window raw base
   TimesFM evaluation, baseline-relative kill/promote decisions, raw evaluation artifacts, and
   fake-predictor unit coverage so default tests stay offline and CUDA-free.
+- 2026-05-12: Implemented Stage 3 `adapter_smoke` with one cheap LoRA smoke recipe for raw-stage
+  survivors, validation-window adapter-vs-raw lift gates, reusable smoke artifacts, docs updates,
+  and fake-runner tests for promotion, kill, failure, skip, and reuse paths.

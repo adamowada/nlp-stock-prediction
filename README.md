@@ -47,6 +47,16 @@ Single-ticker CSV workflow:
 .\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
 ```
 
+Staged six-ticker signal funnel:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda --profile walkaway
+```
+
+The funnel writes an incremental leaderboard, runs cheap baselines before raw TimesFM, and runs a
+cheap adapter smoke only for raw TimesFM survivors. Use `--profile quick` to stop after the raw
+TimesFM screen.
+
 Focused six-ticker HPO:
 
 ```powershell

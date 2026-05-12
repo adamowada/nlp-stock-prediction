@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import time
 from collections.abc import Callable, Sequence
@@ -36,7 +37,7 @@ from nlp_stock_prediction.ml.train import load_price_bars_csv
 
 DEFAULT_OUTPUT_ROOT = Path("artifacts/ml/timesfm-funnel")
 DEFAULT_DATA_DIR = Path("data/ml/wsb_10y")
-IMPLEMENTED_STAGES = ("data_check", "baseline_screen", "raw_timesfm_screen")
+IMPLEMENTED_STAGES = ("data_check", "baseline_screen", "raw_timesfm_screen", "adapter_smoke")
 FUNNEL_STAGES = (
     "data_check",
     "baseline_screen",
@@ -177,13 +178,33 @@ RawTimesFmPredictor = Callable[
 ]
 
 
+class _AdapterSmokePredictionBatch(ContractModel):
+    model_id: str | None = None
+    model_revision: str | None = None
+    adapter_sha256: str | None = None
+    training_metadata_path: str | None = None
+    validation_mean_loss: float | None = Field(default=None, ge=0.0)
+    point_forecasts: tuple[tuple[float, ...], ...]
+    full_predictions: tuple[tuple[tuple[float, ...], ...], ...] = Field(default_factory=tuple)
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+AdapterSmokeRunner = Callable[
+    [TimesFmDataset, Sequence[TimesFmWindow], Path, Path, argparse.Namespace],
+    _AdapterSmokePredictionBatch,
+]
+
+
 def run_signal_funnel(
     args: argparse.Namespace,
     *,
     raw_predictor: RawTimesFmPredictor | None = None,
+    adapter_smoke_runner: AdapterSmokeRunner | None = None,
 ) -> int:
     """Run the implemented signal-funnel stages and write manifest/leaderboard artifacts."""
 
+    if args.stop_after is None:
+        args.stop_after = _default_stop_after_for_profile(args.profile)
     symbols = _parse_symbols(args.symbols)
     as_of = date.fromisoformat(args.as_of)
     start = as_of - timedelta(days=365 * args.years)
@@ -273,6 +294,25 @@ def run_signal_funnel(
         )
         rows.append(raw_row)
         manifest["records"].append(raw_row.model_dump(mode="json"))
+        _write_signal_funnel_outputs(output_root, manifest, rows)
+        if _should_stop_after("raw_timesfm_screen", args.stop_after):
+            continue
+        print(f"{symbol}: adapter_smoke")
+        adapter_row = _run_adapter_smoke(
+            symbol,
+            policy,
+            data_check_row=row,
+            raw_row=raw_row,
+            args=args,
+            data_dir=data_dir,
+            output_root=output_root,
+            as_of=as_of,
+            run_id=run_id,
+            created_at=created_at,
+            adapter_smoke_runner=adapter_smoke_runner,
+        )
+        rows.append(adapter_row)
+        manifest["records"].append(adapter_row.model_dump(mode="json"))
         _write_signal_funnel_outputs(output_root, manifest, rows)
 
     return 0 if all(row.status != "failed" for row in rows) else 1
@@ -758,22 +798,41 @@ def _raw_timesfm_records(
     windows: Sequence[TimesFmWindow],
     prediction_batch: _RawTimesFmPredictionBatch,
 ) -> tuple[_RawTimesFmRecord, ...]:
-    if len(prediction_batch.point_forecasts) != len(windows):
+    return _forecast_records(
+        windows,
+        point_forecasts=prediction_batch.point_forecasts,
+        full_predictions=prediction_batch.full_predictions,
+        label="raw TimesFM",
+    )
+
+
+def _forecast_records(
+    windows: Sequence[TimesFmWindow],
+    *,
+    point_forecasts: Sequence[Sequence[float]],
+    full_predictions: Sequence[Sequence[Sequence[float]]] = (),
+    label: str,
+) -> tuple[_RawTimesFmRecord, ...]:
+    if len(point_forecasts) != len(windows):
         raise ValueError(
-            "raw TimesFM prediction count does not match validation-window count: "
-            f"{len(prediction_batch.point_forecasts)}!={len(windows)}"
+            f"{label} prediction count does not match validation-window count: "
+            f"{len(point_forecasts)}!={len(windows)}"
         )
-    full_predictions = _aligned_full_predictions(prediction_batch, window_count=len(windows))
+    aligned_full_predictions = _aligned_full_predictions(
+        full_predictions,
+        window_count=len(windows),
+        label=label,
+    )
     records: list[_RawTimesFmRecord] = []
     for window, point_forecast, full_prediction in zip(
         windows,
-        prediction_batch.point_forecasts,
-        full_predictions,
+        point_forecasts,
+        aligned_full_predictions,
         strict=True,
     ):
         if len(point_forecast) != window.horizon_length:
             raise ValueError(
-                "raw TimesFM point forecast length does not match horizon length: "
+                f"{label} point forecast length does not match horizon length: "
                 f"{len(point_forecast)}!={window.horizon_length}"
             )
         actual_final = window.future_values[-1]
@@ -807,18 +866,21 @@ def _raw_timesfm_records(
 
 
 def _aligned_full_predictions(
-    prediction_batch: _RawTimesFmPredictionBatch,
+    full_predictions: Sequence[Sequence[Sequence[float]]],
     *,
     window_count: int,
+    label: str,
 ) -> tuple[tuple[tuple[float, ...], ...], ...]:
-    if not prediction_batch.full_predictions:
+    if not full_predictions:
         return tuple(() for _ in range(window_count))
-    if len(prediction_batch.full_predictions) != window_count:
+    if len(full_predictions) != window_count:
         raise ValueError(
-            "raw TimesFM full-prediction count does not match validation-window count: "
-            f"{len(prediction_batch.full_predictions)}!={window_count}"
+            f"{label} full-prediction count does not match validation-window count: "
+            f"{len(full_predictions)}!={window_count}"
         )
-    return prediction_batch.full_predictions
+    return tuple(
+        tuple(tuple(row) for row in window_predictions) for window_predictions in full_predictions
+    )
 
 
 def _raw_timesfm_metrics(records: Sequence[_RawTimesFmRecord]) -> _RawTimesFmMetrics:
@@ -971,6 +1033,575 @@ def _write_raw_timesfm_artifact(
     }
     write_manifest(artifact_path, payload)
     return artifact_path
+
+
+def _run_adapter_smoke(
+    symbol: str,
+    policy: TickerPolicy,
+    *,
+    data_check_row: SignalFunnelLeaderboardRow,
+    raw_row: SignalFunnelLeaderboardRow,
+    args: argparse.Namespace,
+    data_dir: Path,
+    output_root: Path,
+    as_of: date,
+    run_id: str,
+    created_at: str,
+    adapter_smoke_runner: AdapterSmokeRunner | None,
+) -> SignalFunnelLeaderboardRow:
+    started_at = time.perf_counter()
+    if data_check_row.status == "failed":
+        return _adapter_smoke_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            status="skipped",
+            decision="stop",
+            kill_reason="data_check_failed",
+            runtime_seconds=_elapsed_seconds(started_at),
+            notes="adapter_smoke skipped because data_check failed",
+        )
+    if args.dry_run:
+        return _adapter_smoke_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            status="skipped",
+            decision="audit_only",
+            kill_reason="dry_run_no_adapter_training",
+            runtime_seconds=_elapsed_seconds(started_at),
+            notes="adapter_smoke requires real OHLCV rows and a TimesFM training stack",
+        )
+    if (
+        raw_row.stage != "raw_timesfm_screen"
+        or raw_row.status != "passed"
+        or raw_row.decision != "run_adapter_smoke"
+        or not raw_row.selected_for_next_stage
+    ):
+        return _adapter_smoke_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            status="skipped",
+            decision="audit_only" if raw_row.status != "killed" else "stop",
+            kill_reason="raw_timesfm_not_selected",
+            runtime_seconds=_elapsed_seconds(started_at),
+            raw_timesfm_rmse=raw_row.raw_timesfm_rmse,
+            notes=f"adapter_smoke skipped because raw_timesfm_screen status={raw_row.status}",
+        )
+
+    reusable_row = _load_reusable_adapter_smoke_row(
+        output_root,
+        run_id=run_id,
+        created_at=created_at,
+        as_of=as_of,
+        symbol=symbol,
+        policy=policy,
+        args=args,
+        data_check_row=data_check_row,
+        raw_row=raw_row,
+        runtime_seconds=_elapsed_seconds(started_at),
+    )
+    if reusable_row is not None:
+        return reusable_row
+
+    try:
+        csv_path = data_dir / f"{symbol}.csv"
+        bars = load_price_bars_csv(csv_path, ticker=symbol)
+        dataset = build_timesfm_dataset(
+            symbol,
+            bars,
+            config=TimesFmDatasetConfig(
+                context_length=args.context_length,
+                horizon_length=args.horizon_length,
+                target_field=args.target_field,
+                as_of=as_of,
+                max_latest_bar_age_days=args.max_latest_bar_age_days,
+            ),
+        )
+        windows = _screen_windows(dataset, max_windows=args.screen_max_windows)
+        runner = adapter_smoke_runner or _run_adapter_smoke_model
+        smoke_dir = output_root / "adapter_smoke" / symbol / "smoke_lora"
+        prediction_batch = runner(dataset, windows, csv_path, smoke_dir, args)
+        records = _forecast_records(
+            windows,
+            point_forecasts=prediction_batch.point_forecasts,
+            full_predictions=prediction_batch.full_predictions,
+            label="adapter smoke",
+        )
+        metrics = _raw_timesfm_metrics(records)
+        baseline_metrics = _baseline_metrics(windows)
+        best_rmse = min(metric.rmse for metric in baseline_metrics)
+        best_directional_accuracy = max(metric.directional_accuracy for metric in baseline_metrics)
+        rmse_ratio = _safe_ratio(metrics.rmse, best_rmse)
+        directional_delta = round(metrics.directional_accuracy - best_directional_accuracy, 8)
+        adapter_rmse_ratio_vs_raw = (
+            _safe_ratio(metrics.rmse, raw_row.raw_timesfm_rmse)
+            if raw_row.raw_timesfm_rmse is not None
+            else None
+        )
+        adapter_directional_delta_vs_raw = (
+            round(metrics.directional_accuracy - raw_row.directional_accuracy, 8)
+            if raw_row.directional_accuracy is not None
+            else None
+        )
+        status, decision, kill_reason, selected_for_next_stage = _adapter_stage_decision(
+            sample_count=metrics.sample_count,
+            adapter_rmse=metrics.rmse,
+            raw_rmse=raw_row.raw_timesfm_rmse,
+            adapter_rmse_ratio_vs_raw=adapter_rmse_ratio_vs_raw,
+            adapter_directional_delta_vs_raw=adapter_directional_delta_vs_raw,
+            rmse_ratio_vs_best_baseline=rmse_ratio,
+            directional_delta_vs_best_baseline=directional_delta,
+            args=args,
+        )
+        artifact_path = _write_adapter_smoke_artifact(
+            output_root,
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            dataset=dataset,
+            status=status,
+            decision=decision,
+            kill_reason=kill_reason,
+            prediction_batch=prediction_batch,
+            metrics=metrics,
+            baseline_metrics=baseline_metrics,
+            raw_row=raw_row,
+            rmse_ratio=rmse_ratio,
+            directional_delta=directional_delta,
+            adapter_rmse_ratio_vs_raw=adapter_rmse_ratio_vs_raw,
+            adapter_directional_delta_vs_raw=adapter_directional_delta_vs_raw,
+            records=records,
+            args=args,
+        )
+        return _adapter_smoke_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            status=status,
+            decision=decision,
+            kill_reason=kill_reason,
+            runtime_seconds=_elapsed_seconds(started_at),
+            model_id=prediction_batch.model_id or args.model_id,
+            model_revision=prediction_batch.model_revision or args.model_revision,
+            adapter_sha256=prediction_batch.adapter_sha256,
+            evaluation_artifact=str(artifact_path),
+            training_metadata=prediction_batch.training_metadata_path,
+            rmse=metrics.rmse,
+            best_baseline_rmse=best_rmse,
+            rmse_ratio_vs_best_baseline=rmse_ratio,
+            directional_accuracy=metrics.directional_accuracy,
+            best_baseline_directional_accuracy=best_directional_accuracy,
+            directional_delta_vs_best_baseline=directional_delta,
+            raw_timesfm_rmse=raw_row.raw_timesfm_rmse,
+            adapter_rmse_ratio_vs_raw=adapter_rmse_ratio_vs_raw,
+            adapter_directional_delta_vs_raw=adapter_directional_delta_vs_raw,
+            validation_mean_loss=prediction_batch.validation_mean_loss,
+            interval_coverage=metrics.interval_coverage,
+            mean_interval_width=metrics.mean_interval_width,
+            calibration_proxy=metrics.calibration_proxy,
+            selected_for_next_stage=selected_for_next_stage,
+            notes=(
+                f"sample_count={metrics.sample_count}; "
+                f"backend={prediction_batch.runtime_metadata.get('backend', 'unknown')}"
+            ),
+        )
+    except Exception as exc:
+        return _adapter_smoke_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            status="failed",
+            decision="stop",
+            kill_reason=str(exc),
+            runtime_seconds=_elapsed_seconds(started_at),
+            raw_timesfm_rmse=raw_row.raw_timesfm_rmse,
+            notes="adapter_smoke failed before survivor HPO could run",
+        )
+
+
+def _run_adapter_smoke_model(
+    dataset: TimesFmDataset,
+    windows: Sequence[TimesFmWindow],
+    csv_path: Path,
+    output_dir: Path,
+    args: argparse.Namespace,
+) -> _AdapterSmokePredictionBatch:
+    from nlp_stock_prediction.contracts.base import JsonObject
+    from nlp_stock_prediction.ml.timesfm.artifacts import (
+        TimesFmLoraConfig,
+        TimesFmTrainingConfig,
+        file_sha256,
+    )
+    from nlp_stock_prediction.ml.timesfm.evaluate import (
+        TimesFmEvaluationConfig,
+        TimesFmEvaluationModelSource,
+        _load_model_predictor,
+    )
+    from nlp_stock_prediction.ml.timesfm.train import (
+        TimesFmTrainingSource,
+        train_timesfm_lora,
+        write_timesfm_training_run,
+    )
+
+    source = TimesFmTrainingSource(kind="csv", sha256=file_sha256(csv_path), path=str(csv_path))
+    training_config = TimesFmTrainingConfig(
+        model_id=args.model_id,
+        model_revision=args.model_revision,
+        requested_device=args.device,
+        epochs=1,
+        max_steps=args.smoke_max_steps,
+        batch_size=args.smoke_batch_size,
+        learning_rate=args.smoke_learning_rate,
+        seed=args.seed,
+        gradient_clip_norm=args.gradient_clip_norm,
+        validation_batches=args.smoke_validation_batches,
+        lora=TimesFmLoraConfig(
+            r=args.smoke_lora_r,
+            lora_alpha=args.smoke_lora_alpha,
+            target_modules=args.smoke_lora_target_modules,
+            lora_dropout=args.smoke_lora_dropout,
+            bias=args.smoke_lora_bias,
+        ),
+    )
+    training_run = train_timesfm_lora(dataset, training_config, source)
+    paths = write_timesfm_training_run(training_run, output_dir)
+    training_metadata = cast(
+        JsonObject,
+        json.loads(paths.metadata_path.read_text(encoding="utf-8")),
+    )
+    model_source = TimesFmEvaluationModelSource(
+        model_dir=output_dir,
+        adapter_dir=paths.adapter_dir,
+        training_ticker=dataset.ticker,
+        model_id=training_run.result.model_id,
+        model_revision=training_run.result.model_revision,
+        adapter_sha256=paths.adapter_sha256,
+        recorded_adapter_sha256=paths.adapter_sha256,
+        training_metadata_sha256=paths.metadata_sha256,
+        training_metadata=training_metadata,
+    )
+    evaluation_config = TimesFmEvaluationConfig(
+        requested_device=args.device,
+        max_windows=args.screen_max_windows,
+        min_evaluation_windows=args.min_evaluation_windows,
+        as_of=date.fromisoformat(args.as_of),
+    )
+    predictor, runtime_metadata = _load_model_predictor(model_source, evaluation_config)
+    point_forecasts: list[tuple[float, ...]] = []
+    full_predictions: list[tuple[tuple[float, ...], ...]] = []
+    for window in windows:
+        prediction = predictor(window)
+        point_forecasts.append(prediction.point_forecast)
+        full_predictions.append(prediction.full_predictions)
+    return _AdapterSmokePredictionBatch(
+        model_id=training_run.result.model_id,
+        model_revision=training_run.result.model_revision,
+        adapter_sha256=paths.adapter_sha256,
+        training_metadata_path=str(paths.metadata_path),
+        validation_mean_loss=training_run.result.validation_metrics.mean_loss,
+        point_forecasts=tuple(point_forecasts),
+        full_predictions=tuple(full_predictions),
+        runtime_metadata={
+            **runtime_metadata,
+            "training_backend": training_run.result.runtime_metadata.get("backend", "unknown"),
+            "adapter_dir": str(paths.adapter_dir),
+        },
+    )
+
+
+def _adapter_stage_decision(
+    *,
+    sample_count: int,
+    adapter_rmse: float,
+    raw_rmse: float | None,
+    adapter_rmse_ratio_vs_raw: float | None,
+    adapter_directional_delta_vs_raw: float | None,
+    rmse_ratio_vs_best_baseline: float | None,
+    directional_delta_vs_best_baseline: float,
+    args: argparse.Namespace,
+) -> tuple[FunnelStatus, FunnelDecision, str | None, bool]:
+    if sample_count < args.min_evaluation_windows:
+        return (
+            "research_only",
+            "audit_only",
+            (
+                "limited_validation_windows:"
+                f"{sample_count}<min_evaluation_windows:{args.min_evaluation_windows}"
+            ),
+            False,
+        )
+    if raw_rmse is None:
+        return (
+            "borderline",
+            "audit_only",
+            "adapter_smoke_missing_raw_rmse",
+            False,
+        )
+    rmse_non_improving = _adapter_rmse_non_improving(
+        adapter_rmse=adapter_rmse,
+        raw_rmse=raw_rmse,
+        adapter_rmse_ratio_vs_raw=adapter_rmse_ratio_vs_raw,
+    )
+    directional_non_improving = (
+        adapter_directional_delta_vs_raw is None or adapter_directional_delta_vs_raw <= 0.0
+    )
+    if rmse_non_improving and directional_non_improving:
+        ratio_note = (
+            "unavailable"
+            if adapter_rmse_ratio_vs_raw is None
+            else f"{adapter_rmse_ratio_vs_raw:.4f}"
+        )
+        delta_note = (
+            "unavailable"
+            if adapter_directional_delta_vs_raw is None
+            else f"{adapter_directional_delta_vs_raw:.4f}"
+        )
+        return (
+            "killed",
+            "stop",
+            (
+                "adapter_smoke_no_lift_vs_raw:"
+                f"rmse_ratio_vs_raw={ratio_note};"
+                f"directional_delta_vs_raw={delta_note}"
+            ),
+            False,
+        )
+    has_positive_lift = not rmse_non_improving or (
+        adapter_directional_delta_vs_raw is not None and adapter_directional_delta_vs_raw > 0.0
+    )
+    near_best_baseline = (
+        rmse_ratio_vs_best_baseline is not None
+        and rmse_ratio_vs_best_baseline <= args.adapter_rmse_promote_threshold
+    ) or directional_delta_vs_best_baseline >= args.adapter_directional_promote_threshold
+    if has_positive_lift and near_best_baseline:
+        return "passed", "run_hpo", None, True
+    if has_positive_lift:
+        return (
+            "research_only",
+            "audit_only",
+            (
+                "adapter_smoke_lift_not_baseline_ready:"
+                f"rmse_ratio_vs_best_baseline={rmse_ratio_vs_best_baseline};"
+                f"directional_delta_vs_best_baseline={directional_delta_vs_best_baseline:.4f}"
+            ),
+            False,
+        )
+    return (
+        "borderline",
+        "audit_only",
+        "adapter_smoke_inconclusive_lift",
+        False,
+    )
+
+
+def _adapter_rmse_non_improving(
+    *,
+    adapter_rmse: float,
+    raw_rmse: float,
+    adapter_rmse_ratio_vs_raw: float | None,
+) -> bool:
+    if adapter_rmse_ratio_vs_raw is None:
+        return adapter_rmse >= raw_rmse
+    return adapter_rmse_ratio_vs_raw >= 1.0
+
+
+def _write_adapter_smoke_artifact(
+    output_root: Path,
+    *,
+    run_id: str,
+    created_at: str,
+    as_of: date,
+    symbol: str,
+    dataset: TimesFmDataset,
+    status: FunnelStatus,
+    decision: FunnelDecision,
+    kill_reason: str | None,
+    prediction_batch: _AdapterSmokePredictionBatch,
+    metrics: _RawTimesFmMetrics,
+    baseline_metrics: Sequence[_BaselineMetrics],
+    raw_row: SignalFunnelLeaderboardRow,
+    rmse_ratio: float | None,
+    directional_delta: float,
+    adapter_rmse_ratio_vs_raw: float | None,
+    adapter_directional_delta_vs_raw: float | None,
+    records: Sequence[_RawTimesFmRecord],
+    args: argparse.Namespace,
+) -> Path:
+    artifact_path = _adapter_smoke_artifact_path(output_root, symbol)
+    payload = {
+        "schema_version": "ml.timesfm.adapter_smoke_evaluation.v1",
+        "run_id": run_id,
+        "created_at": created_at,
+        "as_of": as_of.isoformat(),
+        "symbol": symbol,
+        "stage": "adapter_smoke",
+        "method": "lora_adapter_smoke",
+        "status": status,
+        "decision": decision,
+        "kill_reason": kill_reason,
+        "model_id": prediction_batch.model_id or args.model_id,
+        "model_revision": prediction_batch.model_revision or args.model_revision,
+        "adapter_sha256": prediction_batch.adapter_sha256,
+        "training_metadata": prediction_batch.training_metadata_path,
+        "validation_mean_loss": prediction_batch.validation_mean_loss,
+        "dataset_hash": dataset.dataset_hash,
+        "target_field": dataset.target_field,
+        "context_length": dataset.context_length,
+        "horizon_length": dataset.horizon_length,
+        "max_windows": args.screen_max_windows,
+        "config": _adapter_smoke_config_payload(args),
+        "metrics": metrics.model_dump(mode="json"),
+        "baselines": [metric.model_dump(mode="json") for metric in baseline_metrics],
+        "rmse_ratio_vs_best_baseline": rmse_ratio,
+        "directional_delta_vs_best_baseline": directional_delta,
+        "raw_timesfm": {
+            "rmse": raw_row.raw_timesfm_rmse,
+            "directional_accuracy": raw_row.directional_accuracy,
+            "evaluation_artifact": raw_row.evaluation_artifact,
+        },
+        "adapter_rmse_ratio_vs_raw": adapter_rmse_ratio_vs_raw,
+        "adapter_directional_delta_vs_raw": adapter_directional_delta_vs_raw,
+        "records": [record.model_dump(mode="json") for record in records],
+        "runtime_metadata": prediction_batch.runtime_metadata,
+    }
+    write_manifest(artifact_path, payload)
+    return artifact_path
+
+
+def _load_reusable_adapter_smoke_row(
+    output_root: Path,
+    *,
+    run_id: str,
+    created_at: str,
+    as_of: date,
+    symbol: str,
+    policy: TickerPolicy,
+    args: argparse.Namespace,
+    data_check_row: SignalFunnelLeaderboardRow,
+    raw_row: SignalFunnelLeaderboardRow,
+    runtime_seconds: float,
+) -> SignalFunnelLeaderboardRow | None:
+    if args.refresh_runs:
+        return None
+    artifact_path = _adapter_smoke_artifact_path(output_root, symbol)
+    if not artifact_path.exists():
+        return None
+    try:
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("schema_version") != "ml.timesfm.adapter_smoke_evaluation.v1":
+            return None
+        if payload.get("symbol") != symbol:
+            return None
+        if payload.get("dataset_hash") != data_check_row.dataset_hash:
+            return None
+        if payload.get("config") != _adapter_smoke_config_payload(args):
+            return None
+        raw_timesfm = payload.get("raw_timesfm")
+        if not isinstance(raw_timesfm, dict):
+            return None
+        if raw_timesfm.get("rmse") != raw_row.raw_timesfm_rmse:
+            return None
+        metrics = cast(dict[str, Any], payload["metrics"])
+        baselines = cast(list[dict[str, Any]], payload["baselines"])
+        best_baseline_rmse = min(float(baseline["rmse"]) for baseline in baselines)
+        best_baseline_directional_accuracy = max(
+            float(baseline["directional_accuracy"]) for baseline in baselines
+        )
+        return _adapter_smoke_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            status=cast(FunnelStatus, payload["status"]),
+            decision=cast(FunnelDecision, payload["decision"]),
+            kill_reason=cast(str | None, payload.get("kill_reason")),
+            runtime_seconds=runtime_seconds,
+            model_id=cast(str | None, payload.get("model_id")),
+            model_revision=cast(str | None, payload.get("model_revision")),
+            adapter_sha256=cast(str | None, payload.get("adapter_sha256")),
+            evaluation_artifact=str(artifact_path),
+            training_metadata=cast(str | None, payload.get("training_metadata")),
+            rmse=float(metrics["rmse"]),
+            best_baseline_rmse=best_baseline_rmse,
+            rmse_ratio_vs_best_baseline=cast(
+                float | None,
+                payload.get("rmse_ratio_vs_best_baseline"),
+            ),
+            directional_accuracy=float(metrics["directional_accuracy"]),
+            best_baseline_directional_accuracy=best_baseline_directional_accuracy,
+            directional_delta_vs_best_baseline=float(payload["directional_delta_vs_best_baseline"]),
+            raw_timesfm_rmse=raw_row.raw_timesfm_rmse,
+            adapter_rmse_ratio_vs_raw=cast(
+                float | None,
+                payload.get("adapter_rmse_ratio_vs_raw"),
+            ),
+            adapter_directional_delta_vs_raw=cast(
+                float | None,
+                payload.get("adapter_directional_delta_vs_raw"),
+            ),
+            validation_mean_loss=cast(float | None, payload.get("validation_mean_loss")),
+            interval_coverage=cast(float | None, metrics.get("interval_coverage")),
+            mean_interval_width=cast(float | None, metrics.get("mean_interval_width")),
+            calibration_proxy=cast(float | None, metrics.get("calibration_proxy")),
+            selected_for_next_stage=bool(payload["decision"] == "run_hpo"),
+            notes=f"sample_count={metrics['sample_count']}; reused=true",
+        )
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _adapter_smoke_artifact_path(output_root: Path, symbol: str) -> Path:
+    return output_root / "adapter_smoke" / f"{symbol}.evaluation.json"
+
+
+def _adapter_smoke_config_payload(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "model_id": args.model_id,
+        "model_revision": args.model_revision,
+        "context_length": args.context_length,
+        "horizon_length": args.horizon_length,
+        "target_field": args.target_field,
+        "screen_max_windows": args.screen_max_windows,
+        "smoke_max_steps": args.smoke_max_steps,
+        "smoke_batch_size": args.smoke_batch_size,
+        "smoke_learning_rate": args.smoke_learning_rate,
+        "smoke_validation_batches": args.smoke_validation_batches,
+        "smoke_lora_r": args.smoke_lora_r,
+        "smoke_lora_alpha": args.smoke_lora_alpha,
+        "smoke_lora_dropout": args.smoke_lora_dropout,
+        "smoke_lora_target_modules": args.smoke_lora_target_modules,
+        "smoke_lora_bias": args.smoke_lora_bias,
+        "seed": args.seed,
+        "gradient_clip_norm": args.gradient_clip_norm,
+    }
 
 
 def _transpose(rows: Sequence[Sequence[float]]) -> tuple[tuple[float, ...], ...]:
@@ -1301,6 +1932,87 @@ def _raw_timesfm_leaderboard_row(
     )
 
 
+def _adapter_smoke_leaderboard_row(
+    *,
+    run_id: str,
+    created_at: str,
+    as_of: date,
+    symbol: str,
+    policy: TickerPolicy,
+    args: argparse.Namespace,
+    data_check_row: SignalFunnelLeaderboardRow,
+    status: FunnelStatus,
+    decision: FunnelDecision,
+    kill_reason: str | None,
+    runtime_seconds: float,
+    notes: str | None,
+    model_id: str | None = None,
+    model_revision: str | None = None,
+    adapter_sha256: str | None = None,
+    evaluation_artifact: str | None = None,
+    training_metadata: str | None = None,
+    rmse: float | None = None,
+    best_baseline_rmse: float | None = None,
+    rmse_ratio_vs_best_baseline: float | None = None,
+    directional_accuracy: float | None = None,
+    best_baseline_directional_accuracy: float | None = None,
+    directional_delta_vs_best_baseline: float | None = None,
+    raw_timesfm_rmse: float | None = None,
+    adapter_rmse_ratio_vs_raw: float | None = None,
+    adapter_directional_delta_vs_raw: float | None = None,
+    validation_mean_loss: float | None = None,
+    interval_coverage: float | None = None,
+    mean_interval_width: float | None = None,
+    calibration_proxy: float | None = None,
+    selected_for_next_stage: bool = False,
+) -> SignalFunnelLeaderboardRow:
+    return SignalFunnelLeaderboardRow(
+        run_id=run_id,
+        created_at=created_at,
+        as_of=as_of.isoformat(),
+        symbol=symbol,
+        stage="adapter_smoke",
+        method="lora_adapter_smoke",
+        status=status,
+        kill_reason=kill_reason,
+        decision=decision,
+        asset_type=policy.asset_type,
+        history_start=data_check_row.history_start,
+        latest_bar=data_check_row.latest_bar,
+        bar_count=data_check_row.bar_count,
+        train_windows=data_check_row.train_windows,
+        validation_windows=data_check_row.validation_windows,
+        test_windows=data_check_row.test_windows,
+        context_length=args.context_length,
+        horizon_length=args.horizon_length,
+        max_windows=args.screen_max_windows,
+        runtime_seconds=runtime_seconds,
+        device=args.device,
+        model_id=model_id,
+        model_revision=model_revision,
+        adapter_sha256=adapter_sha256,
+        dataset_hash=data_check_row.dataset_hash,
+        evaluation_artifact=evaluation_artifact,
+        training_metadata=training_metadata,
+        rmse=rmse,
+        best_baseline_rmse=best_baseline_rmse,
+        rmse_ratio_vs_best_baseline=rmse_ratio_vs_best_baseline,
+        directional_accuracy=directional_accuracy,
+        best_baseline_directional_accuracy=best_baseline_directional_accuracy,
+        directional_delta_vs_best_baseline=directional_delta_vs_best_baseline,
+        raw_timesfm_rmse=raw_timesfm_rmse,
+        adapter_rmse_ratio_vs_raw=adapter_rmse_ratio_vs_raw,
+        adapter_directional_delta_vs_raw=adapter_directional_delta_vs_raw,
+        validation_mean_loss=validation_mean_loss,
+        interval_coverage=interval_coverage,
+        mean_interval_width=mean_interval_width,
+        calibration_proxy=calibration_proxy,
+        selected_for_next_stage=selected_for_next_stage,
+        promoted_for_scoring=False,
+        notes=notes,
+    )
+
+
 def _stage0_notes(data_record: dict[str, Any], counts: _WindowCounts) -> str:
     metadata = data_record.get("metadata")
     source = metadata.get("source") if isinstance(metadata, dict) else None
@@ -1348,6 +2060,12 @@ def _should_stop_after(completed_stage: FunnelStage, requested_stop_after: str) 
     return FUNNEL_STAGES.index(completed_stage) >= FUNNEL_STAGES.index(requested_stop_after)
 
 
+def _default_stop_after_for_profile(profile: FunnelProfile) -> FunnelStage:
+    if profile == "quick":
+        return "raw_timesfm_screen"
+    return "adapter_smoke"
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the signal-funnel CLI parser."""
 
@@ -1367,8 +2085,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--stop-after",
         choices=FUNNEL_STAGES,
-        default="raw_timesfm_screen",
-        help="Stop after the named funnel stage; stages after raw_timesfm_screen are pending.",
+        default=None,
+        help=(
+            "Stop after the named funnel stage. Defaults to raw_timesfm_screen for quick "
+            "profile and adapter_smoke otherwise."
+        ),
     )
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--model-revision")
@@ -1383,6 +2104,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-evaluation-windows", type=int, default=3)
     parser.add_argument("--screen-max-windows", type=int, default=64)
     parser.add_argument("--smoke-max-steps", type=int, default=200)
+    parser.add_argument("--smoke-batch-size", type=int, default=2)
+    parser.add_argument("--smoke-learning-rate", type=float, default=1e-4)
+    parser.add_argument("--smoke-validation-batches", type=int, default=2)
+    parser.add_argument("--smoke-lora-r", type=int, default=4)
+    parser.add_argument("--smoke-lora-alpha", type=int, default=8)
+    parser.add_argument("--smoke-lora-dropout", type=float, default=0.05)
+    parser.add_argument("--smoke-lora-target-modules", default="all-linear")
+    parser.add_argument("--smoke-lora-bias", choices=("none", "all", "lora_only"), default="none")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--gradient-clip-norm", type=float, default=1.0)
     parser.add_argument("--max-hpo-trials-per-ticker", type=int, default=24)
     parser.add_argument("--raw-rmse-kill-threshold", type=float, default=1.15)
     parser.add_argument("--raw-directional-kill-threshold", type=float, default=-0.05)
@@ -1401,10 +2132,15 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     raw_predictor: RawTimesFmPredictor | None = None,
+    adapter_smoke_runner: AdapterSmokeRunner | None = None,
 ) -> int:
     """CLI entry point for ``python -m nlp_stock_prediction.ml.timesfm.signal_funnel``."""
 
-    return run_signal_funnel(build_parser().parse_args(argv), raw_predictor=raw_predictor)
+    return run_signal_funnel(
+        build_parser().parse_args(argv),
+        raw_predictor=raw_predictor,
+        adapter_smoke_runner=adapter_smoke_runner,
+    )
 
 
 if __name__ == "__main__":

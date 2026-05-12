@@ -47,9 +47,10 @@ def test_signal_funnel_stage0_dry_run_writes_manifest_and_leaderboard(tmp_path: 
         "data_check",
         "baseline_screen",
         "raw_timesfm_screen",
+        "adapter_smoke",
     ]
     assert manifest["skipped_stages"][0]["reason"] == "stage_not_implemented"
-    assert len(leaderboard["rows"]) == 3
+    assert len(leaderboard["rows"]) == 4
     assert leaderboard["rows"][0]["symbol"] == "MU"
     assert leaderboard["rows"][0]["status"] == "passed"
     assert leaderboard["rows"][0]["decision"] == "continue"
@@ -61,8 +62,45 @@ def test_signal_funnel_stage0_dry_run_writes_manifest_and_leaderboard(tmp_path: 
     assert leaderboard["rows"][2]["stage"] == "raw_timesfm_screen"
     assert leaderboard["rows"][2]["status"] == "skipped"
     assert leaderboard["rows"][2]["kill_reason"] == "dry_run_no_model_loaded"
+    assert leaderboard["rows"][3]["stage"] == "adapter_smoke"
+    assert leaderboard["rows"][3]["status"] == "skipped"
+    assert leaderboard["rows"][3]["kill_reason"] == "dry_run_no_adapter_training"
     assert csv_rows[0]["symbol"] == "MU"
     assert csv_rows[0]["status"] == "passed"
+
+
+@pytest.mark.unit
+def test_signal_funnel_quick_profile_defaults_to_raw_screen(tmp_path: Path) -> None:
+    output_root = tmp_path / "out"
+
+    exit_code = signal_funnel.main(
+        [
+            "--dry-run",
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "quick-profile",
+            "--device",
+            "cpu",
+            "--profile",
+            "quick",
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+    leaderboard = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))
+
+    assert manifest["requested_stop_after"] == "raw_timesfm_screen"
+    assert [row["stage"] for row in leaderboard["rows"]] == [
+        "data_check",
+        "baseline_screen",
+        "raw_timesfm_screen",
+    ]
 
 
 @pytest.mark.unit
@@ -285,6 +323,8 @@ def test_signal_funnel_stage2_promotes_raw_timesfm_when_it_beats_baselines(
             "cpu",
             "--screen-max-windows",
             "16",
+            "--stop-after",
+            "raw_timesfm_screen",
         ],
         raw_predictor=raw_predictor,
     )
@@ -365,6 +405,8 @@ def test_signal_funnel_stage2_kills_raw_timesfm_when_materially_worse(
             "cpu",
             "--screen-max-windows",
             "16",
+            "--stop-after",
+            "raw_timesfm_screen",
         ],
         raw_predictor=raw_predictor,
     )
@@ -379,6 +421,321 @@ def test_signal_funnel_stage2_kills_raw_timesfm_when_materially_worse(
     assert raw_row["rmse_ratio_vs_best_baseline"] > 1.15
     assert raw_row["directional_delta_vs_best_baseline"] < -0.05
     assert raw_row["kill_reason"].startswith("raw_timesfm_underperformed_baselines:")
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage3_promotes_adapter_smoke_with_positive_lift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage3-promote",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+        ],
+        raw_predictor=_halfway_positive_raw_predictor,
+        adapter_smoke_runner=_exact_adapter_smoke_runner,
+    )
+
+    assert exit_code == 0
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    adapter_row = next(row for row in records if row["stage"] == "adapter_smoke")
+
+    assert len(records) == 6
+    assert adapter_row["method"] == "lora_adapter_smoke"
+    assert adapter_row["status"] == "passed"
+    assert adapter_row["decision"] == "run_hpo"
+    assert adapter_row["selected_for_next_stage"] is True
+    assert adapter_row["adapter_sha256"] == "fake-adapter-sha"
+    assert adapter_row["training_metadata"].endswith("training-metadata.json")
+    assert adapter_row["validation_mean_loss"] == 0.0123
+    assert adapter_row["adapter_rmse_ratio_vs_raw"] == 0.0
+    assert adapter_row["adapter_directional_delta_vs_raw"] == 0.0
+    assert adapter_row["rmse_ratio_vs_best_baseline"] == 0.0
+
+    artifact = json.loads(Path(adapter_row["evaluation_artifact"]).read_text(encoding="utf-8"))
+    assert artifact["schema_version"] == "ml.timesfm.adapter_smoke_evaluation.v1"
+    assert artifact["decision"] == "run_hpo"
+    assert artifact["adapter_sha256"] == "fake-adapter-sha"
+    assert artifact["metrics"]["sample_count"] == 16
+    assert artifact["adapter_rmse_ratio_vs_raw"] == 0.0
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage3_kills_adapter_smoke_without_raw_lift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage3-kill",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+        ],
+        raw_predictor=_halfway_positive_raw_predictor,
+        adapter_smoke_runner=_bad_adapter_smoke_runner,
+    )
+
+    assert exit_code == 0
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    adapter_row = next(row for row in records if row["stage"] == "adapter_smoke")
+
+    assert adapter_row["status"] == "killed"
+    assert adapter_row["decision"] == "stop"
+    assert adapter_row["selected_for_next_stage"] is False
+    assert adapter_row["adapter_rmse_ratio_vs_raw"] > 1.0
+    assert adapter_row["adapter_directional_delta_vs_raw"] < 0.0
+    assert adapter_row["kill_reason"].startswith("adapter_smoke_no_lift_vs_raw:")
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage3_records_failed_adapter_training(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    def failing_adapter_runner(
+        *_args: Any, **_kwargs: Any
+    ) -> signal_funnel._AdapterSmokePredictionBatch:
+        raise RuntimeError("synthetic adapter failure")
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage3-failure",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+        ],
+        raw_predictor=_halfway_positive_raw_predictor,
+        adapter_smoke_runner=failing_adapter_runner,
+    )
+
+    assert exit_code == 1
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    adapter_row = next(row for row in records if row["stage"] == "adapter_smoke")
+    assert adapter_row["status"] == "failed"
+    assert adapter_row["decision"] == "stop"
+    assert adapter_row["kill_reason"] == "synthetic adapter failure"
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage3_skips_when_raw_screen_kills_ticker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    def raw_predictor(
+        _dataset: Any,
+        windows: Any,
+        _args: Any,
+    ) -> signal_funnel._RawTimesFmPredictionBatch:
+        return signal_funnel._RawTimesFmPredictionBatch(
+            model_id="fake-raw-timesfm",
+            point_forecasts=tuple(
+                tuple(window.context_values[-1] - 10.0 for _ in window.future_values)
+                for window in windows
+            ),
+            runtime_metadata={"backend": "fake_raw_predictor"},
+        )
+
+    def forbidden_adapter_runner(
+        *_args: Any, **_kwargs: Any
+    ) -> signal_funnel._AdapterSmokePredictionBatch:
+        raise AssertionError("adapter smoke should not run after raw kill")
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage3-raw-kill-skip",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+        ],
+        raw_predictor=raw_predictor,
+        adapter_smoke_runner=forbidden_adapter_runner,
+    )
+
+    assert exit_code == 0
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    raw_row = next(row for row in records if row["stage"] == "raw_timesfm_screen")
+    adapter_row = next(row for row in records if row["stage"] == "adapter_smoke")
+
+    assert raw_row["status"] == "killed"
+    assert adapter_row["status"] == "skipped"
+    assert adapter_row["decision"] == "stop"
+    assert adapter_row["kill_reason"] == "raw_timesfm_not_selected"
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage3_reuses_existing_adapter_smoke_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    calls = 0
+
+    def counted_adapter_runner(
+        dataset: Any,
+        windows: Any,
+        csv_path_arg: Path,
+        output_dir: Path,
+        args: Any,
+    ) -> signal_funnel._AdapterSmokePredictionBatch:
+        nonlocal calls
+        calls += 1
+        return _exact_adapter_smoke_runner(dataset, windows, csv_path_arg, output_dir, args)
+
+    output_root = tmp_path / "out"
+    common_args = [
+        "--symbols",
+        "MU",
+        "--as-of",
+        "2026-05-11",
+        "--data-dir",
+        str(data_dir),
+        "--output-root",
+        str(output_root),
+        "--sleep-seconds",
+        "0",
+        "--device",
+        "cpu",
+        "--screen-max-windows",
+        "16",
+    ]
+    assert (
+        signal_funnel.main(
+            [*common_args, "--run-id", "stage3-reuse-first"],
+            raw_predictor=_halfway_positive_raw_predictor,
+            adapter_smoke_runner=counted_adapter_runner,
+        )
+        == 0
+    )
+    assert (
+        signal_funnel.main(
+            [*common_args, "--run-id", "stage3-reuse-second"],
+            raw_predictor=_halfway_positive_raw_predictor,
+            adapter_smoke_runner=counted_adapter_runner,
+        )
+        == 0
+    )
+
+    assert calls == 1
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    adapter_row = next(row for row in records if row["stage"] == "adapter_smoke")
+    assert adapter_row["status"] == "passed"
+    assert adapter_row["decision"] == "run_hpo"
+    assert "reused=true" in adapter_row["notes"]
 
 
 @pytest.mark.unit
@@ -423,6 +780,62 @@ def test_signal_funnel_stage1_skips_after_failed_data_check(
     assert records[1]["stage"] == "baseline_screen"
     assert records[1]["status"] == "skipped"
     assert records[1]["kill_reason"] == "data_check_failed"
+
+
+def _halfway_positive_raw_predictor(
+    _dataset: Any,
+    windows: Any,
+    args: Any,
+) -> signal_funnel._RawTimesFmPredictionBatch:
+    return signal_funnel._RawTimesFmPredictionBatch(
+        model_id="fake-raw-timesfm",
+        model_revision="fake-revision",
+        point_forecasts=tuple(
+            tuple(window.context_values[-1] + 0.08 for _ in window.future_values)
+            for window in windows
+        ),
+        runtime_metadata={"backend": "fake_raw_predictor", "device": args.device},
+    )
+
+
+def _exact_adapter_smoke_runner(
+    _dataset: Any,
+    windows: Any,
+    _csv_path: Path,
+    output_dir: Path,
+    args: Any,
+) -> signal_funnel._AdapterSmokePredictionBatch:
+    metadata_path = output_dir / "training-metadata.json"
+    return signal_funnel._AdapterSmokePredictionBatch(
+        model_id="fake-adapter-timesfm",
+        model_revision="fake-adapter-revision",
+        adapter_sha256="fake-adapter-sha",
+        training_metadata_path=str(metadata_path),
+        validation_mean_loss=0.0123,
+        point_forecasts=tuple(tuple(window.future_values) for window in windows),
+        runtime_metadata={"backend": "fake_adapter_runner", "device": args.device},
+    )
+
+
+def _bad_adapter_smoke_runner(
+    _dataset: Any,
+    windows: Any,
+    _csv_path: Path,
+    output_dir: Path,
+    _args: Any,
+) -> signal_funnel._AdapterSmokePredictionBatch:
+    metadata_path = output_dir / "training-metadata.json"
+    return signal_funnel._AdapterSmokePredictionBatch(
+        model_id="fake-adapter-timesfm",
+        adapter_sha256="fake-adapter-sha",
+        training_metadata_path=str(metadata_path),
+        validation_mean_loss=0.4567,
+        point_forecasts=tuple(
+            tuple(window.context_values[-1] - 10.0 for _ in window.future_values)
+            for window in windows
+        ),
+        runtime_metadata={"backend": "fake_adapter_runner"},
+    )
 
 
 def _ohlcv_rows(last_day: str, *, count: int) -> list[dict[str, str]]:
