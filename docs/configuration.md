@@ -76,6 +76,14 @@ evidence because the smoke test showed too much spam/noise. API key and secret v
 `.env` for completeness and token rotation; normal read-only recent-search calls should use the
 Bearer Token.
 
+## Candlecharts Data Limitation
+
+The Candlecharts adapter is a feasibility probe for public first-party OHLCV only. Fixture-backed
+HTML tests cover JSON/table candle data when it is present, but if a page only exposes an embedded
+TradingView/widget chart, the provider returns a structured `no_data` warning and does not scrape
+TradingView internals. Downstream ML or technical-analysis work should use approved provider data or
+user-supplied OHLCV CSV fixtures when Candlecharts is widget-only.
+
 ## `.env` Files
 
 `.env` and `.env.*` are ignored by git. `.env.example` contains placeholder keys only and is safe to
