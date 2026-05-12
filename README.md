@@ -42,6 +42,25 @@ python -m nlp_stock_prediction.ml.timesfm.evaluate --synthetic --ticker TSLA --m
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/timesfm-eval-smoke/evaluation.json
 ```
 
+Windows TimesFM from local CSV:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+.\.venv\Scripts\python.exe -m pip install -e ".[timesfm]"
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --csv data/ml/TSLA.csv --ticker TSLA --device cuda --output-dir artifacts/ml/TSLA/timesfm --epochs 1 --max-steps 20 --as-of 2026-05-11 --max-latest-bar-age-days 5
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --csv data/ml/TSLA.csv --ticker TSLA --model-dir artifacts/ml/TSLA/timesfm --device cuda --output artifacts/ml/TSLA/timesfm/evaluation.json --as-of 2026-05-11 --suitability-max-latest-bar-age-days 5
+.\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
+```
+
+The local CSV belongs under an ignored path such as `data/ml/TSLA.csv` and must include
+`timestamp`, `open`, `high`, `low`, `close`, and `volume`, with optional `adjusted_close`.
+Generated TimesFM artifacts are ignored under `artifacts/ml/...`; see `docs/configuration.md` for
+artifact details, Windows cache notes, and troubleshooting.
+
 The canonical CLI invocation is the Python module form, `python -m nlp_stock_prediction`. If a console script is added later, it should remain a thin alias for that module command and the docs should be updated together.
 
 The offline run writes `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/` using deterministic fixture data. `--source-mode scrape` writes the same report bundle plus `audit/provider-results.json`, using deterministic provider fixtures and degraded-provider probes rather than live network calls. Add `--live-providers` to `--source-mode scrape` for explicit local live calls to Reddit public pages, AP News public HTML, Candlecharts feasibility, and X recent search. Add `--ml-artifact` with an evaluated local TimesFM artifact to attach a technical-analysis sidecar in Markdown, JSON, and audit payloads; Lane D can use that sidecar only as a bounded technical score input, and it does not enable trading or bypass evidence/risk gates. The CLI automatically loads a local `.env` file without overriding exported shell variables. The default test harness blocks network access; live tests require explicit opt-in environment variables and, for provider-specific checks, credentials or configured URLs.

@@ -226,6 +226,8 @@ Status: implemented.
 
 ### Stage 8: User Workflow And Documentation
 
+Status: implemented.
+
 - Changes:
   - Document the Windows-first TimesFM setup, including PyTorch CUDA install, Hugging Face cache
     behavior, optional Developer Mode note, and RTX 3090 verification.
@@ -276,7 +278,7 @@ Status: implemented.
 - [x] Report integration preserves model provenance, dataset provenance, confidence inputs, warnings,
       and limitations.
 - [x] TimesFM output cannot create a standalone recommendation or bypass evidence/risk gates.
-- [ ] Documentation explains setup, commands, artifacts, limitations, and troubleshooting.
+- [x] Documentation explains setup, commands, artifacts, limitations, and troubleshooting.
 
 ## Verification Commands
 
@@ -417,3 +419,12 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   skips; non-live pytest reported 370 passed and 7 deselected; `ruff check . --no-cache`,
   `ruff format --check .`, `mypy .`, `python -m nlp_stock_prediction --help`, `git diff --check`,
   and the live-mode wording drift scan passed.
+- 2026-05-12-00-00: Implemented Stage 8 documentation with a clean Windows setup path, CUDA PyTorch
+  install order, RTX 3090 smoke verification, local CSV requirements, training/evaluation/report
+  commands, artifact locations, troubleshooting for CUDA, VRAM, Hugging Face, symlink, path, CSV,
+  and weak-evaluation issues, plus README, AGENTS, and roadmap alignment back to this source of
+  truth plan.
+- 2026-05-12-00-00: Stage 8 verification passed: full pytest reported 370 passed and 7 opt-in live
+  skips; non-live pytest reported 370 passed and 7 deselected; focused TimesFM deterministic tests
+  reported 53 passed; `ruff check . --no-cache`, `ruff format --check .`, `mypy .`,
+  `python -m nlp_stock_prediction --help`, `git diff --check`, and doc-drift scans passed.

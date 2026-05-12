@@ -16,6 +16,8 @@ Use the repository's configured commands. Expected commands are:
 
 ```sh
 python -m pytest
+python -m pytest -m "not live_api and not live_scraping"
+python -m pytest tests/test_lane_d_scoring.py tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py tests/test_timesfm_evaluation.py tests/test_timesfm_report_integration.py
 ruff check .
 ruff format --check .
 mypy .

@@ -143,6 +143,64 @@ validation metrics. Recommendation scoring applies weak, stale, unavailable, wid
 underqualified, or conflicting ML gates when that sidecar is present; ML output cannot qualify a
 trade by itself.
 
+### TimesFM Windows Workflow From Clean Checkout
+
+The active TimesFM path is native Windows first. From a clean checkout, use Python 3.12, install
+the lightweight dev dependencies, then install the CUDA-enabled PyTorch wheel before the optional
+TimesFM extra:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+.\.venv\Scripts\python.exe -m pip install -e ".[timesfm]"
+```
+
+Verify the RTX 3090 path before training:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2 --output artifacts/ml/timesfm-smoke/smoke-result.json
+```
+
+Place local OHLCV data under an ignored path such as `data/ml/TSLA.csv`. The CSV must contain:
+
+- `timestamp`
+- `open`
+- `high`
+- `low`
+- `close`
+- `volume`
+- optional `adjusted_close`
+
+Use ISO-like timestamps that sort chronologically, keep one row per bar, and keep the latest bar
+within the configured `--as-of` and freshness window. The TimesFM dataset builder rejects duplicate
+timestamps, future bars, stale data, partial adjusted-close history, insufficient windows, and
+split-like price jumps.
+
+Train, evaluate, and attach the evaluated sidecar:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --csv data/ml/TSLA.csv --ticker TSLA --device cuda --output-dir artifacts/ml/TSLA/timesfm --epochs 1 --max-steps 20 --as-of 2026-05-11 --max-latest-bar-age-days 5
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --csv data/ml/TSLA.csv --ticker TSLA --model-dir artifacts/ml/TSLA/timesfm --device cuda --output artifacts/ml/TSLA/timesfm/evaluation.json --as-of 2026-05-11 --suitability-max-latest-bar-age-days 5
+.\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
+```
+
+Expected local artifacts:
+
+| Path | Created by | Purpose |
+| --- | --- | --- |
+| `artifacts/ml/timesfm-smoke/smoke-result.json` | smoke | Verifies Python, CUDA, RTX 3090, model load, forecast shapes, memory, and tiny LoRA optimization. |
+| `artifacts/ml/<TICKER>/timesfm/adapter/` | train | PEFT LoRA adapter files and weights. |
+| `artifacts/ml/<TICKER>/timesfm/training-metadata.json` | train | Model ID/revision, hashes, split settings, seed, device/CUDA metadata, package versions, and usage limitations. |
+| `artifacts/ml/<TICKER>/timesfm/training-metrics.json` | train | Train and validation loss summaries. |
+| `artifacts/ml/<TICKER>/timesfm/evaluation.json` | evaluate | Rolling evaluation, baseline comparisons, suitability flags, and sidecar provenance. |
+| `reports/<YYYY-MM-DD>/audit/ml-artifacts.json` | report run | Full TimesFM evaluation payload copied into the report audit bundle when `--ml-artifact` is used. |
+
+Generated data and model artifacts stay out of git through `data/ml/`, `artifacts/`, and `models/`.
+The workflow remains a local prediction/technical-analysis aid. It does not place orders, generate
+broker payloads, or override evidence, risk, warning, scoring, or disclaimer guardrails.
+
 ### TimesFM 2.5 Windows Smoke
 
 The active TimesFM phase uses native Windows with the RTX 3090 as the primary local environment.
@@ -316,20 +374,21 @@ score threshold because of the TimesFM technical adjustment, Lane D adds
 rule that TimesFM is a local prediction/technical-analysis aid, not live trading and not a
 standalone recommendation engine.
 
+### TimesFM Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| CUDA is unavailable or the smoke says no CUDA device was found | Confirm the NVIDIA driver is installed, run the CUDA PyTorch install command above, then verify `.\.venv\Scripts\python.exe -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)"`. Use `--device cpu` only for dependency-light debugging, not the RTX 3090 acceptance path. |
+| CUDA out of memory | Close other GPU workloads, lower `--batch-size`, lower `--max-steps` for smoke runs, or use a shorter `--context-length`. The default LoRA path is intentionally small, but long contexts and larger batches can still exhaust VRAM. |
+| Hugging Face download, cache, or rate-limit errors | Check network access and Hugging Face availability, retry later if rate-limited, or pre-populate the Hugging Face cache. If a private or gated revision is used later, authenticate through normal Hugging Face tooling and keep tokens out of the repo. |
+| Hugging Face symlink warnings on Windows | The warning is acceptable. Enabling Windows Developer Mode or running an admin shell can reduce duplicated cache files, but neither is required for correctness. |
+| Windows path or quoting errors | Prefer PowerShell paths with `.\.venv\Scripts\python.exe`, quote extras as `".[dev]"` or `".[timesfm]"` only when your shell requires it, and keep generated artifacts under ignored paths such as `artifacts/ml/...`. |
+| Training rejects the CSV | Check required columns, duplicate timestamps, future-dated bars, stale latest bar relative to `--as-of`, missing volume values, partial `adjusted_close`, and split-like price jumps. |
+| Evaluation writes `weak` or `suitable_for_scoring=false` | Inspect `suitability_reasons` in `evaluation.json`. Weak artifacts can still be attached to reports for audit visibility, but scoring treats them as non-supportive sidecars. |
+
 Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
 access, or local training data. CUDA/RTX metadata is detected only when available and when the local
 training command is configured with `--device auto` or `--device cuda`.
-
-Local training data and artifacts should stay outside git. The repo ignores `data/ml/`,
-`artifacts/`, and `models/` for this purpose. A local CSV must include:
-
-- `timestamp`
-- `open`
-- `high`
-- `low`
-- `close`
-- `volume`
-- optional `adjusted_close`
 
 Use `--as-of` with `--max-latest-bar-age-days` when the training CSV is expected to be current.
 That gate rejects stale local data and bars dated after the as-of value, which protects local
