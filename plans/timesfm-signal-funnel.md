@@ -249,7 +249,7 @@ Useful options:
 --output-root
 --refresh-data
 --refresh-runs
---stop-after data_check|baseline_screen|raw_timesfm_screen|adapter_smoke|survivor_hpo|final_eval
+--stop-after data_check|baseline_screen|raw_timesfm_screen|adapter_smoke|survivor_hpo|final_eval|report_ready
 --screen-max-windows
 --smoke-max-steps
 --max-hpo-trials-per-ticker
@@ -267,7 +267,7 @@ Profile defaults:
 | Profile | Intended use | Behavior |
 | --- | --- | --- |
 | quick | minutes | data, baselines, capped raw TimesFM only |
-| walkaway | unattended default | full funnel with ruthless early kills, survivor HPO, and held-out final eval |
+| walkaway | unattended default | full funnel with ruthless early kills, survivor HPO, final eval, and report-ready promotion |
 | full | deep research | same final-test no-leakage boundary with room for broader future HPO settings |
 
 ## Implementation Milestones
@@ -382,19 +382,19 @@ Profile defaults:
 
 ## Acceptance Criteria
 
-- [ ] A single `signal_funnel --profile walkaway` command runs the staged workflow for the focused
+- [x] A single `signal_funnel --profile walkaway` command runs the staged workflow for the focused
   ticker set.
-- [ ] The command writes `manifest.json`, `leaderboard.json`, and `leaderboard.csv` incrementally so
+- [x] The command writes `manifest.json`, `leaderboard.json`, and `leaderboard.csv` incrementally so
   partial runs remain inspectable.
-- [ ] Raw base TimesFM metrics are recorded on the same rolling windows as adapter evaluations.
-- [ ] Adapter smoke runs only for symbols/configs that pass raw-stage gates.
-- [ ] HPO runs only for adapter-smoke survivors.
-- [ ] HPO winner selection uses validation baseline lift before validation loss.
-- [ ] Final held-out evaluation is not used for HPO selection.
-- [ ] Scoring promotion happens only for final `suitable_for_scoring` artifacts.
-- [ ] Killed and failed ideas include explicit `kill_reason` and remain visible in the leaderboard.
-- [ ] Default tests run without CUDA, network access, or TimesFM optional dependencies.
-- [ ] Documentation explains the funnel, profiles, output files, and one-command workflow.
+- [x] Raw base TimesFM metrics are recorded on the same rolling windows as adapter evaluations.
+- [x] Adapter smoke runs only for symbols/configs that pass raw-stage gates.
+- [x] HPO runs only for adapter-smoke survivors.
+- [x] HPO winner selection uses validation baseline lift before validation loss.
+- [x] Final held-out evaluation is not used for HPO selection.
+- [x] Scoring promotion happens only for final `suitable_for_scoring` artifacts.
+- [x] Killed and failed ideas include explicit `kill_reason` and remain visible in the leaderboard.
+- [x] Default tests run without CUDA, network access, or TimesFM optional dependencies.
+- [x] Documentation explains the funnel, profiles, output files, and one-command workflow.
 
 ## Verification Commands
 
@@ -449,3 +449,6 @@ Optional CUDA verification:
 - 2026-05-12: Implemented Stage 5 `final_eval` with held-out test-window evaluation for the
   selected HPO survivor, final baseline-aware suitability gates, scoring-promotion flags, docs
   updates, and tests covering suitable promotion, weak audit-only results, skips, and failures.
+- 2026-05-12: Implemented Stage 6 `report_ready` with `ml.timesfm.evaluation.v1` promotion for
+  suitable final evaluations only, per-symbol report-ready manifests, top-level promoted paths, docs
+  updates, and tests proving weak final evals do not produce scoring artifacts.

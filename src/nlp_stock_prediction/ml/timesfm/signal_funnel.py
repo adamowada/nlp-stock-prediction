@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import time
@@ -16,7 +17,7 @@ from pydantic import Field
 
 from nlp_stock_prediction.analysis.technical import analyze_technical_snapshot
 from nlp_stock_prediction.contracts import MarketSnapshot
-from nlp_stock_prediction.contracts.base import ContractModel, NonEmptyStr, TickerSymbol
+from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr, TickerSymbol
 from nlp_stock_prediction.ml.timesfm.dataset import (
     TimesFmDataset,
     TimesFmDatasetConfig,
@@ -47,6 +48,7 @@ IMPLEMENTED_STAGES = (
     "adapter_smoke",
     "survivor_hpo",
     "final_eval",
+    "report_ready",
 )
 FUNNEL_STAGES = (
     "data_check",
@@ -300,6 +302,8 @@ def run_signal_funnel(
         "implemented_stages": list(IMPLEMENTED_STAGES),
         "requested_stop_after": args.stop_after,
         "records": [],
+        "final_states": [],
+        "promoted_artifacts": [],
         "skipped_stages": [
             {
                 "stage": stage,
@@ -419,6 +423,35 @@ def run_signal_funnel(
         )
         rows.append(final_row)
         manifest["records"].append(final_row.model_dump(mode="json"))
+        _write_signal_funnel_outputs(output_root, manifest, rows)
+        if _should_stop_after("final_eval", args.stop_after):
+            continue
+        print(f"{symbol}: report_ready")
+        report_ready_row = _run_report_ready(
+            symbol,
+            policy,
+            data_check_row=row,
+            final_row=final_row,
+            args=args,
+            data_dir=data_dir,
+            output_root=output_root,
+            as_of=as_of,
+            run_id=run_id,
+            created_at=created_at,
+        )
+        rows.append(report_ready_row)
+        report_ready_payload = report_ready_row.model_dump(mode="json")
+        manifest["records"].append(report_ready_payload)
+        final_state = _report_ready_final_state(symbol, final_row, report_ready_row)
+        manifest["final_states"].append(final_state)
+        if report_ready_row.promoted_for_scoring and report_ready_row.evaluation_artifact:
+            manifest["promoted_artifacts"].append(
+                {
+                    "symbol": symbol,
+                    "path": report_ready_row.evaluation_artifact,
+                    "source_final_eval_artifact": final_row.evaluation_artifact,
+                }
+            )
         _write_signal_funnel_outputs(output_root, manifest, rows)
 
     return 0 if all(row.status != "failed" for row in rows) else 1
@@ -2698,6 +2731,585 @@ def _final_eval_config_payload(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _run_report_ready(
+    symbol: str,
+    policy: TickerPolicy,
+    *,
+    data_check_row: SignalFunnelLeaderboardRow,
+    final_row: SignalFunnelLeaderboardRow,
+    args: argparse.Namespace,
+    data_dir: Path,
+    output_root: Path,
+    as_of: date,
+    run_id: str,
+    created_at: str,
+) -> SignalFunnelLeaderboardRow:
+    started_at = time.perf_counter()
+    if data_check_row.status == "failed":
+        return _report_ready_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method="report_ready",
+            status="skipped",
+            decision="stop",
+            kill_reason="data_check_failed",
+            runtime_seconds=_elapsed_seconds(started_at),
+            notes="report_ready skipped because data_check failed",
+        )
+    if args.dry_run:
+        return _report_ready_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method="report_ready",
+            status="skipped",
+            decision="audit_only",
+            kill_reason="dry_run_no_report_ready_artifact",
+            runtime_seconds=_elapsed_seconds(started_at),
+            notes="report_ready requires a suitable final evaluation artifact",
+        )
+    if (
+        final_row.stage != "final_eval"
+        or final_row.status != "suitable"
+        or final_row.decision != "promote_for_scoring"
+        or not final_row.promoted_for_scoring
+        or final_row.evaluation_artifact is None
+    ):
+        manifest_path = _write_report_ready_manifest(
+            output_root,
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            status="skipped",
+            decision=_report_ready_skip_decision(final_row),
+            kill_reason="final_eval_not_suitable_for_scoring",
+            final_row=final_row,
+            promoted_path=None,
+        )
+        return _report_ready_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method=final_row.method if final_row.stage == "final_eval" else "report_ready",
+            status="skipped",
+            decision=_report_ready_skip_decision(final_row),
+            kill_reason="final_eval_not_suitable_for_scoring",
+            runtime_seconds=_elapsed_seconds(started_at),
+            evaluation_artifact=str(manifest_path),
+            training_metadata=final_row.training_metadata,
+            rmse=final_row.rmse,
+            best_baseline_rmse=final_row.best_baseline_rmse,
+            rmse_ratio_vs_best_baseline=final_row.rmse_ratio_vs_best_baseline,
+            directional_accuracy=final_row.directional_accuracy,
+            best_baseline_directional_accuracy=final_row.best_baseline_directional_accuracy,
+            directional_delta_vs_best_baseline=final_row.directional_delta_vs_best_baseline,
+            validation_mean_loss=final_row.validation_mean_loss,
+            interval_coverage=final_row.interval_coverage,
+            mean_interval_width=final_row.mean_interval_width,
+            calibration_proxy=final_row.calibration_proxy,
+            notes=f"no promoted artifact; final_eval status={final_row.status}",
+        )
+
+    try:
+        final_payload = json.loads(Path(final_row.evaluation_artifact).read_text(encoding="utf-8"))
+        if not isinstance(final_payload, dict):
+            raise ValueError("final_eval artifact must be a JSON object")
+        if final_payload.get("schema_version") != "ml.timesfm.final_evaluation.v1":
+            raise ValueError("report_ready requires a final_eval artifact")
+        if final_payload.get("suitable_for_scoring") is not True:
+            raise ValueError("final_eval artifact is not suitable_for_scoring")
+        csv_path = data_dir / f"{symbol}.csv"
+        bars = load_price_bars_csv(csv_path, ticker=symbol)
+        dataset = build_timesfm_dataset(
+            symbol,
+            bars,
+            config=TimesFmDatasetConfig(
+                context_length=args.context_length,
+                horizon_length=args.horizon_length,
+                target_field=args.target_field,
+                as_of=as_of,
+                max_latest_bar_age_days=args.max_latest_bar_age_days,
+            ),
+        )
+        promoted_path = _write_report_ready_evaluation_artifact(
+            output_root,
+            symbol=symbol,
+            final_payload=final_payload,
+            final_row=final_row,
+            data_check_row=data_check_row,
+            csv_path=csv_path,
+            dataset=dataset,
+            args=args,
+        )
+        manifest_path = _write_report_ready_manifest(
+            output_root,
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            status="suitable",
+            decision="promote_for_scoring",
+            kill_reason=None,
+            final_row=final_row,
+            promoted_path=promoted_path,
+        )
+        return _report_ready_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method=final_row.method,
+            status="suitable",
+            decision="promote_for_scoring",
+            kill_reason=None,
+            runtime_seconds=_elapsed_seconds(started_at),
+            model_id=final_row.model_id,
+            model_revision=final_row.model_revision,
+            adapter_sha256=final_row.adapter_sha256,
+            evaluation_artifact=str(promoted_path),
+            training_metadata=final_row.training_metadata,
+            rmse=final_row.rmse,
+            best_baseline_rmse=final_row.best_baseline_rmse,
+            rmse_ratio_vs_best_baseline=final_row.rmse_ratio_vs_best_baseline,
+            directional_accuracy=final_row.directional_accuracy,
+            best_baseline_directional_accuracy=final_row.best_baseline_directional_accuracy,
+            directional_delta_vs_best_baseline=final_row.directional_delta_vs_best_baseline,
+            validation_mean_loss=final_row.validation_mean_loss,
+            interval_coverage=final_row.interval_coverage,
+            mean_interval_width=final_row.mean_interval_width,
+            calibration_proxy=final_row.calibration_proxy,
+            promoted_for_scoring=True,
+            notes=(
+                "report-ready artifact promoted; "
+                f"final_eval_artifact={final_row.evaluation_artifact}; "
+                f"manifest={manifest_path}"
+            ),
+        )
+    except Exception as exc:
+        return _report_ready_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method=final_row.method if final_row.stage == "final_eval" else "report_ready",
+            status="failed",
+            decision="stop",
+            kill_reason=str(exc),
+            runtime_seconds=_elapsed_seconds(started_at),
+            training_metadata=final_row.training_metadata,
+            notes="report_ready failed before writing a scoring-ready artifact",
+        )
+
+
+def _write_report_ready_evaluation_artifact(
+    output_root: Path,
+    *,
+    symbol: str,
+    final_payload: dict[str, Any],
+    final_row: SignalFunnelLeaderboardRow,
+    data_check_row: SignalFunnelLeaderboardRow,
+    csv_path: Path,
+    dataset: TimesFmDataset,
+    args: argparse.Namespace,
+) -> Path:
+    from nlp_stock_prediction.ml.timesfm.evaluate import (
+        TimesFmBaselineEvaluation,
+        TimesFmEvaluationArtifact,
+        TimesFmEvaluationConfig,
+        TimesFmEvaluationMetrics,
+        TimesFmEvaluationRecord,
+        write_timesfm_evaluation_artifact,
+    )
+
+    max_windows = cast(int | None, final_payload.get("max_windows"))
+    windows = _final_eval_windows(dataset, max_windows=max_windows)
+    final_records = cast(list[dict[str, Any]], final_payload["records"])
+    records = _report_ready_records(
+        final_records,
+        windows=windows,
+        record_cls=TimesFmEvaluationRecord,
+    )
+    metrics = _report_ready_metrics(
+        tuple(record.timesfm_final_value for record in records),
+        tuple(record.actual_final_value for record in records),
+        tuple(record.actual_return for record in records),
+        tuple(record.timesfm_return for record in records),
+        metrics_cls=TimesFmEvaluationMetrics,
+        interval_widths=tuple(_report_ready_interval_width(record) for record in records),
+        interval_covered=tuple(record.interval_covered for record in records),
+    )
+    baselines = _report_ready_baselines(
+        records,
+        timesfm_metrics=metrics,
+        baseline_cls=TimesFmBaselineEvaluation,
+        metrics_cls=TimesFmEvaluationMetrics,
+    )
+    training_metadata, training_metadata_sha256 = _report_ready_training_metadata(
+        final_row,
+        symbol=symbol,
+        final_payload=final_payload,
+        args=args,
+    )
+    model_id = str(final_payload.get("model_id") or final_row.model_id or args.model_id)
+    model_revision = cast(
+        str | None,
+        final_payload.get("model_revision") or final_row.model_revision,
+    )
+    adapter_sha256 = str(final_payload.get("adapter_sha256") or final_row.adapter_sha256)
+    dataset_hash = str(final_payload.get("dataset_hash") or data_check_row.dataset_hash)
+    artifact = TimesFmEvaluationArtifact(
+        status="suitable",
+        suitable_for_scoring=True,
+        suitability_reasons=(),
+        ticker=symbol,
+        model_id=model_id,
+        model_revision=model_revision,
+        model_hash=_report_ready_model_hash(
+            model_id=model_id,
+            model_revision=model_revision,
+            adapter_sha256=adapter_sha256,
+            training_metadata_sha256=training_metadata_sha256,
+        ),
+        adapter_sha256=adapter_sha256,
+        training_metadata_sha256=training_metadata_sha256,
+        dataset_hash=dataset_hash,
+        evaluation_source_kind="csv",
+        evaluation_source_sha256=_file_sha256(csv_path),
+        evaluated_at=_parse_report_ready_datetime(str(final_payload.get("created_at"))),
+        latest_bar_timestamp=_parse_report_ready_timestamp(
+            data_check_row.latest_bar or str(records[-1].horizon_end)
+        ),
+        as_of=date.fromisoformat(str(final_payload.get("as_of") or args.as_of)),
+        config=TimesFmEvaluationConfig(
+            requested_device=args.device,
+            max_windows=max_windows,
+            min_evaluation_windows=args.min_evaluation_windows,
+            min_directional_accuracy=args.min_final_directional_accuracy,
+            max_rmse_ratio_vs_best_baseline=args.max_final_rmse_ratio_vs_best_baseline,
+            suitability_max_latest_bar_age_days=args.max_latest_bar_age_days,
+            as_of=date.fromisoformat(args.as_of),
+        ),
+        metrics=metrics,
+        baselines=baselines,
+        records=records,
+        forward_forecast=None,
+        training_metadata=training_metadata,
+        runtime_metadata={
+            "backend": "signal_funnel_report_ready",
+            "source_final_eval_artifact": final_row.evaluation_artifact,
+        },
+    )
+    promoted_path = output_root / "report_ready" / symbol / "best" / "evaluation.json"
+    write_timesfm_evaluation_artifact(artifact, promoted_path)
+    return promoted_path
+
+
+def _report_ready_records(
+    final_records: Sequence[dict[str, Any]],
+    *,
+    windows: Sequence[TimesFmWindow],
+    record_cls: type[Any],
+) -> tuple[Any, ...]:
+    windows_by_key = {
+        (str(window.context_end), str(window.horizon_end)): window for window in windows
+    }
+    records: list[Any] = []
+    for payload in final_records:
+        key = (str(payload["context_end"]), str(payload["horizon_end"]))
+        window = windows_by_key.get(key)
+        if window is None:
+            raise ValueError(f"final_eval record does not match held-out window: {key}")
+        context_final = window.context_values[-1]
+        recent_mean_final = _recent_mean_return_prediction(window)
+        records.append(
+            record_cls(
+                context_end=_parse_report_ready_timestamp(str(payload["context_end"])),
+                horizon_end=_parse_report_ready_timestamp(str(payload["horizon_end"])),
+                actual_final_value=float(payload["actual_final_value"]),
+                timesfm_final_value=float(payload["timesfm_final_value"]),
+                persistence_final_value=context_final,
+                recent_mean_return_final_value=recent_mean_final,
+                actual_return=float(payload["actual_return"]),
+                timesfm_return=float(payload["timesfm_return"]),
+                persistence_return=0.0,
+                recent_mean_return=_safe_return(recent_mean_final, context_final),
+                interval_lower=cast(float | None, payload.get("interval_lower")),
+                interval_upper=cast(float | None, payload.get("interval_upper")),
+                interval_covered=cast(bool | None, payload.get("interval_covered")),
+            )
+        )
+    return tuple(records)
+
+
+def _report_ready_baselines(
+    records: Sequence[Any],
+    *,
+    timesfm_metrics: Any,
+    baseline_cls: type[Any],
+    metrics_cls: type[Any],
+) -> tuple[Any, ...]:
+    actual_values = tuple(float(record.actual_final_value) for record in records)
+    actual_returns = tuple(float(record.actual_return) for record in records)
+    baselines = (
+        (
+            "last_close_persistence",
+            tuple(float(record.persistence_final_value) for record in records),
+            tuple(float(record.persistence_return) for record in records),
+        ),
+        (
+            "recent_mean_return",
+            tuple(float(record.recent_mean_return_final_value) for record in records),
+            tuple(float(record.recent_mean_return) for record in records),
+        ),
+    )
+    results: list[Any] = []
+    for name, predictions, predicted_returns in baselines:
+        baseline_metrics = _report_ready_metrics(
+            predictions,
+            actual_values,
+            actual_returns,
+            predicted_returns,
+            metrics_cls=metrics_cls,
+        )
+        results.append(
+            baseline_cls(
+                name=name,
+                metrics=baseline_metrics,
+                mae_delta_vs_timesfm=round(baseline_metrics.mae - timesfm_metrics.mae, 8),
+                rmse_delta_vs_timesfm=round(baseline_metrics.rmse - timesfm_metrics.rmse, 8),
+                directional_accuracy_delta_vs_timesfm=round(
+                    baseline_metrics.directional_accuracy - timesfm_metrics.directional_accuracy,
+                    8,
+                ),
+            )
+        )
+    return tuple(results)
+
+
+def _report_ready_metrics(
+    predictions: Sequence[float],
+    actual_values: Sequence[float],
+    actual_returns: Sequence[float],
+    predicted_returns: Sequence[float],
+    *,
+    metrics_cls: type[Any],
+    interval_covered: Sequence[bool | None] = (),
+    interval_widths: Sequence[float | None] = (),
+) -> Any:
+    if not predictions:
+        return metrics_cls(
+            sample_count=0,
+            mae=0.0,
+            rmse=0.0,
+            directional_accuracy=0.0,
+            mean_return_error=0.0,
+        )
+    errors = [
+        prediction - actual for prediction, actual in zip(predictions, actual_values, strict=True)
+    ]
+    abs_errors = [abs(error) for error in errors]
+    squared_errors = [error * error for error in errors]
+    direction_hits = [
+        int(_direction(predicted) == _direction(actual))
+        for predicted, actual in zip(predicted_returns, actual_returns, strict=True)
+    ]
+    return_errors = [
+        abs(predicted - actual)
+        for predicted, actual in zip(predicted_returns, actual_returns, strict=True)
+    ]
+    covered = [value for value in interval_covered if value is not None]
+    widths = [value for value in interval_widths if value is not None]
+    interval_coverage = sum(int(value) for value in covered) / len(covered) if covered else None
+    mean_interval_width = sum(widths) / len(widths) if widths else None
+    calibration_proxy = (
+        1.0 - abs(interval_coverage - 0.80) if interval_coverage is not None else None
+    )
+    return metrics_cls(
+        sample_count=len(predictions),
+        mae=round(sum(abs_errors) / len(abs_errors), 8),
+        rmse=round(math.sqrt(sum(squared_errors) / len(squared_errors)), 8),
+        directional_accuracy=round(sum(direction_hits) / len(direction_hits), 8),
+        mean_return_error=round(sum(return_errors) / len(return_errors), 8),
+        interval_coverage=round(interval_coverage, 8) if interval_coverage is not None else None,
+        mean_interval_width=round(mean_interval_width, 8)
+        if mean_interval_width is not None
+        else None,
+        calibration_proxy=round(max(0.0, min(1.0, calibration_proxy)), 8)
+        if calibration_proxy is not None
+        else None,
+    )
+
+
+def _report_ready_interval_width(record: Any) -> float | None:
+    if record.interval_lower is None or record.interval_upper is None:
+        return None
+    denominator = abs(float(record.persistence_final_value))
+    if denominator == 0.0:
+        return None
+    return abs(float(record.interval_upper) - float(record.interval_lower)) / denominator
+
+
+def _report_ready_training_metadata(
+    final_row: SignalFunnelLeaderboardRow,
+    *,
+    symbol: str,
+    final_payload: dict[str, Any],
+    args: argparse.Namespace,
+) -> tuple[JsonObject, str]:
+    if final_row.training_metadata is not None:
+        metadata_path = Path(final_row.training_metadata)
+        if metadata_path.exists():
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return cast(JsonObject, payload), _file_sha256(metadata_path)
+    fallback: JsonObject = {
+        "schema_version": "ml.timesfm.training_metadata.v1",
+        "ticker": symbol,
+        "model_id": final_payload.get("model_id") or final_row.model_id or args.model_id,
+        "model_revision": final_payload.get("model_revision") or final_row.model_revision,
+        "split": {
+            "context_length": args.context_length,
+            "horizon_length": args.horizon_length,
+        },
+        "source": {
+            "kind": "signal_funnel_report_ready_fallback",
+            "training_metadata_path": final_row.training_metadata,
+        },
+    }
+    return fallback, _hash_json_object(fallback)
+
+
+def _write_report_ready_manifest(
+    output_root: Path,
+    *,
+    run_id: str,
+    created_at: str,
+    as_of: date,
+    symbol: str,
+    status: FunnelStatus,
+    decision: FunnelDecision,
+    kill_reason: str | None,
+    final_row: SignalFunnelLeaderboardRow,
+    promoted_path: Path | None,
+) -> Path:
+    manifest_path = output_root / "report_ready" / symbol / "manifest.json"
+    payload = {
+        "schema_version": "ml.timesfm.report_ready_manifest.v1",
+        "run_id": run_id,
+        "created_at": created_at,
+        "as_of": as_of.isoformat(),
+        "symbol": symbol,
+        "stage": "report_ready",
+        "status": status,
+        "decision": decision,
+        "kill_reason": kill_reason,
+        "suitable_for_scoring": promoted_path is not None,
+        "source_final_eval_artifact": final_row.evaluation_artifact,
+        "promoted_evaluation_artifact": str(promoted_path) if promoted_path is not None else None,
+        "report_command_hint": (
+            "python -m nlp_stock_prediction run --date "
+            f"{as_of.isoformat()} --output reports/ --offline --ml-artifact {promoted_path}"
+            if promoted_path is not None
+            else None
+        ),
+    }
+    write_manifest(manifest_path, payload)
+    return manifest_path
+
+
+def _report_ready_final_state(
+    symbol: str,
+    final_row: SignalFunnelLeaderboardRow,
+    report_ready_row: SignalFunnelLeaderboardRow,
+) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "final_eval_status": final_row.status,
+        "final_eval_decision": final_row.decision,
+        "final_eval_artifact": final_row.evaluation_artifact,
+        "report_ready_status": report_ready_row.status,
+        "report_ready_decision": report_ready_row.decision,
+        "promoted_for_scoring": report_ready_row.promoted_for_scoring,
+        "promoted_artifact": report_ready_row.evaluation_artifact
+        if report_ready_row.promoted_for_scoring
+        else None,
+        "kill_reason": report_ready_row.kill_reason,
+    }
+
+
+def _report_ready_skip_decision(final_row: SignalFunnelLeaderboardRow) -> FunnelDecision:
+    return "stop" if final_row.decision == "stop" or final_row.status == "failed" else "audit_only"
+
+
+def _report_ready_model_hash(
+    *,
+    model_id: str,
+    model_revision: str | None,
+    adapter_sha256: str,
+    training_metadata_sha256: str,
+) -> str:
+    payload = {
+        "model_id": model_id,
+        "model_revision": model_revision,
+        "adapter_sha256": adapter_sha256,
+        "training_metadata_sha256": training_metadata_sha256,
+    }
+    return _hash_json_object(payload)
+
+
+def _hash_json_object(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _parse_report_ready_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.now(UTC)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _parse_report_ready_timestamp(value: str) -> date | datetime:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed
+
+
 def _hpo_trial_payload(trial: HpoTrial) -> dict[str, Any]:
     return {
         "run_id": trial.run_id,
@@ -3283,6 +3895,85 @@ def _final_eval_leaderboard_row(
     )
 
 
+def _report_ready_leaderboard_row(
+    *,
+    run_id: str,
+    created_at: str,
+    as_of: date,
+    symbol: str,
+    policy: TickerPolicy,
+    args: argparse.Namespace,
+    data_check_row: SignalFunnelLeaderboardRow,
+    method: str,
+    status: FunnelStatus,
+    decision: FunnelDecision,
+    kill_reason: str | None,
+    runtime_seconds: float,
+    notes: str | None,
+    model_id: str | None = None,
+    model_revision: str | None = None,
+    adapter_sha256: str | None = None,
+    evaluation_artifact: str | None = None,
+    training_metadata: str | None = None,
+    rmse: float | None = None,
+    best_baseline_rmse: float | None = None,
+    rmse_ratio_vs_best_baseline: float | None = None,
+    directional_accuracy: float | None = None,
+    best_baseline_directional_accuracy: float | None = None,
+    directional_delta_vs_best_baseline: float | None = None,
+    validation_mean_loss: float | None = None,
+    interval_coverage: float | None = None,
+    mean_interval_width: float | None = None,
+    calibration_proxy: float | None = None,
+    promoted_for_scoring: bool = False,
+) -> SignalFunnelLeaderboardRow:
+    return SignalFunnelLeaderboardRow(
+        run_id=run_id,
+        created_at=created_at,
+        as_of=as_of.isoformat(),
+        symbol=symbol,
+        stage="report_ready",
+        method=method,
+        status=status,
+        kill_reason=kill_reason,
+        decision=decision,
+        asset_type=policy.asset_type,
+        history_start=data_check_row.history_start,
+        latest_bar=data_check_row.latest_bar,
+        bar_count=data_check_row.bar_count,
+        train_windows=data_check_row.train_windows,
+        validation_windows=data_check_row.validation_windows,
+        test_windows=data_check_row.test_windows,
+        context_length=args.context_length,
+        horizon_length=args.horizon_length,
+        max_windows=args.final_max_windows,
+        runtime_seconds=runtime_seconds,
+        device=args.device,
+        model_id=model_id,
+        model_revision=model_revision,
+        adapter_sha256=adapter_sha256,
+        dataset_hash=data_check_row.dataset_hash,
+        evaluation_artifact=evaluation_artifact,
+        training_metadata=training_metadata,
+        rmse=rmse,
+        best_baseline_rmse=best_baseline_rmse,
+        rmse_ratio_vs_best_baseline=rmse_ratio_vs_best_baseline,
+        directional_accuracy=directional_accuracy,
+        best_baseline_directional_accuracy=best_baseline_directional_accuracy,
+        directional_delta_vs_best_baseline=directional_delta_vs_best_baseline,
+        raw_timesfm_rmse=None,
+        adapter_rmse_ratio_vs_raw=None,
+        adapter_directional_delta_vs_raw=None,
+        validation_mean_loss=validation_mean_loss,
+        interval_coverage=interval_coverage,
+        mean_interval_width=mean_interval_width,
+        calibration_proxy=calibration_proxy,
+        selected_for_next_stage=False,
+        promoted_for_scoring=promoted_for_scoring,
+        notes=notes,
+    )
+
+
 def _stage0_notes(data_record: dict[str, Any], counts: _WindowCounts) -> str:
     metadata = data_record.get("metadata")
     source = metadata.get("source") if isinstance(metadata, dict) else None
@@ -3347,7 +4038,7 @@ def _should_stop_after(completed_stage: FunnelStage, requested_stop_after: str) 
 def _default_stop_after_for_profile(profile: FunnelProfile) -> FunnelStage:
     if profile == "quick":
         return "raw_timesfm_screen"
-    return "final_eval"
+    return "report_ready"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -3372,7 +4063,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Stop after the named funnel stage. Defaults to raw_timesfm_screen for quick "
-            "profile and final_eval otherwise."
+            "profile and report_ready otherwise."
         ),
     )
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)

@@ -144,9 +144,9 @@ developed. It writes `manifest.json`, `leaderboard.json`, and `leaderboard.csv` 
 cheap LoRA adapter smoke only for raw TimesFM survivors. Smoke winners then enter bounded survivor
 HPO, where candidates are ranked by validation-window baseline lift before validation loss. The
 walkaway/full default then evaluates the selected adapter on untouched held-out test windows and
-marks it `promote_for_scoring` only when the final baseline-aware gates pass. Use `--profile quick`
-to stop after the raw TimesFM screen, or `--stop-after adapter_smoke` for an explicit smoke-stage
-run.
+emits a report-ready `ml.timesfm.evaluation.v1` artifact only when the final baseline-aware gates
+pass. Use `--profile quick` to stop after the raw TimesFM screen, or `--stop-after adapter_smoke`
+for an explicit smoke-stage run.
 
 Focused six-ticker HPO workflow:
 
@@ -177,6 +177,8 @@ and `reports/`.
 | `artifacts/ml/timesfm-funnel/survivor_hpo/<TICKER>/<TRIAL>.evaluation.json` | signal_funnel | Per-trial survivor HPO validation-window artifact. |
 | `artifacts/ml/timesfm-funnel/survivor_hpo/<TICKER>.summary.json` | signal_funnel | Survivor HPO selection summary, including the validation-selected trial. |
 | `artifacts/ml/timesfm-funnel/final_eval/<TICKER>.evaluation.json` | signal_funnel | Held-out test-window final evaluation and scoring-promotion decision for the selected HPO adapter. |
+| `artifacts/ml/timesfm-funnel/report_ready/<TICKER>/best/evaluation.json` | signal_funnel | Report-consumable `ml.timesfm.evaluation.v1` artifact to pass with `--ml-artifact` when final gates pass. |
+| `artifacts/ml/timesfm-funnel/report_ready/<TICKER>/manifest.json` | signal_funnel | Per-ticker report-ready decision, source final-eval artifact, promoted path, and command hint. |
 | `artifacts/ml/wsb-six-10y/focused-hpo-manifest.json` | focused_hpo | Per-ticker HPO status, selected run, suitability, and failure metadata. |
 | `artifacts/ml/wsb-six-10y/<TICKER>/best/evaluation.json` | focused_hpo | Promoted evaluation artifact for the selected focused HPO adapter. |
 | `reports/<YYYY-MM-DD>/audit/ml-artifacts.json` | report run | TimesFM evaluation payload copied into the report audit bundle. |

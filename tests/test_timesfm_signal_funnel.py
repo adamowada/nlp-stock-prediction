@@ -8,7 +8,9 @@ from typing import Any
 
 import pytest
 
+from nlp_stock_prediction.analysis.ml_signal import load_timesfm_ml_signal_attachment
 from nlp_stock_prediction.ml.timesfm import signal_funnel
+from nlp_stock_prediction.ml.timesfm.evaluate import TimesFmEvaluationArtifact
 from nlp_stock_prediction.ml.timesfm.focused_hpo import write_ohlcv_csv
 
 
@@ -50,9 +52,10 @@ def test_signal_funnel_stage0_dry_run_writes_manifest_and_leaderboard(tmp_path: 
         "adapter_smoke",
         "survivor_hpo",
         "final_eval",
+        "report_ready",
     ]
-    assert manifest["skipped_stages"][0]["reason"] == "stage_not_implemented"
-    assert len(leaderboard["rows"]) == 6
+    assert manifest["skipped_stages"] == []
+    assert len(leaderboard["rows"]) == 7
     assert leaderboard["rows"][0]["symbol"] == "MU"
     assert leaderboard["rows"][0]["status"] == "passed"
     assert leaderboard["rows"][0]["decision"] == "continue"
@@ -73,6 +76,9 @@ def test_signal_funnel_stage0_dry_run_writes_manifest_and_leaderboard(tmp_path: 
     assert leaderboard["rows"][5]["stage"] == "final_eval"
     assert leaderboard["rows"][5]["status"] == "skipped"
     assert leaderboard["rows"][5]["kill_reason"] == "dry_run_no_final_eval"
+    assert leaderboard["rows"][6]["stage"] == "report_ready"
+    assert leaderboard["rows"][6]["status"] == "skipped"
+    assert leaderboard["rows"][6]["kill_reason"] == "dry_run_no_report_ready_artifact"
     assert csv_rows[0]["symbol"] == "MU"
     assert csv_rows[0]["status"] == "passed"
 
@@ -976,6 +982,8 @@ def test_signal_funnel_stage5_promotes_suitable_held_out_final_eval(
             "16",
             "--final-max-windows",
             "8",
+            "--stop-after",
+            "final_eval",
         ],
         raw_predictor=_halfway_positive_raw_predictor,
         adapter_smoke_runner=_exact_adapter_smoke_runner,
@@ -1046,6 +1054,8 @@ def test_signal_funnel_stage5_keeps_weak_final_eval_audit_only(
             "16",
             "--final-max-windows",
             "12",
+            "--stop-after",
+            "final_eval",
         ],
         raw_predictor=_halfway_positive_raw_predictor,
         adapter_smoke_runner=_exact_adapter_smoke_runner,
@@ -1115,6 +1125,8 @@ def test_signal_funnel_stage5_skips_when_survivor_hpo_has_no_selection(
             "cpu",
             "--screen-max-windows",
             "16",
+            "--stop-after",
+            "final_eval",
         ],
         raw_predictor=_halfway_positive_raw_predictor,
         adapter_smoke_runner=_bad_adapter_smoke_runner,
@@ -1174,6 +1186,8 @@ def test_signal_funnel_stage5_records_final_eval_failure(
             "16",
             "--final-max-windows",
             "12",
+            "--stop-after",
+            "final_eval",
         ],
         raw_predictor=_halfway_positive_raw_predictor,
         adapter_smoke_runner=_exact_adapter_smoke_runner,
@@ -1187,6 +1201,159 @@ def test_signal_funnel_stage5_records_final_eval_failure(
     assert final_row["status"] == "failed"
     assert final_row["decision"] == "stop"
     assert final_row["kill_reason"] == "synthetic final eval failure"
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage6_promotes_report_ready_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage6-promote",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+            "--final-max-windows",
+            "8",
+        ],
+        raw_predictor=_halfway_positive_raw_predictor,
+        adapter_smoke_runner=_exact_adapter_smoke_runner,
+        survivor_hpo_runner=_baseline_lift_hpo_runner,
+        final_eval_runner=_exact_final_eval_runner,
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    report_row = next(row for row in records if row["stage"] == "report_ready")
+
+    assert manifest["requested_stop_after"] == "report_ready"
+    assert report_row["method"] == "trial_high_loss_exact"
+    assert report_row["status"] == "suitable"
+    assert report_row["decision"] == "promote_for_scoring"
+    assert report_row["promoted_for_scoring"] is True
+    assert Path(report_row["evaluation_artifact"]).parts[-4:] == (
+        "report_ready",
+        "MU",
+        "best",
+        "evaluation.json",
+    )
+
+    promoted_path = Path(report_row["evaluation_artifact"])
+    promoted = TimesFmEvaluationArtifact.model_validate_json(
+        promoted_path.read_text(encoding="utf-8")
+    )
+    attachment = load_timesfm_ml_signal_attachment(promoted_path)
+    report_manifest = json.loads(
+        (output_root / "report_ready" / "MU" / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert promoted.schema_version == "ml.timesfm.evaluation.v1"
+    assert promoted.status == "suitable"
+    assert promoted.suitable_for_scoring is True
+    assert promoted.ticker == "MU"
+    assert promoted.metrics.sample_count == 8
+    assert len(promoted.records) == 8
+    assert attachment.signal.status == "usable"
+    assert manifest["promoted_artifacts"] == [
+        {
+            "symbol": "MU",
+            "path": str(promoted_path),
+            "source_final_eval_artifact": str(output_root / "final_eval" / "MU.evaluation.json"),
+        }
+    ]
+    assert manifest["final_states"][0]["promoted_artifact"] == str(promoted_path)
+    assert report_manifest["promoted_evaluation_artifact"] == str(promoted_path)
+    assert "--ml-artifact" in report_manifest["report_command_hint"]
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage6_skips_weak_final_eval_without_promotion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage6-weak",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+            "--final-max-windows",
+            "12",
+        ],
+        raw_predictor=_halfway_positive_raw_predictor,
+        adapter_smoke_runner=_exact_adapter_smoke_runner,
+        survivor_hpo_runner=_baseline_lift_hpo_runner,
+        final_eval_runner=_bad_final_eval_runner,
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    report_row = next(row for row in records if row["stage"] == "report_ready")
+    report_manifest = json.loads(
+        Path(report_row["evaluation_artifact"]).read_text(encoding="utf-8")
+    )
+
+    assert report_row["status"] == "skipped"
+    assert report_row["decision"] == "audit_only"
+    assert report_row["promoted_for_scoring"] is False
+    assert report_row["kill_reason"] == "final_eval_not_suitable_for_scoring"
+    assert manifest["promoted_artifacts"] == []
+    assert manifest["final_states"][0]["promoted_artifact"] is None
+    assert report_manifest["promoted_evaluation_artifact"] is None
+    assert not (output_root / "report_ready" / "MU" / "best" / "evaluation.json").exists()
 
 
 @pytest.mark.unit
