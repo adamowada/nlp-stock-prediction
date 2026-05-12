@@ -6,7 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from nlp_stock_prediction.contracts.base import (
     Confidence,
@@ -51,6 +51,8 @@ class AnalysisComponent(ContractModel):
 class TechnicalMlSignal(ContractModel):
     """Conservative sidecar for local ML-assisted technical-analysis output."""
 
+    model_config = ConfigDict(extra="ignore")
+
     model_hash: NonEmptyStr
     dataset_hash: NonEmptyStr
     as_of: date | datetime
@@ -68,7 +70,6 @@ class TechnicalMlSignal(ContractModel):
     validation_accuracy: Confidence | None = None
     validation_brier_score: float | None = Field(default=None, ge=0.0, le=1.0)
     warning_ids: tuple[str, ...] = Field(default_factory=tuple)
-    limitations: tuple[str, ...] = Field(default_factory=tuple)
     metadata: JsonObject = Field(default_factory=dict)
 
 

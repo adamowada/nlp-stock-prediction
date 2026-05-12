@@ -64,7 +64,6 @@ def score_strategy_cluster(
     cluster: StrategyCluster,
     analysis: AnalysisBundle,
     signals: RecommendationSignals,
-    disclaimer_id: str,
     risk_profile: RiskProfile = RiskProfile.EXPLORATORY,
     account_capital: Decimal | None = None,
     max_loss_estimate: Decimal | None = None,
@@ -135,7 +134,6 @@ def score_strategy_cluster(
         evidence=cluster.evidence,
         score_input_ids=(analysis.analysis_id, cluster.cluster_id),
         warnings=(*cluster.warnings, *analysis.warnings),
-        disclaimer_id=disclaimer_id,
         metadata={
             "score_version": SCORE_VERSION,
             "confidence_inputs": analysis.confidence_inputs,

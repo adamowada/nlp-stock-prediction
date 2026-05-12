@@ -99,18 +99,17 @@ Frozen warning codes are:
   recorded as penalties and failed score gates rather than recommendation support.
 - TimesFM cannot be the sole reason a candidate qualifies; a candidate that only crosses the score
   threshold because of the TimesFM technical adjustment must remain watch-only.
-- Actionable trade candidates must cite evidence and include score, risk, invalidation, and
-  disclaimer references.
+- Actionable trade candidates must cite evidence and include score, risk, and invalidation
+  details.
 - Qualified trade candidates must pass risk gates, have no failed risk or score gates, and meet or
   exceed the configured score threshold.
-- V1 disclaimers must remain educational-only, not financial advice, and no-auto-trading.
 - Reports must include exactly six ticker sections matching ticker discovery order.
 - Reports may include `evidence_sources`; when present, every cited evidence ID in ticker sections,
   strategy clusters, analysis components, trade candidates, and score inputs must resolve to a
   normalized evidence source with provenance.
 - Reports without trade candidates must include a summary explaining that no qualified opportunity was found.
-- Report trade candidates must use discovered tickers, have unique candidate IDs, match the report
-  disclaimer, and be referenced by exactly one matching ticker section.
+- Report trade candidates must use discovered tickers, have unique candidate IDs, and be
+  referenced by exactly one matching ticker section.
 - Valid ticker discovery must include candidate records and a raw snapshot ID.
 
 ## Phase 1 Contract Harness
@@ -124,11 +123,11 @@ The Phase 1 harness covers:
   invocation.
 - Deterministic fake-provider protocol behavior for Reddit, X/social, news, market data,
   fundamentals, macro, and LLM extraction adapters.
-- Daily report shape, including six ticker sections, summaries for reports where nothing qualifies, provider health, data
-  freshness, disclaimers, audit manifests, and JSON round trips.
+- Daily report shape, including six ticker sections, summaries for reports where nothing
+  qualifies, provider health, data freshness, audit manifests, and JSON round trips.
 - Minimal Markdown report outline, including required header, freshness, provider warnings,
-  per-ticker subsections, final qualified-strategy section or a section explaining that nothing qualified, disclaimer, and audit
-  artifact sections.
+  per-ticker subsections, final qualified-strategy section or a section explaining that nothing
+  qualified, and audit artifact sections.
 
 ## Fixture Shape
 

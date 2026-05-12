@@ -9,7 +9,7 @@ from math import isfinite
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from nlp_stock_prediction.contracts.base import (
     AwareDatetime,
@@ -23,11 +23,6 @@ DeviceRequest = Literal["auto", "cpu", "cuda"]
 SelectedDevice = Literal["cpu", "cuda"]
 TimesFmTrainingSourceKind = Literal["csv", "synthetic"]
 TimesFmLoraBias = Literal["none", "all", "lora_only"]
-
-TIMESFM_TRAINING_LIMITATION = (
-    "Experimental local TimesFM LoRA technical-analysis model for research only; not investment "
-    "advice, not a standalone recommendation, and not live trading instructions."
-)
 
 
 class TimesFmLoraConfig(ContractModel):
@@ -97,6 +92,8 @@ class TimesFmLossMetrics(ContractModel):
 class TimesFmTrainingResult(ContractModel):
     """Serializable metadata for one local TimesFM LoRA training run."""
 
+    model_config = ConfigDict(extra="ignore")
+
     schema_version: NonEmptyStr = "ml.timesfm.training_result.v1"
     ticker: TickerSymbol
     model_id: NonEmptyStr
@@ -117,7 +114,6 @@ class TimesFmTrainingResult(ContractModel):
     total_parameters: int = Field(ge=1)
     trainable_param_percent: float = Field(ge=0.0, le=100.0)
     runtime_metadata: JsonObject = Field(default_factory=dict)
-    usage_limitations: NonEmptyStr = TIMESFM_TRAINING_LIMITATION
 
     @model_validator(mode="after")
     def validate_training_result(self) -> TimesFmTrainingResult:
@@ -217,7 +213,6 @@ def _metrics_payload(result: TimesFmTrainingResult) -> JsonObject:
         "csv_sha256": result.csv_sha256,
         "train": result.train_metrics.model_dump(mode="json"),
         "validation": result.validation_metrics.model_dump(mode="json"),
-        "usage_limitations": result.usage_limitations,
     }
 
 
@@ -255,12 +250,10 @@ def _metadata_payload(
         },
         "metrics_artifact_sha256": metrics_sha256,
         "runtime": result.runtime_metadata,
-        "usage_limitations": result.usage_limitations,
     }
 
 
 __all__ = [
-    "TIMESFM_TRAINING_LIMITATION",
     "DeviceRequest",
     "SelectedDevice",
     "TimesFmLoraBias",

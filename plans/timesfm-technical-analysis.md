@@ -22,11 +22,9 @@ train locally, evaluate locally, attach an evidence-preserving technical signal 
 
 ## Non-goals
 
-- Do not add live brokerage execution, executable order payloads, or automated trading.
 - Do not use hosted TimeGPT or other remote model APIs for the core phase.
 - Do not broaden this phase to Chronos, Moirai, TinyTimeMixer, Toto, Time-MoE, or model ensembles.
-- Do not claim TimesFM output is financial advice or a standalone recommendation.
-- Do not let the ML sidecar override evidence, risk gates, provider warnings, or report disclaimers.
+- Do not let the ML sidecar override evidence, risk gates, provider warnings, or scoring gates.
 - Do not require CUDA, Hugging Face downloads, or the TimesFM stack for the default deterministic
   test suite.
 
@@ -123,7 +121,7 @@ Status: implemented.
   - A local CUDA smoke loads TimesFM 2.5 and writes a forecast artifact for a synthetic or fixture
     ticker.
   - Forecast artifacts include model ID, model revision when available, input hash, dataset hash,
-    forecast horizon, forecast timestamp, and limitation text.
+    forecast horizon, and forecast timestamp.
   - Adapter failures degrade into structured unavailable/weak signal states instead of crashing the
     report pipeline.
 
@@ -163,7 +161,7 @@ Status: implemented.
     - existing local logistic technical baseline where applicable
   - Track directional accuracy, MAE/RMSE, interval coverage, calibration proxy, benchmark deltas,
     and a latest-context forward forecast from the trained adapter.
-  - Mark weak, stale, or underperforming models as not suitable for recommendation scoring support.
+  - Mark weak, stale, or underperforming models as unsuitable for scoring support.
 - Files likely affected:
   - new `src/nlp_stock_prediction/ml/timesfm/evaluate.py`
   - `src/nlp_stock_prediction/ml/training.py`
@@ -185,7 +183,7 @@ Status: implemented.
     the current report contract style.
   - Attach evaluated TimesFM output and the latest trained-adapter forward forecast to per-ticker
     technical analysis.
-  - Surface the signal in Markdown, JSON, and audit artifacts with model provenance and limitations.
+  - Surface the signal in Markdown, JSON, and audit artifacts with model provenance.
   - Preserve separation between deterministic technical indicators and ML interpretation.
 - Files likely affected:
   - `src/nlp_stock_prediction/cli.py`
@@ -199,7 +197,7 @@ Status: implemented.
   - `tests/test_phase1_cli_contracts.py`
 - Done when:
   - Markdown includes a concise TimesFM technical signal with horizon, latest forward forecast
-    direction, confidence, uncertainty, model hash, and limitations.
+    direction, confidence, uncertainty, and model hash.
   - JSON preserves the full model/evaluation/audit provenance needed to reproduce the signal.
   - Reports still render cleanly when the TimesFM artifact is missing, stale, weak, or unavailable.
   - Existing offline and scrape fixture reports remain deterministic unless an ML artifact is
@@ -246,7 +244,7 @@ Status: implemented.
   - this plan
 - Done when:
   - A user can follow docs from a clean Windows checkout to a TimesFM evaluation artifact.
-  - Docs clearly state that the model is a local prediction/technical-analysis tool, not live trading.
+  - Docs explain the local prediction/technical-analysis workflow.
   - Verification commands and artifact paths are current.
   - The active roadmap points to this plan as the source of truth for the current phase.
 
@@ -280,10 +278,9 @@ Status: implemented.
 - [x] Training writes adapter, metadata, metrics, hashes, package versions, and hardware metadata.
 - [x] Evaluation compares TimesFM to simple baselines and records suitability flags.
 - [x] Evaluation records a latest-context forward forecast from the trained adapter.
-- [x] Report integration preserves model provenance, dataset provenance, confidence inputs, warnings,
-      and limitations.
-- [x] TimesFM output cannot create a standalone recommendation or bypass evidence/risk gates.
-- [x] Documentation explains setup, commands, artifacts, limitations, and troubleshooting.
+- [x] Report integration preserves model provenance, dataset provenance, confidence inputs, and warnings.
+- [x] TimesFM output cannot bypass evidence/risk gates.
+- [x] Documentation explains setup, commands, artifacts, and troubleshooting.
 
 ## Verification Commands
 
@@ -331,8 +328,8 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   if a later dependency or kernel requirement blocks native Windows.
 - 2026-05-12-00-00: Start with PEFT/LoRA fine-tuning rather than full fine-tuning because the smoke
   showed a small trainable parameter set, low VRAM use, and a clean adapter artifact workflow.
-- 2026-05-12-00-00: Keep TimesFM as a technical-analysis sidecar, not a standalone recommendation
-  engine, because project policy requires evidence, risk gates, confidence inputs, and disclaimers.
+- 2026-05-12-00-00: Keep TimesFM as a technical-analysis sidecar because project policy requires
+  evidence, risk gates, and confidence inputs.
 
 ## Progress Log
 

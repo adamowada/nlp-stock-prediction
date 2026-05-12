@@ -6,7 +6,7 @@ from datetime import datetime
 from math import isfinite
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from nlp_stock_prediction.contracts.base import (
     AwareDatetime,
@@ -43,6 +43,8 @@ class TimesFmQuantileForecast(ContractModel):
 class TimesFmForecastArtifact(ContractModel):
     """Serializable local TimesFM forecast artifact."""
 
+    model_config = ConfigDict(extra="ignore")
+
     schema_version: NonEmptyStr = "ml.timesfm.forecast.v1"
     status: TimesFmForecastStatus
     ticker: TickerSymbol
@@ -62,7 +64,6 @@ class TimesFmForecastArtifact(ContractModel):
     directional_probability_proxy: Confidence | None = None
     uncertainty_score: Confidence | None = None
     warning_ids: tuple[str, ...] = Field(default_factory=tuple)
-    limitations: tuple[str, ...] = Field(default_factory=tuple)
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -77,8 +78,6 @@ class TimesFmForecastArtifact(ContractModel):
                 raise ValueError("quantile forecast lengths must match forecast horizon")
         if self.status == "unavailable" and not self.warning_ids:
             raise ValueError("unavailable TimesFM artifacts must include a warning")
-        if not self.limitations:
-            raise ValueError("TimesFM forecast artifacts must include usage limitations")
         return self
 
 

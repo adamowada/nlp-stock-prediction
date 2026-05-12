@@ -24,14 +24,6 @@ from nlp_stock_prediction.ml.timesfm.evaluate import (
 )
 from nlp_stock_prediction.ml.training import EvaluationResult, TechnicalLogisticModel
 
-_DEFAULT_LIMITATION = (
-    "Experimental local technical model output; not investment advice and not a standalone "
-    "recommendation input."
-)
-_TIMESFM_LIMITATION_FALLBACK = (
-    "Experimental local TimesFM technical-analysis evaluation; not investment advice and not a "
-    "standalone recommendation input."
-)
 _TIMESFM_MODEL_KIND = "timesfm_2_5_lora_evaluation"
 _TIMESFM_AUDIT_ARTIFACT_ID = "ml-timesfm-evaluation"
 _MlSignalStatus = Literal["usable", "weak", "stale", "conflicting", "unavailable"]
@@ -73,7 +65,6 @@ def build_technical_ml_signal(
             validation_accuracy=evaluation.metrics.accuracy,
             validation_brier_score=evaluation.metrics.brier_score,
             warning_ids=("ml-technical-signal:no_predictions",),
-            limitations=(_DEFAULT_LIMITATION,),
             metadata={
                 "model_kind": model.model_kind,
                 "threshold": model.threshold,
@@ -109,7 +100,6 @@ def build_technical_ml_signal(
         validation_accuracy=evaluation.metrics.accuracy,
         validation_brier_score=evaluation.metrics.brier_score,
         warning_ids=tuple(dict.fromkeys(warning_ids)),
-        limitations=(_DEFAULT_LIMITATION,),
         metadata={
             "model_kind": model.model_kind,
             "threshold": model.threshold,
@@ -230,7 +220,6 @@ def build_timesfm_ml_signal(
         if artifact.metrics.sample_count > 0
         else None,
         warning_ids=warning_ids,
-        limitations=(artifact.usage_limitations or _TIMESFM_LIMITATION_FALLBACK,),
         metadata=metadata,
     )
 

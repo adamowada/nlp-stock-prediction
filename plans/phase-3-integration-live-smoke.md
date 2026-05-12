@@ -13,17 +13,15 @@ report bundle, and expose opt-in live smoke checks for provider/API/scraping edg
 and network access are configured.
 
 End of Phase 3 means the CLI is complete for local V1 use: it writes Markdown, JSON, and audit
-artifacts; handles outcomes where nothing qualifies and degraded-provider outcomes clearly; and documents the remaining
-live-provider requirements. It does not mean automated brokerage execution, production hosting, or
-unqualified investment advice.
+artifacts; handles outcomes where nothing qualifies and degraded-provider outcomes clearly; and
+documents the remaining live-provider requirements.
 
 ## Non-goals
 
-- Do not add real-money brokerage execution or auto-trading.
 - Do not make default tests depend on credentials, internet access, live LLM quota, or provider
   availability.
 - Do not treat Reddit, X/Twitter, news, or other public discussion as fact without attribution.
-- Do not weaken evidence, provenance, risk-gate, disclaimer, or audit requirements to make reports
+- Do not weaken evidence, provenance, risk-gate, or audit requirements to make reports
   easier to generate.
 - Do not broaden Phase 3 into new product surfaces beyond the local V1 CLI without an explicit plan
   update.
@@ -81,7 +79,7 @@ unqualified investment advice.
 - Files likely affected: CLI parser/help, run configuration, provider setup docs, README, tests.
 - Done when:
   - CLI help documents date, output, capital, risk profile, fixture/cache paths, offline behavior,
-    and live-provider limitations.
+    and live-provider configuration.
   - Missing credentials produce structured provider warnings or documented skips instead of
     crashes.
   - Offline mode remains deterministic and network-free.
@@ -117,7 +115,6 @@ unqualified investment advice.
   - Recommendations cite evidence and pass risk gates.
   - Days with no qualified opportunities are represented cleanly.
   - Provider warnings and stale/missing data are visible in report output.
-  - Educational-only, non-advice, no-auto-trading disclaimers are present.
 
 ### Stage 5: Risk, Reliability, And Failure Drills
 
@@ -173,8 +170,8 @@ python -m pytest -m live_scraping
 - [x] Opt-in live smoke checks have documented credential requirements and actionable skips/failures.
 - [x] Stage 3 live SEC API and configured public scraping smoke paths have narrow assertions and
       documented environment variables.
-- [x] End-to-end report QA confirms evidence, provenance, warnings, confidence inputs, and
-      disclaimers are preserved.
+- [x] End-to-end report QA confirms evidence, provenance, warnings, and confidence inputs are
+      preserved.
 - [x] Failure drills cover all Stage 5 scenarios listed above.
 - [x] Final V1 acceptance gate passes from a clean checkout.
 
@@ -207,8 +204,7 @@ Live checks remain opt-in:
 - 2026-05-11-15-15: Stage 0 does not require API keys or `.env` files; missing credentials become a
   blocker only when a user-requested live check cannot run without them.
 - 2026-05-11-15-15: A complete Phase 3 V1 CLI means local deterministic report generation plus
-  opt-in live smoke coverage and documented live limitations, not brokerage execution or production
-  deployment.
+  opt-in live smoke coverage and documented provider configuration.
 - 2026-05-11-15-50: Stage 3 keeps live LLM smoke as an explicit reserved gate because the current
   V1 CLI has fixture-backed LLM validation but no live LLM adapter or credential contract.
 - 2026-05-11-15-50: Live smoke tests skip only when the global live opt-in is absent; once live
@@ -261,7 +257,7 @@ Live checks remain opt-in:
   coverage, a non-offline example in the roadmap, and older Phase 2 lane plans without historical
   status headers.
 - 2026-05-11-15-35: Hardened `run --help` for date/output/capital/risk-profile/fixture/cache/offline
-  behavior and live-provider limitations, added `docs/configuration.md` and `.env.example`,
+  behavior and live-provider configuration, added `docs/configuration.md` and `.env.example`,
   documented live-smoke and provider credential conventions without secrets, clarified that
   `--fixture-dir` and `--cache-dir` are metadata/reserved in current offline runs, added Alpha
   Vantage missing-credential tests, and aligned drift in README, contracts, testing, roadmap, AGENTS,

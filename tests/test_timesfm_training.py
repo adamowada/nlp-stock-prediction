@@ -206,7 +206,6 @@ def test_timesfm_training_command_writes_deterministic_artifacts_with_fake_runne
     assert payload["artifact_sha256"]["metadata"] == file_sha256(metadata_path)
     assert (adapter_dir / "adapter_config.json").exists()
     assert (adapter_dir / "adapter_model.safetensors").exists()
-    assert "not live trading" in payload["usage_limitations"]
 
 
 @pytest.mark.unit

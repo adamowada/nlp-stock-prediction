@@ -1,8 +1,4 @@
-"""ML helpers for local technical-analysis experiments.
-
-The ML lane is intentionally isolated from scoring and report generation. Outputs are metadata-rich
-research artifacts and are not investment advice.
-"""
+"""ML helpers for local technical-analysis experiments."""
 
 from nlp_stock_prediction.ml.dataset import (
     DatasetSplit,

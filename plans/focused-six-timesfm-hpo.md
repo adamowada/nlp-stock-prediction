@@ -19,7 +19,7 @@ auditable but must not support recommendation scoring.
 - Do not build one general multi-ticker stock predictor in this phase.
 - Do not force 10 years of history for tickers whose current economic entity has less public
   trading history.
-- Do not use TimesFM as a standalone recommendation engine.
+- Keep TimesFM routed through the existing evidence, risk, and scoring gates.
 - Do not tune against the final report-scoring outcome.
 - Do not use the final held-out TimesFM evaluation split for HPO candidate selection.
 

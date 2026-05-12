@@ -429,7 +429,7 @@ def test_data_reference_keeps_auditable_json_metadata_and_type_taxonomy() -> Non
         DataReference.model_validate(
             {
                 **reference.model_dump(),
-                "reference_type": "broker_order",
+                "reference_type": "unknown_artifact",
             }
         )
 
@@ -783,7 +783,6 @@ def _trade_candidate(
         evidence=evidence,
         score_input_ids=("analysis-tsla-1", "cluster-tsla-calls-cpi"),
         warnings=(_warning(),),
-        disclaimer_id="educational-disclaimer-v1",
         metadata={"run_date": "2026-05-11", "trace_id": "trace-candidate-tsla"},
     )
 
@@ -862,7 +861,6 @@ def test_trade_candidate_serializes_recommendation_risk_and_evidence_spine() -> 
     assert dumped["score"]["score_version"] == "phase1-test-score-v1"
     assert dumped["score"]["components"][0]["evidence"][0]["evidence_id"] == "evidence-tsla-1"
     assert dumped["evidence"][0]["quote"] == "TSLA calls into CPI if volume holds"
-    assert dumped["disclaimer_id"] == "educational-disclaimer-v1"
 
     with pytest.raises(ValidationError):
         TradeCandidate.model_validate(

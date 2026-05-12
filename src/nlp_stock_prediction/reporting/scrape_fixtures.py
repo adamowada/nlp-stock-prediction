@@ -853,9 +853,6 @@ def _fixture_ml_signal(generated_at: datetime) -> TechnicalMlSignal:
         freshness_status=FreshnessStatus.FRESH,
         validation_accuracy=0.58,
         validation_brier_score=0.21,
-        limitations=(
-            "Fixture ML signal is local research metadata and cannot qualify a trade alone.",
-        ),
         metadata={"source_mode": "scrape", "fixture": True},
     )
 

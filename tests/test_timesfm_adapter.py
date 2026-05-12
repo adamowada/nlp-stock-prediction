@@ -183,7 +183,6 @@ def test_timesfm_adapter_builds_usable_artifact_with_fake_model_without_cuda() -
     assert artifact.interval_width is not None
     assert artifact.directional_probability_proxy == 1.0
     assert artifact.uncertainty_score is not None
-    assert artifact.limitations
     assert "future_values" not in model.calls[0]
     assert model.calls[0]["past_values"][0] == list(dataset.windows[-1].context_values)
 

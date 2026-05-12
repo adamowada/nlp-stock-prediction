@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a live source mode that uses compliance-aware scraping adapters where public HTML is the right
+Add a live source mode that uses public HTML adapters where public pages are the right
 source, official APIs where they are the safer or supported interface, a local RTX 3090 training
 pipeline for ML-assisted technical analysis, and a Codex-agent-based NLP fundamental analysis lane
 that produces contract-valid, evidence-grounded outputs for the daily report.
@@ -16,12 +16,10 @@ from generated analysis and recommendations.
 
 - Do not bypass robots.txt, paywalls, login walls, anti-bot systems, CAPTCHAs, or platform access
   controls.
-- Do not use real-money brokerage execution, auto-trading, or executable order payloads.
 - Do not claim scraped social/news discussion as fact without attribution and provenance.
 - Do not make the default deterministic test suite depend on live websites, GPUs, browser sessions,
   or local Codex agent availability.
-- Do not treat the ML model as investment advice or as a replacement for evidence, risk gates,
-  and disclaimers.
+- Do not treat the ML model as a replacement for evidence, risk gates, or scoring gates.
 - Do not scrape TradingView internals embedded inside Candlecharts unless legal review and source
   terms allow it.
 
@@ -97,10 +95,10 @@ Parallel workstreams:
 | ID | Branch | Owner Scope | Depends On | Primary Write Set |
 | --- | --- | --- | --- | --- |
 | P0 | `feature/release-v1` or integration branch | Coordinator, merge sequencing, final E2E | all | `plans/`, final docs, integration conflict resolution only |
-| W1 | `codex/scraping-policy` | Source policy registry, scraping warnings, shared fetch/cache contracts | none | `src/nlp_stock_prediction/compliance.py`, `src/nlp_stock_prediction/providers/_base.py`, `src/nlp_stock_prediction/contracts/`, `tests/test_lane_f_*` |
+| W1 | `codex/scraping-policy` | Source policy registry, scraping warnings, shared fetch/cache contracts | none | `src/nlp_stock_prediction/providers/_base.py`, `src/nlp_stock_prediction/providers/scraping.py`, `src/nlp_stock_prediction/contracts/`, `tests/test_lane_f_*` |
 | W2 | `codex/reddit-scraper` | Reddit public-page discovery/evidence adapter and fixtures | W1 interfaces, or temporary local shim | `src/nlp_stock_prediction/reddit/`, `src/nlp_stock_prediction/providers/reddit_scrape.py`, `tests/test_lane_a_reddit_*`, Reddit fixtures |
 | W3 | `codex/apnews-scraper` | AP hub/article scraper and news evidence normalization | W1 interfaces, or temporary local shim | `src/nlp_stock_prediction/providers/apnews.py`, narrow additions to `providers/news.py`, AP tests/fixtures |
-| W4 | `codex/candlecharts-feasibility` | Candlecharts feasibility probe and unavailable/widget-only warning path | W1 interfaces, market contracts read-only unless needed | `src/nlp_stock_prediction/providers/candlecharts.py`, Candlecharts tests/fixtures, docs for data limitations |
+| W4 | `codex/candlecharts-feasibility` | Candlecharts feasibility probe and unavailable/widget-only warning path | W1 interfaces, market contracts read-only unless needed | `src/nlp_stock_prediction/providers/candlecharts.py`, Candlecharts tests/fixtures, docs for data constraints |
 | W5 | `codex/x-orchestration` | Bind the existing X provider into live-source provider slots and smoke coverage | current X provider, W6 provider hook shape | narrow additions to X orchestration registration and X-specific tests |
 | W6 | `codex/live-source-orchestration` | CLI mode, provider hook shape, provider composition, degraded-provider reporting, audit manifest | W1 for policy types; adapter PRs for final E2E | `src/nlp_stock_prediction/cli.py`, `pipeline.py`, `reporting/`, E2E tests |
 | W7 | `codex/ml-technical-analysis` | Dataset schema, leakage checks, CPU/GPU training/evaluation commands | existing market contracts | `src/nlp_stock_prediction/ml/`, ML tests, ignored artifact paths, ML docs |
@@ -150,7 +148,7 @@ Integration discipline:
 
 ## Milestones
 
-### Milestone 1: Compliance And Scraping Policy Gate
+### Milestone 1: Source Policy And Scraping Gate
 
 - Changes:
   - Add a source policy registry for each target with robots status, allowed paths, disallowed paths,
@@ -161,12 +159,12 @@ Integration discipline:
   - Preserve the current network-blocked default tests.
 - Files likely affected:
   - `src/nlp_stock_prediction/providers/_base.py`
-  - `src/nlp_stock_prediction/compliance.py`
+  - `src/nlp_stock_prediction/providers/scraping.py`
   - `src/nlp_stock_prediction/contracts/providers.py`
   - `src/nlp_stock_prediction/contracts/enums.py`
   - `docs/configuration.md`
   - `.env.example`
-  - `tests/test_lane_f_compliance.py`
+  - source-policy tests
   - new tests for scraping policy behavior
 - Verification:
   - Unit tests for allowed, disallowed, login-required, and drift-detected policies.
@@ -202,7 +200,7 @@ Integration discipline:
     and retain fixture fallback for tests.
   - Keep ticker extraction compatible with the existing `ticker-container-*` parser, but add drift
     probes for alternate public markup.
-  - Do not use Reddit API, JSON endpoints, private endpoints, or login-only content.
+  - Use public Reddit pages covered by the source policy.
 - Files likely affected:
   - `src/nlp_stock_prediction/reddit/discovery.py`
   - `src/nlp_stock_prediction/reddit/evidence.py`
@@ -273,7 +271,7 @@ evidence-only and do not generate live recommendations.
     emit structured provider warnings and continue the report.
 - Files likely affected:
   - `src/nlp_stock_prediction/providers/social.py`
-  - `src/nlp_stock_prediction/compliance.py`
+  - `src/nlp_stock_prediction/providers/scraping.py`
   - `tests/test_lane_b_providers.py`
   - `docs/configuration.md`
 - Verification:
@@ -355,7 +353,7 @@ evidence-only and do not generate live recommendations.
 
 - Changes:
   - Extend `TechnicalAnalysis` or add an ML sidecar component that includes model version, input
-    feature references, prediction horizon, probability/calibration, and limitations.
+    feature references, prediction horizon, and probability/calibration.
   - Combine deterministic technical indicators and ML signal conservatively.
   - Block ML-driven recommendations unless model metrics and data freshness pass configured gates.
 - Files likely affected:
@@ -431,10 +429,10 @@ evidence-only and do not generate live recommendations.
       gates.
 - [x] Codex fundamental analysis agent lane has a strict request/response schema and fixture-backed
       tests.
-- [x] Reports preserve source evidence, provider metadata, confidence inputs, disclaimers, and
-      warnings for blocked/stale/drifted providers.
+- [x] Reports preserve source evidence, provider metadata, confidence inputs, and warnings for
+      blocked/stale/drifted providers.
 - [x] Existing offline behavior remains deterministic and green.
-- [x] Documentation covers configuration, compliance limits, training, and agent workflow.
+- [x] Documentation covers configuration, provider limits, training, and agent workflow.
 
 ## Verification commands
 
@@ -446,7 +444,7 @@ python -m pytest tests/test_lane_b_providers.py
 python -m pytest tests/test_lane_c_extraction.py
 python -m pytest tests/test_lane_d_analysis.py tests/test_lane_d_scoring.py
 python -m pytest tests/test_lane_e_cli_e2e.py
-python -m pytest tests/test_lane_f_compliance.py tests/test_lane_f_reliability.py
+python -m pytest tests/test_lane_f_reliability.py
 ruff check .
 ruff format --check .
 mypy .

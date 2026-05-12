@@ -204,7 +204,6 @@ def _rescore_report_with_timesfm_signal(
                 cluster=cluster,
                 analysis=analysis,
                 signals=signals,
-                disclaimer_id=report.disclaimer.disclaimer_id,
                 risk_profile=report.risk_profile,
                 account_capital=existing.risk_plan.account_capital,
                 max_loss_estimate=existing.risk_plan.max_loss_estimate,

@@ -29,7 +29,7 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 - Include ML negative cases for insufficient history, duplicate bars, missing OHLCV, impossible
   prices, split-like leakage, and temporal train/validation leakage.
 - Include local training command smoke coverage that verifies model, metrics, metadata, artifact
-  SHA-256 hashes, split metadata, selected-device metadata, and usage-limitations are written.
+  SHA-256 hashes, split metadata, and selected-device metadata are written.
 
 ### 2. Schema and model tests
 
@@ -77,7 +77,7 @@ python -m pytest -m live_scraping
 - Use frozen prompt inputs and expected schema-shaped outputs for deterministic validation.
 - Test that unsupported strategies are rejected when evidence is missing.
 - Test clustering behavior for near-duplicates such as "buy calls," "weekly calls," and "calls into earnings."
-- For future live LLM smoke tests, validate schema compliance and evidence preservation rather than
+- For future live LLM smoke tests, validate schema conformance and evidence preservation rather than
   exact wording. The current V1 CLI does not enable a live LLM adapter; LLM validation is
   fixture-backed.
 

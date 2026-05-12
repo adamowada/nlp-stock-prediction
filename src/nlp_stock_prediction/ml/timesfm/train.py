@@ -254,7 +254,6 @@ def main(
                 "gpu_name": run.result.device.gpu_name,
                 "train_final_loss": run.result.train_metrics.final_loss,
                 "validation_final_loss": run.result.validation_metrics.final_loss,
-                "usage_limitations": run.result.usage_limitations,
             },
             sort_keys=True,
         )

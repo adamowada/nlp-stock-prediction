@@ -30,7 +30,6 @@ def render_markdown_report(report: DailyReport) -> str:
     lines.extend(
         [
             f"Data freshness: {report.data_freshness.summary}",
-            f"Disclaimer: {report.disclaimer.text}",
             "",
             "## Data Freshness",
             "",
@@ -146,16 +145,7 @@ def render_markdown_report(report: DailyReport) -> str:
             ]
         )
 
-    lines.extend(
-        [
-            "## Disclaimer",
-            "",
-            report.disclaimer.text,
-            "",
-            "## Audit Artifacts",
-            "",
-        ]
-    )
+    lines.extend(["## Audit Artifacts", ""])
     manifest = report.audit_manifest
     if isinstance(manifest, AuditManifest) and manifest.artifacts:
         for artifact in manifest.artifacts:
@@ -296,7 +286,6 @@ def _render_ml_signal(ml_signal: TechnicalMlSignal) -> list[str]:
     if model_kind == "timesfm_2_5_lora_evaluation":
         expected_return = ml_signal.expected_return
         interval_width = ml_signal.forecast_interval_width
-        limitations = tuple(str(item) for item in ml_signal.limitations)
         line = (
             "- TimesFM signal: "
             f"{ml_signal.signal.value}; "
@@ -308,10 +297,7 @@ def _render_ml_signal(ml_signal: TechnicalMlSignal) -> list[str]:
             f"{_format_optional_percent('; expected return ', expected_return)}"
             f"{_format_optional_percent('; interval width ', interval_width)}."
         )
-        lines = [line]
-        if limitations:
-            lines.append(f"- TimesFM limitations: {_format_list(limitations)}")
-        return lines
+        return [line]
     return [
         "- ML signal: "
         f"{ml_signal.signal.value}; "

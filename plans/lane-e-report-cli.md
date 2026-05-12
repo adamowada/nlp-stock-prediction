@@ -14,7 +14,6 @@ Implement the Phase 2 Lane E surface so `python -m nlp_stock_prediction run --da
 - Do not modify `src/nlp_stock_prediction/contracts/`.
 - Do not implement live provider, extraction, analysis, or scoring integrations owned by other lanes.
 - Do not add new third-party dependencies.
-- Do not introduce brokerage execution or real-money trading actions.
 
 ## Context
 
@@ -41,7 +40,7 @@ Relevant files:
 
 - Changes: Add deterministic report builder, Markdown renderer, JSON renderer, and audit writer.
 - Files likely affected: `src/nlp_stock_prediction/pipeline.py`, `src/nlp_stock_prediction/reporting/`.
-- Verification: JSON validates as `DailyReport`; Markdown includes required header, six ticker sections, final strategies or a section explaining that nothing qualified, disclaimer, and audit artifacts.
+- Verification: JSON validates as `DailyReport`; Markdown includes required header, six ticker sections, final strategies or a section explaining that nothing qualified, and audit artifacts.
 
 ### Milestone 3: CLI Wiring
 

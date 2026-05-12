@@ -11,7 +11,6 @@ Status: complete. This plan is retained as the historical Phase 2 source of trut
 ## Non-goals
 
 - Do not change frozen public contracts unless a blocker is escalated and recorded first.
-- Do not add real-money brokerage execution or auto-trading.
 - Do not make default tests depend on credentials, internet access, or live provider quota.
 - Do not require live API, live scraping, or live LLM checks for normal handoff.
 

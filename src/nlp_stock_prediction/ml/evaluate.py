@@ -39,7 +39,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "samples": result.metrics.samples,
                 "accuracy": result.metrics.accuracy,
                 "log_loss": result.metrics.log_loss,
-                "usage_limitations": result.usage_limitations,
             },
             sort_keys=True,
         )

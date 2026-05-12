@@ -18,7 +18,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from nlp_stock_prediction.contracts import PriceBar
 from nlp_stock_prediction.contracts.base import (
@@ -51,10 +51,6 @@ _INSTALL_HINT = (
     "Install the optional TimesFM stack first. On Windows with an NVIDIA GPU, install a CUDA "
     "PyTorch wheel from https://pytorch.org/get-started/locally/ and then run "
     '`python -m pip install -e ".[timesfm]"`.'
-)
-_EVALUATION_LIMITATION = (
-    "Experimental local TimesFM technical-analysis evaluation for research only; not investment "
-    "advice, not a standalone recommendation, and not live trading instructions."
 )
 _BLOCKING_MODEL_SOURCE_WARNING_IDS = frozenset({"timesfm_adapter_hash_mismatch"})
 
@@ -183,6 +179,8 @@ class TimesFmForwardForecast(ContractModel):
 class TimesFmEvaluationArtifact(ContractModel):
     """Serializable TimesFM rolling evaluation artifact."""
 
+    model_config = ConfigDict(extra="ignore")
+
     schema_version: NonEmptyStr = "ml.timesfm.evaluation.v1"
     status: TimesFmEvaluationStatus
     suitable_for_scoring: bool
@@ -207,7 +205,6 @@ class TimesFmEvaluationArtifact(ContractModel):
     forward_forecast: TimesFmForwardForecast | None = None
     training_metadata: JsonObject
     runtime_metadata: JsonObject = Field(default_factory=dict)
-    usage_limitations: NonEmptyStr = _EVALUATION_LIMITATION
 
     @model_validator(mode="after")
     def validate_artifact(self) -> TimesFmEvaluationArtifact:
@@ -421,7 +418,6 @@ def main(
                 "baseline_rmse": {
                     baseline.name: baseline.metrics.rmse for baseline in artifact.baselines
                 },
-                "usage_limitations": artifact.usage_limitations,
             },
             sort_keys=True,
         )

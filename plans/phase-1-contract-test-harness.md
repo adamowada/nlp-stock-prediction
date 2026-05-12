@@ -14,7 +14,6 @@ shape.
 - Do not implement live provider adapters, scraping, LLM calls, analysis formulas, report rendering,
   recommendation scoring, or audit writing.
 - Do not start Phase 2 lane implementation worktrees from the contract base.
-- Do not add real-money brokerage execution or auto-trading behavior.
 - Do not require network access, API credentials, or live dependency availability for the default
   test suite.
 
@@ -66,7 +65,7 @@ shape.
 - [x] CLI tests cover help, valid run parsing, invalid dates/capital, offline/fixture/cache options,
       and Phase 1's intentional run exit code.
 - [x] Provider contract tests use deterministic fake providers and verify graceful failure envelopes.
-- [x] Report-shape tests verify exactly six ticker sections, summaries for reports where nothing qualifies, disclaimer fields,
+- [x] Report-shape tests verify exactly six ticker sections, summaries for reports where nothing qualifies,
       provider health, data freshness, audit manifest serialization, recommendation linkage, and a
       minimal Markdown section outline.
 - [x] Default tests do not require network access or credentials.
@@ -97,8 +96,7 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/  # expect
   the contract gate is complete.
 - 2026-05-11-13-23: Phase 1 includes a small single-threaded contract revision for discovered
   guardrail gaps: `None` is no longer coerced into strings/tickers, evidence reference spans must be
-  monotonic, score breakdowns require components, and v1 disclaimers must keep educational,
-  not-financial-advice, and no-auto-trading flags enabled.
+  monotonic, and score breakdowns require components.
 - 2026-05-11-13-42: Phase 1 owns cross-object contract integrity that later lanes rely on:
   qualified candidates must pass risk/score gates, report recommendation IDs must link to matching
   candidates, provider/fixture envelopes must be coherent, and external provenance must carry an

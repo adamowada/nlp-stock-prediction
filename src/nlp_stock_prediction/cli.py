@@ -25,7 +25,7 @@ _CLI_EPILOG = """Examples:
 
 Configuration:
   Offline runs are deterministic and do not use network providers.
-  Scrape source mode uses compliance-aware provider adapters with deterministic fixtures by default.
+  Scrape source mode uses public-provider adapters with deterministic fixtures by default.
   Add --live-providers with --source-mode scrape to call configured live providers.
   Add --ml-artifact to attach an evaluated local TimesFM technical-analysis sidecar.
   A local .env file is loaded automatically without overriding exported shell variables.
@@ -122,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "Optional evaluated local TimesFM artifact to attach as a technical-analysis sidecar; "
-            "it does not enable trading or bypass evidence/risk gates."
+            "scoring still requires evidence/risk gates."
         ),
     )
     run_parser.add_argument(
@@ -130,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("offline", "scrape"),
         default=None,
         help=(
-            "Explicit source mode. Use 'scrape' for the experimental compliance-aware "
+            "Explicit source mode. Use 'scrape' for the experimental public-provider "
             "provider path with deterministic fixtures by default; add --live-providers for "
             "real provider calls."
         ),

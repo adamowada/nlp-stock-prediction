@@ -93,7 +93,6 @@ def _model_source(tmp_path: Path) -> TimesFmEvaluationModelSource:
             "adapter_dir_name": "adapter",
             "adapter_artifact_sha256": directory_sha256(adapter_dir),
         },
-        "usage_limitations": "not investment advice",
     }
     metadata_path = model_dir / "training-metadata.json"
     metadata_path.write_text(

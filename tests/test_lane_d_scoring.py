@@ -39,7 +39,6 @@ from nlp_stock_prediction.scoring import (
 from nlp_stock_prediction.scoring.risk import assess_risk
 
 RUN_DATE = date(2026, 5, 11)
-DISCLAIMER_ID = "educational-disclaimer-v1"
 
 
 def _evidence_ref(evidence_id: str = "evidence-nvda-1") -> EvidenceReference:
@@ -129,7 +128,6 @@ def _timesfm_signal(
             "source_artifact_sha256": "a" * 64,
             "validation_accuracy": validation_accuracy,
             "warning_ids": warning_ids,
-            "limitations": ("Fixture TimesFM sidecar for scoring tests.",),
             "metadata": {
                 "model_kind": "timesfm_2_5_lora_evaluation",
                 "suitable_for_scoring": status == "usable",
@@ -299,7 +297,6 @@ def test_scoring_emits_qualified_defined_risk_candidate_with_auditable_component
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
     component_names = {component.name for component in candidate.score.components}
 
@@ -341,7 +338,6 @@ def test_ml_signal_conflict_penalizes_and_prevents_qualification() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -374,7 +370,6 @@ def test_weak_ml_signal_penalizes_and_prevents_qualification() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -403,7 +398,6 @@ def test_supportive_timesfm_signal_strengthens_existing_evidence_supported_candi
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
     candidate = score_strategy_cluster(
         cluster=cluster,
@@ -412,7 +406,6 @@ def test_supportive_timesfm_signal_strengthens_existing_evidence_supported_candi
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     baseline_technical = _component_by_name(baseline, "technical-alignment")
@@ -478,7 +471,6 @@ def test_non_usable_timesfm_sidecars_penalize_and_prevent_qualification(
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     technical = _component_by_name(candidate, "technical-alignment")
@@ -511,7 +503,6 @@ def test_timesfm_conflict_with_deterministic_technical_analysis_blocks_qualifica
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -541,7 +532,6 @@ def test_timesfm_wide_forecast_interval_blocks_qualification() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     technical = _component_by_name(candidate, "technical-alignment")
@@ -572,7 +562,6 @@ def test_timesfm_cannot_overcome_failed_evidence_or_risk_gates() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
     risk_failed = score_strategy_cluster(
         cluster=_cluster(direction=Direction.BULLISH),
@@ -589,7 +578,6 @@ def test_timesfm_cannot_overcome_failed_evidence_or_risk_gates() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("11"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert evidence_failed.action == RecommendationAction.WATCH
@@ -616,7 +604,6 @@ def test_timesfm_cannot_be_the_only_reason_a_candidate_qualifies() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     summary = build_no_trade_summary((candidate,))
@@ -661,7 +648,6 @@ def test_contradiction_penalties_lower_score_and_prevent_qualification() -> None
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -688,7 +674,6 @@ def test_unsupported_recommendation_instrument_is_avoided_and_not_qualified() ->
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     qualified = select_qualified_candidates((candidate,))
@@ -720,7 +705,6 @@ def test_high_sarcasm_joke_warning_penalizes_and_prevents_qualification() -> Non
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -749,7 +733,6 @@ def test_conflicting_source_evidence_warning_penalizes_and_prevents_qualificatio
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -782,7 +765,6 @@ def test_no_trade_days_are_valid_when_no_candidates_qualify() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("12"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     qualified = select_qualified_candidates((candidate,))

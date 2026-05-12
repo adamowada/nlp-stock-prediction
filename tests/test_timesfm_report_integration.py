@@ -86,7 +86,6 @@ def test_offline_report_attaches_explicit_timesfm_artifact_to_markdown_json_and_
     assert tsla_section.data_quality["ml_signal"] == "timesfm_evaluation_artifact"
     assert "TimesFM signal: supports" in markdown
     assert f"model hash `{'a' * 64}`" in markdown
-    assert "TimesFM limitations:" in markdown
     assert report.trade_candidates
     candidate = report.trade_candidates[0]
     assert candidate.score.score_version == "lane-d-score-v2"
@@ -343,6 +342,5 @@ def _evaluation_artifact(
         training_metadata={
             "schema_version": "ml.timesfm.training_metadata.v1",
             "split": {"horizon_length": 2},
-            "usage_limitations": "fixture",
         },
     )

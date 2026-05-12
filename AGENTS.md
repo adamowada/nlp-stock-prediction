@@ -42,7 +42,6 @@ If the final project uses a task runner, keep this section updated with the cano
 - Use structured parsers or typed clients where available; avoid ad hoc string parsing except for tightly scoped extraction rules covered by tests.
 - Preserve source provenance for all external data, including provider name, fetched timestamp, permalink or source URL, raw identifier, and freshness.
 - Do not present Reddit, X/Twitter, or news discussion as fact without attribution.
-- Do not add real-money brokerage execution in this project unless explicitly planned and approved.
 - Keep secrets out of the repo. Load API keys from environment variables or local `.env` files that are ignored by git.
 - Make external calls through provider adapters so tests can use fixtures and mocks without network access.
 - Handle rate limits, partial provider failures, and stale data explicitly.
@@ -76,7 +75,7 @@ If the final project uses a task runner, keep this section updated with the cano
 
 - The requested behavior is implemented and covered by focused tests.
 - Existing tests pass, and relevant lint/typecheck/build commands pass where applicable.
-- Generated reports preserve evidence, provider metadata, confidence inputs, and disclaimers.
+- Generated reports preserve evidence, provider metadata, and confidence inputs.
 - External provider failures degrade gracefully and are visible in the report or logs.
 - Documentation is updated when commands, configuration, behavior, or report structure changes.
 - No secrets, raw credentials, or unrelated generated artifacts are committed.

@@ -1,24 +1,18 @@
 # nlp-stock-prediction
 
-A TDD-first Python project for generating a daily, evidence-grounded stock opportunity report for retail traders.
+A Python CLI for building evidence-grounded stock opportunity reports.
 
-The app will discover the six tickers highlighted by r/wallstreetbets' daily Devvit ticker card, collect recent public discussion and news, always query X API recent search for the top 50 relevant stock-news/social posts for each ticker when live provider orchestration is enabled, extract discussed trading strategies with source evidence, and combine that signal with technical, fundamental, sector, and macro analysis. The final output is intended to be a Markdown report plus structured JSON and audit artifacts for traceability.
+The app discovers the six tickers from the r/wallstreetbets daily Devvit ticker card, gathers public discussion/news/market context, extracts discussed strategies with citations, scores candidate ideas against risk and confidence inputs, and writes Markdown, JSON, and audit artifacts. The current branch also includes a local TimesFM 2.5 technical-analysis path for Windows + RTX 3090.
 
-## Current status
+## Status
 
-Phase 3 is complete for the local V1 CLI on `feature/release-v1`, and the follow-on scrape/ML/agent slices are merged into that branch. The CLI has three explicit local modes: deterministic `--offline`, fixture-backed `--source-mode scrape`, and opt-in `--source-mode scrape --live-providers`. The live-provider path calls Reddit public pages, AP News public HTML, Candlecharts feasibility, and X recent search, then writes provider health, normalized evidence, and audit artifacts; it intentionally stays evidence-only and does not generate live recommendations. Phase 4 local TimesFM 2.5 technical analysis is complete on the Windows RTX 3090 path; see `plans/timesfm-technical-analysis.md` for the acceptance record and `docs/configuration.md` for the workflow. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+- Deterministic offline report generation is implemented.
+- Fixture-backed scrape mode is implemented.
+- Opt-in live provider collection is implemented for public Reddit/AP/Candlecharts/X evidence paths.
+- Local TimesFM 2.5 smoke, training, rolling evaluation, report attachment, and scoring integration are implemented.
+- Live provider runs currently collect evidence and audit metadata; live extraction/scoring is the next report-generation step.
 
-## Intended workflow
-
-1. Discover the daily r/wallstreetbets ticker card and extract six tickers.
-2. Retrieve recent WSB posts and daily-thread comments for each ticker.
-3. Use evidence-grounded NLP/LLM extraction to identify discussed strategies.
-4. Gather public market, news, X top relevant ticker discussion, fundamental, sector, and macro data.
-5. Generate one daily report with ticker sections, qualified opportunity ideas or a clear explanation when nothing qualifies, provider warnings, freshness, evidence, and disclaimers.
-
-## Development
-
-Canonical local commands:
+## Commands
 
 ```sh
 python -m pytest
@@ -32,17 +26,9 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape --live-providers --cache-dir cache/live
 ```
 
-Optional TimesFM 2.5 Windows smoke:
+## TimesFM 2.5
 
-```sh
-python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
-python -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json
-python -m nlp_stock_prediction.ml.timesfm.train --synthetic --ticker TSLA --device cuda --output-dir artifacts/ml/timesfm-train-smoke --epochs 1 --max-steps 1 --batch-size 1 --validation-batches 1
-python -m nlp_stock_prediction.ml.timesfm.evaluate --synthetic --ticker TSLA --model-dir artifacts/ml/timesfm-train-smoke --device cuda --output artifacts/ml/timesfm-eval-smoke/evaluation.json --max-windows 1 --min-evaluation-windows 1
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/timesfm-eval-smoke/evaluation.json
-```
-
-Windows TimesFM from local CSV:
+Windows setup:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -51,28 +37,30 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu128
 .\.venv\Scripts\python.exe -m pip install -e ".[timesfm]"
 .\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
+```
+
+Single-ticker CSV workflow:
+
+```powershell
 .\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --csv data/ml/TSLA.csv --ticker TSLA --device cuda --output-dir artifacts/ml/TSLA/timesfm --epochs 1 --max-steps 20 --as-of 2026-05-11 --max-latest-bar-age-days 5
 .\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --csv data/ml/TSLA.csv --ticker TSLA --model-dir artifacts/ml/TSLA/timesfm --device cuda --output artifacts/ml/TSLA/timesfm/evaluation.json --as-of 2026-05-11 --suitability-max-latest-bar-age-days 5
 .\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
 ```
 
-Focused six-ticker TimesFM HPO from adjusted daily OHLCV:
+Focused six-ticker HPO:
 
 ```powershell
 .\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda
 ```
 
-The focused HPO workflow selects the best adapter by training validation loss, then runs the
-held-out TimesFM evaluator once for that selected adapter so the final quality gate remains untouched
-by candidate selection.
+S&P 500 batch training:
 
-The local CSV belongs under an ignored path such as `data/ml/TSLA.csv` and must include
-`timestamp`, `open`, `high`, `low`, `close`, and `volume`, with optional `adjusted_close`.
-Generated TimesFM artifacts are ignored under `artifacts/ml/...`; see `docs/configuration.md` for
-artifact details, Windows cache notes, and troubleshooting.
+```powershell
+.\.venv\Scripts\python.exe data\ml\train_sp500_timesfm_batch.py --skip-existing
+```
 
-The canonical CLI invocation is the Python module form, `python -m nlp_stock_prediction`. If a console script is added later, it should remain a thin alias for that module command and the docs should be updated together.
+CSV files belong under ignored paths such as `data/ml/`. Generated models, adapters, metrics, and reports belong under ignored paths such as `artifacts/` and `reports/`.
 
-The offline run writes `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/` using deterministic fixture data. `--source-mode scrape` writes the same report bundle plus `audit/provider-results.json`, using deterministic provider fixtures and degraded-provider probes rather than live network calls. Add `--live-providers` to `--source-mode scrape` for explicit local live calls to Reddit public pages, AP News public HTML, Candlecharts feasibility, and X recent search. Add `--ml-artifact` with an evaluated local TimesFM artifact to attach the trained adapter's latest forward forecast as a technical-analysis sidecar in Markdown, JSON, and audit payloads; Lane D can use that sidecar only as a bounded technical score input, and it does not enable trading or bypass evidence/risk gates. The CLI automatically loads a local `.env` file without overriding exported shell variables. The default test harness blocks network access; live tests require explicit opt-in environment variables and, for provider-specific checks, credentials or configured URLs.
+## Notes
 
-Configuration details, live-smoke environment variables, and `.env` handling are documented in `docs/configuration.md`. Real credentials belong in environment variables or ignored local `.env` files, never in committed files.
+The canonical CLI entrypoint is `python -m nlp_stock_prediction`. Keep provider credentials in environment variables or ignored `.env` files. See `docs/configuration.md` for provider settings, TimesFM artifact details, and troubleshooting.

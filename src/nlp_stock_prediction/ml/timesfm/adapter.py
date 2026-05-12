@@ -34,10 +34,6 @@ from nlp_stock_prediction.ml.train import load_price_bars_csv
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 
 DEFAULT_FORECAST_OUTPUT_PATH = Path("artifacts/ml/timesfm-forecast-smoke/forecast.json")
-_LIMITATION = (
-    "Experimental local TimesFM technical forecast; not investment advice and not a standalone "
-    "recommendation input."
-)
 _INSTALL_HINT = (
     "Install the optional TimesFM stack first. On Windows with an NVIDIA GPU, install a CUDA "
     "PyTorch wheel from https://pytorch.org/get-started/locally/ and then run "
@@ -220,7 +216,6 @@ def _forecast_with_model(
         directional_probability_proxy=summary["directional_probability_proxy"],
         uncertainty_score=summary["uncertainty_score"],
         warning_ids=warning_ids,
-        limitations=(_LIMITATION,),
         metadata={
             "selected_device": selected_device,
             "context_length": window.context_length,
@@ -257,7 +252,6 @@ def _unavailable_artifact(
         context_end=_as_datetime(window.context_end),
         forecast_horizon_sessions=window.horizon_length,
         warning_ids=(warning,),
-        limitations=(_LIMITATION,),
         metadata={
             "error": error_message,
             "context_length": window.context_length,

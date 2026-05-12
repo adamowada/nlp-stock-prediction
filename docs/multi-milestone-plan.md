@@ -6,7 +6,7 @@ Build a TDD-first Python CLI that generates one daily, evidence-grounded stock o
 
 The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, always uses X API recent search for the top 50 relevant stock-news/social posts for each discovered ticker when live provider orchestration is enabled, extracts discussed trading strategies with evidence, combines that signal with technical, fundamental, sector, and macro analysis, then writes Markdown and JSON reports.
 
-The v1 posture is exploratory but auditable. The app may surface speculative stock/options ideas, but each recommendation must include confidence, source evidence, risks, invalidation criteria, and a clear non-advice disclaimer. No real-money brokerage execution is included.
+The v1 posture is exploratory but auditable. The app may surface speculative stock/options ideas, but each recommendation must include confidence, source evidence, risks, and invalidation criteria.
 
 This roadmap is organized for git worktrees and Codex subagents. Contracts were settled single-threaded first; implementation then happened in parallel lanes from the same frozen contract commit; Phase 3 now returns to a coordinated integration and hardening flow.
 
@@ -42,7 +42,7 @@ Current state: Phase 0 contract settlement, Phase 1 contract test harness, Phase
    - Use `docs/configuration.md` as the detailed Windows workflow and troubleshooting guide.
    - Keep TimesFM dependencies optional so deterministic tests remain lightweight and network-free.
    - Run local Windows RTX 3090 smoke, LoRA fine-tuning, rolling evaluation, and report integration.
-   - Treat TimesFM as a technical-analysis sidecar, not a standalone recommendation engine.
+   - Treat TimesFM as a technical-analysis sidecar that works through the existing evidence, risk, and scoring gates.
 
 ## Contract Gate
 
@@ -102,7 +102,7 @@ Shared behavior:
 - Treat ticker discovery as valid only when the Devvit ticker-card parser produces exactly six unique tickers by first-seen order.
 - Reject unsupported strategy and recommendation claims unless they cite normalized evidence records.
 - Reject qualified recommendations that fail risk gates, fail score gates, or do not meet their configured score threshold.
-- Keep report sections, recommendation IDs, candidate tickers, disclaimers, and summaries for reports where nothing qualifies internally consistent.
+- Keep report sections, recommendation IDs, candidate tickers, and summaries for reports where nothing qualifies internally consistent.
 - Degrade gracefully when providers fail and surface failures in report warnings or logs.
 
 ## Parallel Implementation Lanes
@@ -197,7 +197,7 @@ Ownership:
 Deliverables:
 
 - Produce one Markdown report and one JSON report per run.
-- Include date, data freshness, provider warnings, and disclaimer in the report header.
+- Include date, data freshness, and provider warnings in the report header.
 - Include six ticker sections with Reddit strategies, social/news summary, technical analysis, company fundamentals, sector fundamentals, macro context, and per-ticker opportunity notes.
 - Include a final section listing confident trading strategies or explicitly stating that none qualified.
 - Ensure JSON mirrors the report and preserves raw evidence IDs, confidence scores, provider metadata, and recommendation inputs.
@@ -211,7 +211,7 @@ Ownership:
 - Provider health messages and graceful degradation.
 - CI marker wiring.
 - Live API and live scraping smoke checks.
-- Compliance guardrails.
+- Provider reliability and failure handling.
 
 Deliverables:
 
@@ -219,7 +219,7 @@ Deliverables:
 - Clearly distinguish official API data from public scraping fallback data.
 - Keep default tests deterministic and fixture-backed.
 - Mark live dependency tests separately and require explicit credentials, network access, and quota controls.
-- Ensure generated reports include legal/financial disclaimers and prohibit auto-trading in v1.
+- Ensure provider failures degrade cleanly and remain visible in report and audit output.
 
 ## Worktree And Subagent Protocol
 
@@ -259,7 +259,7 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/live-aapl 
 
 - The contract gate is complete before parallel implementation begins.
 - Each lane has clear ownership and can be assigned to a separate git worktree and Codex subagent.
-- Public contracts preserve evidence, provider metadata, confidence inputs, and disclaimers.
+- Public contracts preserve evidence, provider metadata, and confidence inputs.
 - Contract and fixture-backed tests define expected behavior before implementation fills it in.
 - Default tests remain deterministic and do not require live credentials or network access.
 - Live API, live scraping, and e2e markers are registered; fixture-backed e2e coverage now runs while live checks remain opt-in.
@@ -283,6 +283,6 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/live-aapl 
 - The first complete version is a local Python CLI that runs manually.
 - Reports are written as Markdown plus structured JSON.
 - Recommendations may include stocks and defined-risk options.
-- The risk posture is exploratory, with explicit evidence, risk notes, and disclaimers.
+- The risk posture is exploratory, with explicit evidence and risk notes.
 - Use free official data sources first, with permitted public scraping fallback where necessary.
 - Contract settlement is intentionally single-threaded; implementation after the contract gate is intentionally parallel.
