@@ -132,11 +132,15 @@ Train/evaluate/attach:
 .\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
 ```
 
-S&P 500 batch workflow:
+Focused six-ticker HPO workflow:
 
 ```powershell
-.\.venv\Scripts\python.exe data\ml\train_sp500_timesfm_batch.py --skip-existing
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda
 ```
+
+The retired broad S&P 500 batch helper workflow is no longer documented or kept in `data/ml/`.
+Use focused HPO for the current WSB ticker set, and use the single-ticker commands above for
+targeted research.
 
 Generated data and model artifacts stay out of git through `data/ml/`, `artifacts/`, `models/`,
 and `reports/`.
@@ -150,6 +154,9 @@ and `reports/`.
 | `artifacts/ml/<TICKER>/timesfm/training-metadata.json` | train | Model ID/revision, source hashes, split settings, seed, device/CUDA metadata, packages, and artifact hashes. |
 | `artifacts/ml/<TICKER>/timesfm/training-metrics.json` | train | Train and validation loss summaries. |
 | `artifacts/ml/<TICKER>/timesfm/evaluation.json` | evaluate | Rolling evaluation, baseline comparisons, suitability flags, and forward forecast. |
+| `data/ml/wsb_10y/<TICKER>.csv` | focused_hpo | Adjusted OHLCV inputs for the current focused WSB ticker set. |
+| `artifacts/ml/wsb-six-10y/focused-hpo-manifest.json` | focused_hpo | Per-ticker HPO status, selected run, suitability, and failure metadata. |
+| `artifacts/ml/wsb-six-10y/<TICKER>/best/evaluation.json` | focused_hpo | Promoted evaluation artifact for the selected focused HPO adapter. |
 | `reports/<YYYY-MM-DD>/audit/ml-artifacts.json` | report run | TimesFM evaluation payload copied into the report audit bundle. |
 
 ## Scoring Integration

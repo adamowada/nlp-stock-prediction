@@ -100,7 +100,8 @@ mypy .
 
 ## Decision Log
 
-- 2026-05-12: Keep source scripts/code, delete only generated broad-batch S&P data/artifacts.
+- 2026-05-12: Retire the ignored broad-batch S&P helper workflow and keep the focused six-ticker
+  workflow as the documented multi-ticker TimesFM path.
 - 2026-05-12: Use adjusted OHLCV for the focused TimesFM workflow so split-heavy histories remain
   continuous for univariate price forecasting.
 - 2026-05-12: Treat `SPY` as ETF technical data, not an operating-company fundamentals target.
@@ -114,7 +115,8 @@ mypy .
 
 ## Progress Log
 
-- 2026-05-12: Removed generated S&P 500 5-year batch data/artifacts.
+- 2026-05-12: Removed generated S&P 500 5-year batch data/artifacts and retired the ignored S&P
+  batch helper scripts.
 - 2026-05-12: Added `nlp_stock_prediction.ml.timesfm.focused_hpo` with data collection, HPO
   orchestration, best-run promotion, and focused ticker policy metadata.
 - 2026-05-12: Removed obsolete generated TimesFM smoke artifacts and local TSLA example data so

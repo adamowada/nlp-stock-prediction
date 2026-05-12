@@ -53,11 +53,7 @@ Focused six-ticker HPO:
 .\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-11 --device cuda
 ```
 
-S&P 500 batch training:
-
-```powershell
-.\.venv\Scripts\python.exe data\ml\train_sp500_timesfm_batch.py --skip-existing
-```
+The old broad S&P 500 batch workflow has been retired. Use the focused HPO command for the current WSB ticker set, or the single-ticker train/evaluate commands for targeted experiments.
 
 CSV files belong under ignored paths such as `data/ml/`. Generated models, adapters, metrics, and reports belong under ignored paths such as `artifacts/` and `reports/`.
 
