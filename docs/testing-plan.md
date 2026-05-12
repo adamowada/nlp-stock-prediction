@@ -40,9 +40,9 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 
 ### 4. Live API integration tests
 
-- Current Phase 3 live API coverage verifies the SEC company tickers endpoint and keeps a reserved
-  LLM smoke gate explicit. Future live provider coverage should extend to Reddit, X API recent
-  search, news, market data, fundamentals, FRED, and any enabled LLM provider.
+- Current live API coverage verifies the SEC company tickers endpoint and X API recent search, and
+  keeps a reserved LLM smoke gate explicit. Future live provider coverage should extend to market
+  data, fundamentals, FRED, and any enabled LLM provider.
 - X API provider coverage should verify the production stock-news/social query shape:
   `$TICKER lang:en -is:retweet`, `sort_order=relevancy`, and `max_results=50`.
 - Require explicit environment variables for credentials and opt-in execution.
@@ -57,8 +57,8 @@ python -m pytest -m live_api
 
 - Verify that permitted public HTML scraping fallbacks still locate expected page sections and fail clearly when markup changes.
 - Keep scraping tests narrow: assert configured expected text, selectors, or parseable required
-  structures rather than broad page content. Current Phase 3 coverage uses a configured public URL
-  and literal expected text.
+  structures rather than broad page content. Current coverage includes source-specific Reddit, AP
+  News, and Candlecharts smoke checks plus a configured public URL and literal expected text.
 - Include alerts or failure messages that explain which selector, subtree, or regex no longer matches.
 - Mark scraping tests separately, for example:
 
@@ -80,6 +80,7 @@ python -m pytest -m live_scraping
 - Run the full CLI from fixtures and verify that Markdown, JSON, and audit artifacts are generated.
 - Include scenarios for:
   - A normal six-ticker day.
+  - Experimental scrape source mode with provider health, warnings, and `provider-results.json`.
   - No qualifying trade ideas.
   - Partial provider outages.
   - Conflicting Reddit/news/technical/fundamental signals.
@@ -112,10 +113,10 @@ ruff format --check .
 mypy .
 ```
 
-Fixture-backed e2e coverage now exercises offline CLI report generation. Live API and live scraping
-checks remain opt-in, and live LLM checks are reserved until a live adapter and credential contract
-exist. See `docs/configuration.md` for the current live-smoke environment variables and `.env`
-guidance.
+Fixture-backed e2e coverage now exercises offline CLI report generation and experimental
+`--source-mode scrape` orchestration. Live API and live scraping checks remain opt-in, and live LLM
+checks are reserved until a live adapter and credential contract exist. See
+`docs/configuration.md` for the current live-smoke environment variables and `.env` guidance.
 
 ML lane smoke coverage is CPU-only by default:
 
@@ -144,7 +145,8 @@ joke/sarcasm risk, and no qualified strategies.
 - Each provider adapter has fixture-backed contract tests; live opt-in tests are added as each live
   provider path is enabled.
 - Scraping fallbacks have narrow live tests that detect markup drift.
-- The full report can be generated from fixtures.
+- The full report can be generated from offline fixtures and from fixture-backed scrape source mode.
 - Selected live provider edges can be smoke-tested when credentials/configuration and network access
-  are available; full live report orchestration remains disabled until explicitly enabled.
+  are available; default report generation remains network-free unless a live path is explicitly
+  enabled later.
 - Recommendation scoring has tests for both confident-trade and no-trade outcomes.

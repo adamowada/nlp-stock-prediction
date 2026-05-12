@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Protocol, cast
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from typing import cast
 
 from nlp_stock_prediction.contracts import (
     CredentialState,
@@ -28,9 +26,7 @@ from nlp_stock_prediction.contracts import (
     WarningSeverity,
 )
 from nlp_stock_prediction.providers._base import (
-    JsonPayload,
     MalformedProviderResponse,
-    ProviderCache,
     ProviderTransportError,
     append_query_params,
     build_cache_key,
@@ -42,65 +38,20 @@ from nlp_stock_prediction.providers._base import (
     provider_health,
     provider_result,
     provider_warning,
-    raw_snapshot_id_for_payload,
     transport_error_result,
     utc_now,
+)
+from nlp_stock_prediction.providers.scraping import (
+    HtmlCache,
+    HtmlResponse,
+    HtmlTransport,
+    UrllibHtmlTransport,
+    fetch_html,
+    raw_snapshot_id_for_html,
 )
 
 CANDLECHARTS_ENDPOINT = "https://candlecharts.com/live-charts"
 CANDLECHARTS_SOURCE = "candlecharts-public-html"
-
-
-@dataclass(frozen=True)
-class HtmlResponse:
-    """Raw HTML response plus HTTP metadata for injectable fixture/live transports."""
-
-    text: str
-    status_code: int = 200
-    headers: Mapping[str, str] = field(default_factory=dict)
-
-
-class HtmlTransport(Protocol):
-    """Small HTML transport kept local until shared scraping interfaces land."""
-
-    def get_text(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        timeout: float = 10.0,
-    ) -> HtmlResponse: ...
-
-
-class UrllibHtmlTransport:
-    """Stdlib HTML transport used only when callers explicitly opt into live fetching."""
-
-    def get_text(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        timeout: float = 10.0,
-    ) -> HtmlResponse:
-        request = Request(url, headers=dict(headers or {}))
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                body = response.read()
-                charset = response.headers.get_content_charset() or "utf-8"
-                return HtmlResponse(
-                    text=body.decode(charset, errors="replace"),
-                    status_code=int(getattr(response, "status", 200)),
-                    headers=dict(response.headers.items()),
-                )
-        except HTTPError as exc:
-            raise ProviderTransportError(
-                str(exc),
-                status_code=exc.code,
-                retryable=exc.code in {408, 425, 429, 500, 502, 503, 504},
-                error_type="http_error",
-            ) from exc
-        except URLError as exc:
-            raise ProviderTransportError(str(exc), retryable=True, error_type="url_error") from exc
 
 
 @dataclass(frozen=True)
@@ -136,7 +87,7 @@ class CandlechartsMarketDataProvider:
         html_path: Path | None = None,
         endpoint: str = CANDLECHARTS_ENDPOINT,
         transport: HtmlTransport | None = None,
-        cache: ProviderCache | None = None,
+        cache: HtmlCache | None = None,
         allow_live: bool = False,
         now: Callable[[], datetime] = utc_now,
         timeout: float = 10.0,
@@ -294,61 +245,23 @@ class CandlechartsMarketDataProvider:
                 cache_key=cache_key,
                 cache_hit=False,
             )
-        cached = self._load_cached_html(request, ticker, cache_key)
-        if cached is not None:
-            return cached
-        response = self._transport.get_text(source_url, timeout=self._timeout)
-        fetched = _html_fetch(
-            html=response.text,
-            source_url=source_url,
-            cache_key=cache_key,
-            cache_hit=False,
-        )
-        if self._cache is not None:
-            payload: JsonPayload = {"source_url": source_url, "html": response.text}
-            record = self._cache.save_json(
-                run_date=request.run_date,
-                ticker=ticker,
-                source=CANDLECHARTS_SOURCE,
-                cache_key=cache_key,
-                payload=payload,
-                fetched_at=fetched_at,
-            )
-            return HtmlFetch(
-                html=response.text,
-                raw_snapshot_id=record.raw_snapshot_id,
-                cache_key=record.cache_key,
-                source_url=source_url,
-                cache_hit=False,
-            )
-        return fetched
-
-    def _load_cached_html(
-        self,
-        request: MarketDataRequest,
-        ticker: str,
-        cache_key: str,
-    ) -> HtmlFetch | None:
-        if self._cache is None:
-            return None
-        cached = self._cache.load_json(
+        fetched = fetch_html(
+            transport=self._transport,
+            url=source_url,
             run_date=request.run_date,
             ticker=ticker,
             source=CANDLECHARTS_SOURCE,
             cache_key=cache_key,
+            fetched_at=fetched_at,
+            cache=self._cache,
+            timeout=self._timeout,
         )
-        if cached is None:
-            return None
-        html = cached.payload.get("html")
-        source_url = cached.payload.get("source_url")
-        if not isinstance(html, str) or not isinstance(source_url, str):
-            return None
         return HtmlFetch(
-            html=html,
-            raw_snapshot_id=cached.raw_snapshot_id,
-            cache_key=cached.cache_key,
-            source_url=source_url,
-            cache_hit=True,
+            html=fetched.html,
+            raw_snapshot_id=fetched.raw_snapshot_id,
+            cache_key=fetched.cache_key,
+            source_url=fetched.source_url,
+            cache_hit=fetched.cache_hit,
         )
 
     def _map_html(self, *, ticker: str, fetched: HtmlFetch) -> _ParseResult:
@@ -568,10 +481,9 @@ def _html_fetch(
     cache_key: str,
     cache_hit: bool,
 ) -> HtmlFetch:
-    payload: JsonPayload = {"source_url": source_url, "html": html}
     return HtmlFetch(
         html=html,
-        raw_snapshot_id=raw_snapshot_id_for_payload(CANDLECHARTS_SOURCE, payload),
+        raw_snapshot_id=raw_snapshot_id_for_html(CANDLECHARTS_SOURCE, html),
         cache_key=cache_key,
         source_url=source_url,
         cache_hit=cache_hit,

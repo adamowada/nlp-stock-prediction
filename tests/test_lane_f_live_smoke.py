@@ -4,6 +4,7 @@ import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from types import TracebackType
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
@@ -11,10 +12,22 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from nlp_stock_prediction.contracts import (
+    EvidenceRequest,
+    MarketDataRequest,
+    ProviderStatus,
+    TickerDiscoveryRequest,
+)
+from nlp_stock_prediction.providers.apnews import APNewsProvider
+from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
+from nlp_stock_prediction.providers.reddit_scrape import RedditPublicPageProvider
+from nlp_stock_prediction.providers.social import XRecentSearchProvider
+
 ALLOW_LIVE_ENV = "NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS"
 LIVE_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_LIVE_USER_AGENT"
 LIVE_SCRAPE_URL_ENV = "NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL"
 LIVE_SCRAPE_EXPECT_TEXT_ENV = "NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT"
+X_BEARER_TOKEN_ENV = "NLP_STOCK_PREDICTION_X_BEARER_TOKEN"
 
 
 @dataclass(frozen=True)
@@ -151,6 +164,93 @@ def test_live_public_scraping_configured_url_smoke() -> None:
         f"Configured scraping smoke endpoint did not include expected text from "
         f"{LIVE_SCRAPE_EXPECT_TEXT_ENV}."
     )
+
+
+@pytest.mark.live_api
+def test_live_x_recent_search_smoke() -> None:
+    _require_live_tests_enabled("X recent-search live API")
+    bearer_token = _require_env(
+        X_BEARER_TOKEN_ENV,
+        "an X app-only Bearer Token for recent-search smoke coverage",
+    )
+    provider = XRecentSearchProvider(bearer_token=bearer_token)
+
+    result = provider.fetch_social_posts(
+        EvidenceRequest(
+            request_id="live-x-aapl-smoke",
+            run_date=date(2026, 5, 11),
+            tickers=("AAPL",),
+        )
+    )
+
+    assert result.status in {ProviderStatus.OK, ProviderStatus.EMPTY, ProviderStatus.STALE}
+    assert result.health.credential_state.value == "configured"
+
+
+@pytest.mark.live_scraping
+def test_live_reddit_public_page_shape_smoke() -> None:
+    _require_live_tests_enabled("Reddit public-page live scraping")
+    provider = RedditPublicPageProvider(allow_live_scraping=True)
+
+    result = provider.discover_tickers(
+        TickerDiscoveryRequest(
+            request_id="live-reddit-wsb-smoke",
+            run_date=date(2026, 5, 11),
+            source_url="https://www.reddit.com/r/wallstreetbets/",
+        )
+    )
+
+    assert result.status in {
+        ProviderStatus.OK,
+        ProviderStatus.PARTIAL,
+        ProviderStatus.STALE,
+        ProviderStatus.FAILED,
+        ProviderStatus.UNAUTHORIZED,
+    }
+
+
+@pytest.mark.live_scraping
+def test_live_apnews_public_hub_shape_smoke() -> None:
+    _require_live_tests_enabled("AP News public-page live scraping")
+    provider = APNewsProvider()
+
+    result = provider.fetch_articles(
+        EvidenceRequest(
+            request_id="live-apnews-financial-markets-smoke",
+            run_date=date(2026, 5, 11),
+            tickers=("AAPL",),
+            limit=1,
+        )
+    )
+
+    assert result.status in {
+        ProviderStatus.OK,
+        ProviderStatus.EMPTY,
+        ProviderStatus.PARTIAL,
+        ProviderStatus.STALE,
+        ProviderStatus.MALFORMED,
+    }
+
+
+@pytest.mark.live_scraping
+def test_live_candlecharts_feasibility_shape_smoke() -> None:
+    _require_live_tests_enabled("Candlecharts public-page live scraping")
+    provider = CandlechartsMarketDataProvider(allow_live=True)
+
+    result = provider.fetch_daily_candles(
+        MarketDataRequest(
+            request_id="live-candlecharts-aapl-smoke",
+            run_date=date(2026, 5, 11),
+            tickers=("AAPL",),
+        )
+    )
+
+    assert result.status in {
+        ProviderStatus.OK,
+        ProviderStatus.EMPTY,
+        ProviderStatus.STALE,
+        ProviderStatus.MALFORMED,
+    }
 
 
 @pytest.mark.unit

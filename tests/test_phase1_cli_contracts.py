@@ -42,6 +42,7 @@ def test_parser_accepts_minimal_run_command_and_defaults() -> None:
     assert args.fixture_dir is None
     assert args.cache_dir is None
     assert args.offline is False
+    assert args.source_mode is None
 
 
 @pytest.mark.unit
@@ -99,12 +100,13 @@ def test_run_help_documents_stage2_configuration_surface() -> None:
     assert "--fixture-dir" in result.stdout
     assert "built-in deterministic fixtures" in result.stdout
     assert "--cache-dir" in result.stdout
-    assert "future" in result.stdout
-    assert "live/provider runs" in result.stdout
+    assert "provider cache directory" in result.stdout
+    assert "--source-mode" in result.stdout
+    assert "scrape" in result.stdout
     assert "--offline" in result.stdout
     assert "disallows" in result.stdout
     assert "live network providers" in result.stdout
-    assert "Live-provider report orchestration is not enabled yet" in result.stdout
+    assert "Scrape source mode" in result.stdout
     assert "docs/configuration.md" in result.stdout
     assert result.stderr == ""
 
@@ -121,6 +123,7 @@ def test_run_without_offline_fails_with_live_orchestration_guidance(
     assert exit_code == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
     assert "Live-provider report orchestration is not enabled yet" in captured.err
     assert "--offline" in captured.err
+    assert "--source-mode scrape" in captured.err
     assert captured.out == ""
     assert not output_dir.exists()
 
@@ -291,6 +294,27 @@ def test_parser_accepts_fixture_cache_and_offline_options(tmp_path: Path) -> Non
     assert args.fixture_dir == fixture_dir
     assert args.cache_dir == cache_dir
     assert args.offline is True
+    assert args.source_mode is None
+
+
+@pytest.mark.unit
+def test_parser_accepts_explicit_scrape_source_mode(tmp_path: Path) -> None:
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--date",
+            "2026-05-11",
+            "--output",
+            str(tmp_path / "reports"),
+            "--source-mode",
+            "scrape",
+        ]
+    )
+
+    config = build_run_config(args)
+
+    assert config.offline is False
+    assert config.source_mode == "scrape"
 
 
 @pytest.mark.unit
@@ -327,3 +351,4 @@ def test_build_run_config_constructs_public_contract(tmp_path: Path) -> None:
     assert config.fixture_dir == fixture_dir
     assert config.cache_dir == cache_dir
     assert config.offline is True
+    assert config.source_mode == "offline"

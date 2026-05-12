@@ -39,8 +39,9 @@ class _CountingTransport:
         *,
         headers: Mapping[str, str] | None = None,
         timeout: float = 10.0,
+        max_bytes: int = 2_000_000,
     ) -> HtmlResponse:
-        del url, headers, timeout
+        del url, headers, timeout, max_bytes
         self.calls += 1
         return HtmlResponse(html=self.html)
 

@@ -32,7 +32,7 @@ DEFAULT_SCRAPE_MIN_DELAY_SECONDS = 1.0
 DEFAULT_HTML_MAX_BYTES = 2_000_000
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class HtmlResponse:
     """Raw HTML response plus HTTP metadata from a provider transport."""
 
@@ -40,6 +40,29 @@ class HtmlResponse:
     status_code: int = 200
     headers: Mapping[str, str] = field(default_factory=dict)
     final_url: str | None = None
+
+    def __init__(
+        self,
+        html: str | None = None,
+        *,
+        text: str | None = None,
+        status_code: int = 200,
+        headers: Mapping[str, str] | None = None,
+        final_url: str | None = None,
+    ) -> None:
+        body = html if html is not None else text
+        if body is None:
+            raise TypeError("HtmlResponse requires html or text")
+        object.__setattr__(self, "html", body)
+        object.__setattr__(self, "status_code", status_code)
+        object.__setattr__(self, "headers", dict(headers or {}))
+        object.__setattr__(self, "final_url", final_url)
+
+    @property
+    def text(self) -> str:
+        """Compatibility alias for adapters that still name the body `text`."""
+
+        return self.html
 
 
 class HtmlTransport(Protocol):

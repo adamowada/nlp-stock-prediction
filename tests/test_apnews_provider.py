@@ -33,19 +33,20 @@ class _FakeHtmlTransport:
     calls: list[str] = field(default_factory=list)
     headers: list[Mapping[str, str] | None] = field(default_factory=list)
 
-    def get_text(
+    def get_html(
         self,
         url: str,
         *,
         headers: Mapping[str, str] | None = None,
         timeout: float = 10.0,
+        max_bytes: int = 2_000_000,
     ) -> HtmlResponse:
-        del timeout
+        del timeout, max_bytes
         self.calls.append(url)
         self.headers.append(headers)
         for url_fragment, body in self.responses.items():
             if url_fragment in url:
-                return HtmlResponse(text=body)
+                return HtmlResponse(html=body)
         raise AssertionError(f"Unexpected URL: {url}")
 
 

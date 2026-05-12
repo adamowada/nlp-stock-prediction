@@ -1,11 +1,17 @@
 # CLI And Configuration
 
-## Current CLI Mode
+## Current CLI Modes
 
-The V1 CLI currently supports deterministic offline report generation:
+The V1 CLI supports deterministic offline report generation:
 
 ```sh
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+```
+
+It also supports an experimental fixture-backed scrape-source path:
+
+```sh
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
 ```
 
 This writes:
@@ -14,8 +20,9 @@ This writes:
 - `reports/YYYY-MM-DD/report.json`
 - `reports/YYYY-MM-DD/audit/`
 
-`--offline` is required for report generation in the current Phase 3 CLI. If it is omitted, the
-CLI exits with code `3` and explains that live-provider report orchestration is not enabled yet.
+If both `--offline` and `--source-mode` are omitted, the CLI exits with code `3` and explains the
+available explicit modes. `--source-mode scrape` currently uses deterministic Reddit/AP/X fixtures
+plus provider degradation probes; it does not make default live network calls.
 
 ## CLI Options
 
@@ -25,15 +32,17 @@ CLI exits with code `3` and explains that live-provider report orchestration is 
 - `--risk-profile`: scoring/report risk profile; defaults to `exploratory`.
 - `--fixture-dir`: optional fixture root reserved for external fixtures; current offline runs record
   this path in command metadata and use built-in deterministic fixtures.
-- `--cache-dir`: optional provider response cache directory reserved for future live/provider runs;
-  current offline runs record this path in command metadata.
-- `--offline`: required for the current deterministic report path and prevents live network provider
-  usage.
+- `--cache-dir`: optional provider response cache directory; deterministic runs record this path in
+  command metadata.
+- `--source-mode`: explicit source mode. `scrape` runs the experimental compliance-aware provider
+  path against deterministic fixtures and writes provider-result audit artifacts.
+- `--offline`: uses the deterministic offline fixture-backed report path and prevents live network
+  provider usage.
 
 ## Environment Variables
 
-The default test suite and `run --offline` do not require credentials, `.env` files, or network
-access. Live smoke checks are explicit opt-in:
+The default test suite, `run --offline`, and `run --source-mode scrape` do not require credentials,
+`.env` files, or network access. Live smoke checks are explicit opt-in:
 
 | Variable | Used for | Required when |
 | --- | --- | --- |
@@ -55,14 +64,14 @@ conventions for future live setup or manual adapter wiring:
 | `NLP_STOCK_PREDICTION_FRED_API_KEY` | FRED macro data. |
 | `NLP_STOCK_PREDICTION_X_API_KEY` | X App API Key, also called the Consumer Key; used to identify the app and regenerate app-only tokens when needed. |
 | `NLP_STOCK_PREDICTION_X_API_SECRET` | X App API Secret, also called the Consumer Secret; keep secret and use only for token generation or OAuth flows. |
-| `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | X App-only Bearer Token for read-only recent-search requests. |
+| `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | X App-only Bearer Token for read-only recent-search requests and X live smoke. |
 | `NLP_STOCK_PREDICTION_NEWS_API_KEY` | Public news provider adapters that require an API key. |
 
 ## X API Stock News
 
-Live provider orchestration is not enabled in the current V1 CLI, but the live X provider direction
-is official X API recent search, not browser scraping. X is always treated as a stock-news/social
-evidence source for every discovered ticker once live provider orchestration is enabled.
+The X provider direction is official X API recent search, not browser scraping. X is treated as a
+stock-news/social evidence source for every discovered ticker. The current scrape source mode uses
+deterministic X API-shaped fixtures; live X verification is covered by opt-in smoke tests.
 
 For each ticker, the app should request the top 50 relevant posts from the X recent-search endpoint:
 
@@ -80,11 +89,11 @@ Bearer Token.
 
 ## Public HTML Scraping Guardrails
 
-Live scraping remains unwired in the V1 CLI, but shared adapter helpers now use a source policy
-registry before public HTML fetches. Policies describe allowlisted paths, disallowed paths, robots
-review status, login and JavaScript requirements, and fallback behavior. Blocked, login-required,
-and markup-drift cases should return `ProviderResult` warnings instead of raising for expected
-provider conditions.
+Shared adapter helpers use a source policy registry before public HTML fetches. Policies describe
+allowlisted paths, disallowed paths, robots review status, login and JavaScript requirements, and
+fallback behavior. Blocked, login-required, and markup-drift cases return `ProviderResult` warnings
+instead of raising for expected provider conditions. `--source-mode scrape` carries these provider
+warnings into report provider health and `audit/provider-results.json`.
 
 The default public HTML request identity is
 `nlp-stock-prediction/0.1 compliance-aware-scraper`. Override it with
@@ -160,8 +169,9 @@ artifacts, or test failures.
 
 ## Configured Live Smoke Paths
 
-The current checked live API path is the SEC company tickers JSON endpoint. It does not require an
-API key, but SEC requests must include a contact-oriented User-Agent.
+The checked live API paths include SEC company tickers and X recent search. SEC does not require an
+API key, but SEC requests must include a contact-oriented User-Agent. X requires
+`NLP_STOCK_PREDICTION_X_BEARER_TOKEN`.
 
 PowerShell example:
 
@@ -171,8 +181,8 @@ $env:NLP_STOCK_PREDICTION_LIVE_USER_AGENT = "your-name your-email@example.com"
 python -m pytest -m live_api tests/test_lane_f_live_smoke.py
 ```
 
-The current checked live scraping path is deliberately configurable so it can point at a narrow
-public page the project is allowed to fetch. A known-good low-risk smoke configuration is:
+The checked live scraping paths include provider-specific Reddit, AP News, and Candlecharts smoke
+coverage plus a configurable narrow URL. A known-good low-risk configurable smoke is:
 
 ```powershell
 $env:NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS = "1"

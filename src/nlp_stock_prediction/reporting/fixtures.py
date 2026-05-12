@@ -195,6 +195,7 @@ def _command_args(config: RunConfig) -> JsonObject:
         "fixture_dir": _posix(config.fixture_dir) if config.fixture_dir else None,
         "cache_dir": _posix(config.cache_dir) if config.cache_dir else None,
         "offline": config.offline,
+        "source_mode": config.source_mode,
     }
 
 

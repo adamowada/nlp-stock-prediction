@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import Field, model_validator
 
@@ -118,6 +118,7 @@ class RunConfig(ContractModel):
     fixture_dir: Path | None = None
     cache_dir: Path | None = None
     offline: bool = False
+    source_mode: Literal["disabled", "offline", "scrape"] = "disabled"
 
 
 class TickerDiscoveryRequest(ProviderRequest):

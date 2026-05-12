@@ -7,10 +7,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from html.parser import HTMLParser
-from typing import Protocol, cast
-from urllib.error import HTTPError, URLError
+from typing import cast
 from urllib.parse import urljoin, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
 
 from nlp_stock_prediction.contracts import (
     CredentialState,
@@ -27,9 +25,7 @@ from nlp_stock_prediction.contracts import (
     WarningSeverity,
 )
 from nlp_stock_prediction.providers._base import (
-    JsonPayload,
     MalformedProviderResponse,
-    ProviderCache,
     ProviderTransportError,
     build_cache_key,
     find_ticker_matches,
@@ -40,11 +36,17 @@ from nlp_stock_prediction.providers._base import (
     provider_result,
     provider_warning,
     query_from_tickers,
-    raw_snapshot_id_for_payload,
     source_provenance,
     stable_hash,
     transport_error_result,
     utc_now,
+)
+from nlp_stock_prediction.providers.scraping import (
+    HtmlCache,
+    HtmlResponse,
+    HtmlTransport,
+    UrllibHtmlTransport,
+    fetch_html,
 )
 
 _DEFAULT_HUB_URL = "https://apnews.com/hub/financial-markets"
@@ -60,55 +62,6 @@ _DISALLOWED_PATH_PREFIXES = (
     "/search/",
     "/search",
 )
-
-
-@dataclass(frozen=True)
-class HtmlResponse:
-    """Fetched HTML response plus minimal HTTP metadata."""
-
-    text: str
-    status_code: int = 200
-    headers: Mapping[str, str] = field(default_factory=dict)
-
-
-class HtmlTransport(Protocol):
-    """Small HTML transport interface for fixture-backed provider tests."""
-
-    def get_text(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        timeout: float = 10.0,
-    ) -> HtmlResponse: ...
-
-
-class UrllibHtmlTransport:
-    """Stdlib urllib-backed HTML transport used only by explicit live callers."""
-
-    def get_text(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        timeout: float = 10.0,
-    ) -> HtmlResponse:
-        request = Request(url, headers=dict(headers or {}))
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                body = response.read().decode("utf-8", errors="replace")
-                status_code = int(getattr(response, "status", 200))
-                response_headers = dict(response.headers.items())
-                return HtmlResponse(text=body, status_code=status_code, headers=response_headers)
-        except HTTPError as exc:
-            raise ProviderTransportError(
-                str(exc),
-                status_code=exc.code,
-                retryable=exc.code in {408, 425, 429, 500, 502, 503, 504},
-                error_type="http_error",
-            ) from exc
-        except URLError as exc:
-            raise ProviderTransportError(str(exc), retryable=True, error_type="url_error") from exc
 
 
 @dataclass(frozen=True)
@@ -157,7 +110,7 @@ class APNewsProvider:
         *,
         config: APNewsProviderConfig | None = None,
         transport: HtmlTransport | None = None,
-        cache: ProviderCache | None = None,
+        cache: HtmlCache | None = None,
         now: Callable[[], datetime] = utc_now,
         timeout: float = 10.0,
         stale_after_seconds: int = 3 * 24 * 60 * 60,
@@ -450,61 +403,29 @@ def _fetch_html(
     source: str,
     cache_key: str,
     fetched_at: datetime,
-    cache: ProviderCache | None,
+    cache: HtmlCache | None,
     headers: Mapping[str, str] | None,
     timeout: float,
 ) -> _HtmlFetch:
-    if cache is not None:
-        cached = cache.load_json(
-            run_date=run_date,
-            ticker=ticker,
-            source=source,
-            cache_key=cache_key,
-        )
-        if cached is not None:
-            html = cached.payload.get("html")
-            cached_url = cached.payload.get("url")
-            status_code = cached.payload.get("status_code", 200)
-            if isinstance(html, str) and isinstance(cached_url, str):
-                return _HtmlFetch(
-                    text=html,
-                    raw_snapshot_id=cached.raw_snapshot_id,
-                    cache_key=cached.cache_key,
-                    cache_hit=True,
-                    status_code=status_code if isinstance(status_code, int) else 200,
-                    source_url=cached_url,
-                )
-
-    response = transport.get_text(url, headers=headers, timeout=timeout)
-    payload: JsonPayload = {
-        "url": url,
-        "html": response.text,
-        "status_code": response.status_code,
-    }
-    if cache is None:
-        return _HtmlFetch(
-            text=response.text,
-            raw_snapshot_id=raw_snapshot_id_for_payload(source, payload),
-            cache_key=cache_key,
-            cache_hit=False,
-            status_code=response.status_code,
-            source_url=url,
-        )
-    record = cache.save_json(
+    fetched = fetch_html(
+        transport=transport,
+        url=url,
         run_date=run_date,
         ticker=ticker,
         source=source,
         cache_key=cache_key,
-        payload=payload,
         fetched_at=fetched_at,
+        cache=cache,
+        headers=headers,
+        timeout=timeout,
     )
     return _HtmlFetch(
-        text=response.text,
-        raw_snapshot_id=record.raw_snapshot_id,
-        cache_key=record.cache_key,
-        cache_hit=False,
-        status_code=response.status_code,
-        source_url=url,
+        text=fetched.html,
+        raw_snapshot_id=fetched.raw_snapshot_id,
+        cache_key=fetched.cache_key,
+        cache_hit=fetched.cache_hit,
+        status_code=fetched.status_code,
+        source_url=fetched.source_url,
     )
 
 

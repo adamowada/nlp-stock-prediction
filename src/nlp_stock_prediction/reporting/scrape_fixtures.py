@@ -1,0 +1,653 @@
+"""Fixture-backed scrape-mode orchestration for experimental source wiring."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from typing import cast
+from urllib.parse import parse_qs, unquote_plus, urlsplit
+
+from nlp_stock_prediction.contracts import (
+    AuditArtifact,
+    AuditManifest,
+    DailyReport,
+    DataFreshnessSummary,
+    EvidenceRequest,
+    JsonObject,
+    JsonValue,
+    MarketDataRequest,
+    ProviderHealth,
+    ProviderResult,
+    ProviderStatus,
+    SourceEvidence,
+    TickerDiscoveryRequest,
+    WarningCode,
+)
+from nlp_stock_prediction.contracts.providers import RunConfig
+from nlp_stock_prediction.providers._base import (
+    JsonResponse,
+    JsonTransport,
+    ProviderTransportError,
+)
+from nlp_stock_prediction.providers.apnews import APNewsProvider
+from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
+from nlp_stock_prediction.providers.reddit_scrape import (
+    RedditPublicPageProvider,
+)
+from nlp_stock_prediction.providers.reddit_scrape import (
+    StaticHtmlTransport as StaticRedditHtmlTransport,
+)
+from nlp_stock_prediction.providers.scraping import HtmlResponse
+from nlp_stock_prediction.providers.social import XRecentSearchProvider
+from nlp_stock_prediction.reporting.audit import json_payload_sha256
+from nlp_stock_prediction.reporting.fixtures import (
+    TICKERS,
+    OfflineFixtureBundle,
+    build_offline_fixture_bundle,
+)
+
+_REDDIT_URL = "https://www.reddit.com/r/wallstreetbets/"
+_REDDIT_POST_URL = "https://www.reddit.com/r/wallstreetbets/comments/scrape001/daily_watch/"
+_AP_HUB_URL = "https://apnews.com/hub/financial-markets"
+_AP_ARTICLE_URL = "https://apnews.com/article/markets-megacap-stocks-2026-05-11"
+
+
+@dataclass(frozen=True)
+class ScrapeFixtureBundle:
+    """Provider result payloads plus a contract-valid scrape-mode report."""
+
+    report: DailyReport
+    audit_payloads: dict[str, JsonObject]
+
+
+class _StaticHtmlTransport:
+    def __init__(self, pages: Mapping[str, str]) -> None:
+        self._pages = pages
+
+    def get_html(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+        max_bytes: int = 2_000_000,
+    ) -> HtmlResponse:
+        del headers, timeout, max_bytes
+        for key, html in self._pages.items():
+            if key in url:
+                return HtmlResponse(html=html, final_url=url)
+        raise ProviderTransportError(
+            f"No scrape fixture HTML is registered for {url}",
+            status_code=404,
+            error_type="fixture_not_found",
+        )
+
+
+class _FixtureXTransport(JsonTransport):
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+    ) -> JsonResponse:
+        del headers, timeout
+        ticker = _ticker_from_x_query(url)
+        return JsonResponse(
+            payload={
+                "data": [
+                    {
+                        "id": f"1900000000000000{index}{ticker.lower()}",
+                        "text": (
+                            f"${ticker} relevant fixture post discusses catalyst watch, "
+                            "defined risk, and liquidity."
+                        ),
+                        "created_at": "2026-05-11T17:30:00Z",
+                        "author_id": f"fixture-author-{ticker.lower()}-{index}",
+                        "lang": "en",
+                        "public_metrics": {
+                            "like_count": 42 + index,
+                            "retweet_count": 3,
+                            "reply_count": 5,
+                            "quote_count": 1,
+                        },
+                    }
+                    for index in range(1, 3)
+                ]
+            }
+        )
+
+
+class _QuotaLimitedXTransport(JsonTransport):
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+    ) -> JsonResponse:
+        del url, headers, timeout
+        raise ProviderTransportError(
+            "X recent-search quota exhausted in scrape-mode fixture probe",
+            status_code=429,
+            retryable=True,
+            error_type="rate_limit",
+        )
+
+
+def build_scrape_fixture_bundle(config: RunConfig) -> ScrapeFixtureBundle:
+    """Run the scrape-source providers against deterministic fixtures and render a report."""
+
+    offline_bundle = build_offline_fixture_bundle(config)
+    provider_results = _provider_results(config, offline_bundle.report.generated_at)
+    provider_evidence = _provider_evidence(provider_results)
+    provider_health = tuple(result.health for result in provider_results)
+    run_id = f"run-{config.run_date.isoformat()}-scrape-fixture"
+    report = _scrape_report(
+        offline_bundle=offline_bundle,
+        config=config,
+        run_id=run_id,
+        provider_health=provider_health,
+        provider_evidence=provider_evidence,
+    )
+    audit_payloads = _scrape_audit_payloads(
+        offline_bundle=offline_bundle,
+        report=report,
+        provider_results=provider_results,
+        provider_evidence=provider_evidence,
+    )
+    audit_manifest = _scrape_audit_manifest(
+        offline_manifest=cast(AuditManifest, offline_bundle.report.audit_manifest),
+        config=config,
+        run_id=run_id,
+        generated_at=report.generated_at,
+        provider_health=provider_health,
+        provider_results=provider_results,
+        audit_payloads=audit_payloads,
+    )
+    report = report.model_copy(update={"audit_manifest": audit_manifest})
+    return ScrapeFixtureBundle(report=report, audit_payloads=audit_payloads)
+
+
+def _provider_results(
+    config: RunConfig,
+    fetched_at: datetime,
+) -> tuple[ProviderResult[object], ...]:
+    reddit_provider = RedditPublicPageProvider(
+        transport=StaticRedditHtmlTransport(
+            {
+                _REDDIT_URL: _REDDIT_TICKER_CARD_HTML,
+                _REDDIT_POST_URL: _REDDIT_DISCUSSION_HTML,
+                "https://www.reddit.com/r/wallstreetbets/stale/": _REDDIT_STALE_TICKER_CARD_HTML,
+            }
+        ),
+        discussion_urls=(_REDDIT_POST_URL,),
+        now=lambda: fetched_at,
+    )
+    reddit_discovery = reddit_provider.discover_tickers(
+        TickerDiscoveryRequest(
+            request_id=f"scrape-reddit-discovery-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            source_url=_REDDIT_URL,
+            query="r/wallstreetbets Devvit daily ticker card",
+        )
+    )
+    reddit_discussion = reddit_provider.fetch_discussion(
+        EvidenceRequest(
+            request_id=f"scrape-reddit-discussion-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            tickers=TICKERS,
+            query=" OR ".join(TICKERS),
+            include_posts=True,
+            include_comments=True,
+        )
+    )
+    reddit_blocked = reddit_provider.discover_tickers(
+        TickerDiscoveryRequest(
+            request_id=f"scrape-reddit-blocked-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            source_url="https://www.reddit.com/r/wallstreetbets/.json",
+        )
+    )
+    reddit_stale = reddit_provider.discover_tickers(
+        TickerDiscoveryRequest(
+            request_id=f"scrape-reddit-stale-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            source_url="https://www.reddit.com/r/wallstreetbets/stale/",
+        )
+    )
+
+    ap_provider = APNewsProvider(
+        transport=_StaticHtmlTransport(
+            {
+                "hub/financial-markets": _AP_HUB_HTML,
+                "markets-megacap-stocks": _AP_ARTICLE_HTML,
+            }
+        ),
+        now=lambda: fetched_at,
+    )
+    ap_articles = ap_provider.fetch_articles(
+        EvidenceRequest(
+            request_id=f"scrape-apnews-articles-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            tickers=TICKERS,
+            limit=6,
+        )
+    )
+    ap_drift = APNewsProvider(
+        transport=_StaticHtmlTransport({"hub/financial-markets": _AP_HUB_DRIFT_HTML}),
+        now=lambda: fetched_at,
+    ).fetch_articles(
+        EvidenceRequest(
+            request_id=f"scrape-apnews-drift-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            tickers=("TSLA",),
+        )
+    )
+
+    candlecharts = CandlechartsMarketDataProvider(
+        html=_CANDLECHARTS_WIDGET_ONLY_HTML,
+        now=lambda: fetched_at,
+    ).fetch_daily_candles(
+        MarketDataRequest(
+            request_id=f"scrape-candlecharts-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            tickers=("TSLA",),
+        )
+    )
+
+    x_results = tuple(
+        XRecentSearchProvider(
+            bearer_token="fixture-token",
+            transport=_FixtureXTransport(),
+            now=lambda: fetched_at,
+        ).fetch_social_posts(
+            EvidenceRequest(
+                request_id=f"scrape-x-{ticker.lower()}-{config.run_date.isoformat()}",
+                run_date=config.run_date,
+                tickers=(ticker,),
+            )
+        )
+        for ticker in TICKERS
+    )
+    x_missing_credentials = XRecentSearchProvider(
+        transport=_FixtureXTransport(),
+        now=lambda: fetched_at,
+    ).fetch_social_posts(
+        EvidenceRequest(
+            request_id=f"scrape-x-missing-credentials-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            tickers=("AAPL",),
+        )
+    )
+    x_rate_limited = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=_QuotaLimitedXTransport(),
+        now=lambda: fetched_at,
+    ).fetch_social_posts(
+        EvidenceRequest(
+            request_id=f"scrape-x-quota-{config.run_date.isoformat()}",
+            run_date=config.run_date,
+            tickers=("AAPL",),
+        )
+    )
+
+    return cast(
+        tuple[ProviderResult[object], ...],
+        (
+            reddit_discovery,
+            reddit_discussion,
+            reddit_blocked,
+            reddit_stale,
+            ap_articles,
+            ap_drift,
+            candlecharts,
+            *x_results,
+            x_missing_credentials,
+            x_rate_limited,
+        ),
+    )
+
+
+def _provider_evidence(results: tuple[ProviderResult[object], ...]) -> tuple[SourceEvidence, ...]:
+    evidence: list[SourceEvidence] = []
+    seen_ids: set[str] = set()
+    for result in results:
+        data = result.data
+        if not isinstance(data, tuple):
+            continue
+        for item in data:
+            if isinstance(item, SourceEvidence) and item.evidence_id not in seen_ids:
+                seen_ids.add(item.evidence_id)
+                evidence.append(item)
+    return tuple(evidence)
+
+
+def _scrape_report(
+    *,
+    offline_bundle: OfflineFixtureBundle,
+    config: RunConfig,
+    run_id: str,
+    provider_health: tuple[ProviderHealth, ...],
+    provider_evidence: tuple[SourceEvidence, ...],
+) -> DailyReport:
+    source_health_names = tuple(health.provider_name for health in provider_health)
+    stale_names = _provider_names_with_status_or_warning(
+        provider_health,
+        statuses={ProviderStatus.STALE},
+        warning_code=WarningCode.STALE_DATA,
+    )
+    missing_names = _provider_names_with_status_or_warning(
+        provider_health,
+        statuses={ProviderStatus.UNCONFIGURED, ProviderStatus.UNAUTHORIZED},
+        warning_code=WarningCode.MISSING_CREDENTIALS,
+    )
+    command_args = dict(offline_bundle.report.command_args)
+    command_args["source_mode"] = "scrape"
+    command_args["offline"] = False
+    report = offline_bundle.report
+    ticker_sections = tuple(
+        section.model_copy(
+            update={
+                "social_news_summary": (
+                    f"Experimental scrape source mode wired Reddit public pages, AP News, "
+                    f"X relevancy API fixtures, and Candlecharts feasibility probes for "
+                    f"{section.ticker}. Provider warnings are reported separately."
+                ),
+                "data_quality": {
+                    **dict(section.data_quality),
+                    "source_mode": "scrape",
+                    "provider_names": list(source_health_names),
+                    "provider_result_artifact": "provider-results",
+                },
+            }
+        )
+        for section in report.ticker_sections
+    )
+    return report.model_copy(
+        update={
+            "run_id": run_id,
+            "config_hash": f"scrape-fixture-{config.run_date.isoformat()}",
+            "command_args": command_args,
+            "data_freshness": DataFreshnessSummary(
+                as_of=report.generated_at,
+                summary=(
+                    "Experimental scrape source mode used deterministic Reddit/AP/X fixtures, "
+                    "a Candlecharts widget-only probe, and degraded-provider probes for missing "
+                    "credentials, quota, stale data, blocked scraping, and markup drift."
+                ),
+                stale_provider_names=stale_names,
+                missing_provider_names=missing_names,
+            ),
+            "provider_health": provider_health,
+            "evidence_sources": report.evidence_sources + provider_evidence,
+            "ticker_sections": ticker_sections,
+            "audit_manifest": None,
+        }
+    )
+
+
+def _scrape_audit_payloads(
+    *,
+    offline_bundle: OfflineFixtureBundle,
+    report: DailyReport,
+    provider_results: tuple[ProviderResult[object], ...],
+    provider_evidence: tuple[SourceEvidence, ...],
+) -> dict[str, JsonObject]:
+    payloads: dict[str, JsonObject] = {
+        filename: cast(JsonObject, dict(payload))
+        for filename, payload in offline_bundle.audit_payloads.items()
+    }
+    for payload in payloads.values():
+        if "run_id" in payload:
+            payload["run_id"] = report.run_id
+    normalized = payloads.get("normalized-evidence.json")
+    if normalized is not None:
+        records_value = normalized.get("records")
+        records: list[JsonValue] = list(records_value) if isinstance(records_value, list) else []
+        records.extend(
+            cast(JsonValue, evidence.model_dump(mode="json")) for evidence in provider_evidence
+        )
+        normalized["records"] = records
+    raw_snapshots = payloads.get("raw-snapshots.json")
+    if raw_snapshots is not None:
+        records_value = raw_snapshots.get("records")
+        raw_records: list[JsonValue] = (
+            list(records_value) if isinstance(records_value, list) else []
+        )
+        raw_records.extend(
+            cast(JsonValue, record) for record in _raw_snapshot_records(provider_results)
+        )
+        raw_snapshots["records"] = raw_records
+    payloads["provider-results.json"] = _provider_results_payload(report.run_id, provider_results)
+    return payloads
+
+
+def _scrape_audit_manifest(
+    *,
+    offline_manifest: AuditManifest,
+    config: RunConfig,
+    run_id: str,
+    generated_at: datetime,
+    provider_health: tuple[ProviderHealth, ...],
+    provider_results: tuple[ProviderResult[object], ...],
+    audit_payloads: dict[str, JsonObject],
+) -> AuditManifest:
+    audit_dir = config.output_dir / config.run_date.isoformat() / "audit"
+    provider_payload = _provider_results_payload(run_id, provider_results)
+    provider_artifact = AuditArtifact(
+        artifact_id="provider-results",
+        artifact_type="provider_result",
+        path=(audit_dir / "provider-results.json").as_posix(),
+        created_at=generated_at,
+        produced_by="scrape-source-orchestration",
+        sha256=json_payload_sha256(provider_payload),
+        record_count=_record_count(provider_payload),
+        metadata={"source_mode": "scrape", "fixture": True},
+    )
+    command_args = dict(offline_manifest.command_args)
+    command_args["source_mode"] = "scrape"
+    command_args["offline"] = False
+    artifacts = tuple(
+        _with_final_payload_hash(artifact, audit_payloads)
+        for artifact in offline_manifest.artifacts
+    )
+    return offline_manifest.model_copy(
+        update={
+            "run_id": run_id,
+            "created_at": generated_at,
+            "artifacts": (*artifacts, provider_artifact),
+            "provider_run_ids": tuple(
+                f"{health.provider_name}:{config.run_date.isoformat()}"
+                for health in provider_health
+            ),
+            "config_hash": f"scrape-fixture-{config.run_date.isoformat()}",
+            "command_args": command_args,
+        }
+    )
+
+
+def _with_final_payload_hash(
+    artifact: AuditArtifact,
+    audit_payloads: dict[str, JsonObject],
+) -> AuditArtifact:
+    filename_by_artifact_id = {
+        "raw-snapshots": "raw-snapshots.json",
+        "normalized-evidence": "normalized-evidence.json",
+        "extracted-strategies": "extracted-strategies.json",
+        "analysis-contexts": "analysis-contexts.json",
+        "scoring-inputs": "scoring-inputs.json",
+    }
+    filename = filename_by_artifact_id.get(artifact.artifact_id)
+    if filename is None:
+        return artifact
+    payload = audit_payloads[filename]
+    return artifact.model_copy(
+        update={
+            "sha256": json_payload_sha256(payload),
+            "record_count": _record_count(payload),
+        }
+    )
+
+
+def _record_count(payload: JsonObject) -> int | None:
+    records = payload.get("records")
+    return len(records) if isinstance(records, list) else None
+
+
+def _provider_results_payload(
+    run_id: str,
+    provider_results: tuple[ProviderResult[object], ...],
+) -> JsonObject:
+    return {
+        "schema_version": "audit.provider_results.v1",
+        "run_id": run_id,
+        "source_mode": "scrape",
+        "records": [
+            cast(JsonObject, result.model_dump(mode="json")) for result in provider_results
+        ],
+    }
+
+
+def _raw_snapshot_records(results: tuple[ProviderResult[object], ...]) -> list[JsonObject]:
+    records: list[JsonObject] = []
+    for result in results:
+        if not result.raw_snapshot_id:
+            continue
+        records.append(
+            {
+                "raw_snapshot_id": result.raw_snapshot_id,
+                "provider_name": result.provider_name,
+                "source_kind": "provider_result",
+                "content_type": "application/json",
+                "payload": {
+                    "status": result.status.value,
+                    "request_id": result.request.request_id,
+                    "cache_key": result.cache_key,
+                    "warning_codes": [warning.code.value for warning in result.warnings],
+                },
+                "provider_metadata": {"fixture": True, "source_mode": "scrape"},
+            }
+        )
+    return records
+
+
+def _provider_names_with_status_or_warning(
+    provider_health: tuple[ProviderHealth, ...],
+    *,
+    statuses: set[ProviderStatus],
+    warning_code: WarningCode,
+) -> tuple[str, ...]:
+    names: list[str] = []
+    for health in provider_health:
+        has_status_or_warning = health.status in statuses or any(
+            warning.code == warning_code for warning in health.warnings
+        )
+        if has_status_or_warning and health.provider_name not in names:
+            names.append(health.provider_name)
+    return tuple(names)
+
+
+def _ticker_from_x_query(url: str) -> str:
+    query_values = parse_qs(urlsplit(url).query).get("query", ["$TSLA"])
+    query = unquote_plus(query_values[0])
+    for part in query.split():
+        if part.startswith("$") and len(part) > 1:
+            return part.removeprefix("$").upper()
+    return "TSLA"
+
+
+_REDDIT_TICKER_CARD_HTML = """
+<main data-snapshot-observed-at="2026-05-11T17:45:00Z">
+  <div id="ticker-container-tsla">TSLA</div>
+  <div id="ticker-container-nvda">NVDA</div>
+  <div id="ticker-container-amd">AMD</div>
+  <div id="ticker-container-aapl">AAPL</div>
+  <div id="ticker-container-mu">MU</div>
+  <div id="ticker-container-spy">SPY</div>
+</main>
+"""
+
+_REDDIT_STALE_TICKER_CARD_HTML = """
+<main data-snapshot-observed-at="2026-05-01T17:45:00Z">
+  <div id="ticker-container-tsla">TSLA</div>
+  <div id="ticker-container-nvda">NVDA</div>
+  <div id="ticker-container-amd">AMD</div>
+  <div id="ticker-container-aapl">AAPL</div>
+  <div id="ticker-container-mu">MU</div>
+  <div id="ticker-container-spy">SPY</div>
+</main>
+"""
+
+_REDDIT_DISCUSSION_HTML = """
+<main>
+  <shreddit-post data-reddit-id="t3_scrape001" author="FixtureTrader"
+      created-timestamp="2026-05-11T17:00:00Z" score="188"
+      permalink="/r/wallstreetbets/comments/scrape001/daily_watch/" data-num-comments="44">
+    <h1 slot="title">Daily watch: TSLA NVDA AMD AAPL MU and SPY setups</h1>
+    <div slot="text-body">$TSLA and $NVDA lead discussion; $AAPL and $MU need confirmation.</div>
+  </shreddit-post>
+  <shreddit-comment data-reddit-id="t1_scrape002" author="FixtureCommenter"
+      created-timestamp="2026-05-11T17:15:00Z" score="51"
+      data-link-id="t3_scrape001" data-parent-id="t3_scrape001"
+      permalink="/r/wallstreetbets/comments/scrape001/daily_watch/comment/scrape002/">
+    $AMD and $SPY are watch-only unless volume expands.
+  </shreddit-comment>
+</main>
+"""
+
+_AP_HUB_HTML = f"""
+<!doctype html>
+<html>
+  <body>
+    <main>
+      <a href="{_AP_ARTICLE_URL}">Stocks advance as megacap technology leads markets</a>
+    </main>
+  </body>
+</html>
+"""
+
+_AP_ARTICLE_HTML = """
+<!doctype html>
+<html>
+  <head>
+    <title>Stocks advance as megacap technology leads markets</title>
+    <link rel="canonical" href="https://apnews.com/article/markets-megacap-stocks-2026-05-11">
+    <script type="application/ld+json">
+    {
+      "@type": "NewsArticle",
+      "headline": "Stocks advance as megacap technology leads markets",
+      "description": "Tesla, Nvidia, AMD, Apple and Micron were active Monday.",
+      "articleBody": "Tesla, Nvidia, AMD, Apple and Micron moved while SPY tracked risk appetite.",
+      "datePublished": "2026-05-11T16:30:00Z",
+      "author": {"name": "AP Markets Fixture"},
+      "publisher": {"name": "AP Business"},
+      "url": "https://apnews.com/article/markets-megacap-stocks-2026-05-11"
+    }
+    </script>
+  </head>
+  <body><h1>Stocks advance as megacap technology leads markets</h1></body>
+</html>
+"""
+
+_AP_HUB_DRIFT_HTML = """
+<!doctype html>
+<html>
+  <body>
+    <main><p>Financial markets hub shell without public article links.</p></main>
+  </body>
+</html>
+"""
+
+_CANDLECHARTS_WIDGET_ONLY_HTML = """
+<!doctype html>
+<html>
+  <body>
+    <iframe src="https://www.tradingview-widget.com/embed-widget/advanced-chart/"></iframe>
+  </body>
+</html>
+"""
+
+
+__all__ = ["ScrapeFixtureBundle", "build_scrape_fixture_bundle"]

@@ -403,27 +403,27 @@ Status: provider-level behavior implemented; live orchestration wiring remains i
 
 ## Acceptance criteria
 
-- [ ] Scraping source policy gate exists and prevents disallowed scraping by default.
-- [ ] Reddit scraper discovers the daily WSB ticker card from allowed public pages or reports a
+- [x] Scraping source policy gate exists and prevents disallowed scraping by default.
+- [x] Reddit scraper discovers the daily WSB ticker card from allowed public pages or reports a
       drift/blocked warning.
-- [ ] AP News scraper returns attributed financial-market evidence from public hub/article HTML.
-- [ ] Candlecharts adapter either returns contract-valid OHLCV from allowed public data or a clear
+- [x] AP News scraper returns attributed financial-market evidence from public hub/article HTML.
+- [x] Candlecharts adapter either returns contract-valid OHLCV from allowed public data or a clear
       unavailable/widget-only warning.
-- [ ] X provider uses official API recent search for every discovered ticker and requests the top
+- [x] X provider uses official API recent search for every discovered ticker and requests the top
       50 relevant results with `sort_order=relevancy` and `max_results=50`.
-- [ ] `run --source-mode scrape` or equivalent produces Markdown, JSON, and audit artifacts from
+- [x] `run --source-mode scrape` or equivalent produces Markdown, JSON, and audit artifacts from
       fixture-backed scrape inputs.
-- [ ] Live scraping tests are opt-in, rate-limited, and source-specific.
+- [x] Live scraping tests are opt-in, rate-limited, and source-specific.
 - [ ] ML dataset generation has leakage tests and data-quality gates.
 - [ ] RTX 3090 training command records reproducible metrics and model artifact metadata.
 - [ ] ML signal integrates conservatively into technical analysis and scoring with stale/weak-model
       gates.
 - [ ] Codex fundamental analysis agent lane has a strict request/response schema and fixture-backed
       tests.
-- [ ] Reports preserve source evidence, provider metadata, confidence inputs, disclaimers, and
+- [x] Reports preserve source evidence, provider metadata, confidence inputs, disclaimers, and
       warnings for blocked/stale/drifted providers.
-- [ ] Existing offline behavior remains deterministic and green.
-- [ ] Documentation covers configuration, compliance limits, training, and agent workflow.
+- [x] Existing offline behavior remains deterministic and green.
+- [x] Documentation covers configuration, compliance limits, training, and agent workflow.
 
 ## Verification commands
 
@@ -478,6 +478,9 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
 - 2026-05-12-00-00: Use one git worktree per parallel workstream and assign disjoint write sets to
   Codex subagents. Shared contracts and base helpers land before adapter work, and the coordinator
   owns integration conflicts, final E2E, and cross-workstream report consistency.
+- 2026-05-12-00-00: Per user direction, follow-up implementation work after the closed PR is being
+  done directly on `feature/release-v1` without git worktrees or subagents. Keep edits linear,
+  reviewed locally, and verified before any ACP.
 
 ## Progress log
 
@@ -511,3 +514,10 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/models/latest
   Reddit blocked-policy warnings to match the shared W1 semantics.
 - 2026-05-12-00-00: Final integration verification passed with `299 passed, 3 skipped`,
   `ruff check src tests`, `ruff format --check src tests`, `mypy .`, and `git diff --check`.
+- 2026-05-12-00-00: Started the six-step direct implementation on `feature/release-v1` without
+  worktrees/subagents. Added shared HTML response compatibility for scraper cleanup, experimental
+  `run --source-mode scrape`, fixture-backed provider orchestration for Reddit public pages, AP
+  News, Candlecharts feasibility, and X API-shaped relevant search, degraded provider reporting in
+  report health plus `audit/provider-results.json`, fixture-backed e2e coverage, and
+  source-specific opt-in live smoke tests. Narrow verification passed for CLI/e2e/AP/Candlecharts/
+  Reddit/scraping tests with `48 passed`.

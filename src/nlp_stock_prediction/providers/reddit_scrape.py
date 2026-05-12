@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol, TypeVar
-from urllib.error import HTTPError, URLError
+from typing import TypeVar
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
 from nlp_stock_prediction.contracts import (
     CredentialState,
@@ -33,9 +31,16 @@ from nlp_stock_prediction.providers._base import (
     provider_health,
     provider_result,
     provider_warning,
-    stable_hash,
     transport_error_result,
     utc_now,
+)
+from nlp_stock_prediction.providers.scraping import (
+    DEFAULT_HTML_MAX_BYTES,
+    HtmlResponse,
+    HtmlTransport,
+    UrllibHtmlTransport,
+    build_scraping_headers,
+    raw_snapshot_id_for_html,
 )
 from nlp_stock_prediction.reddit.discovery import discover_tickers_from_devvit_html
 from nlp_stock_prediction.reddit.evidence import normalize_reddit_evidence
@@ -54,28 +59,6 @@ _DEFAULT_FRESHNESS_WINDOW_SECONDS = 86_400
 
 
 @dataclass(frozen=True, slots=True)
-class HtmlResponse:
-    """Static HTML response plus minimal HTTP metadata."""
-
-    html: str
-    status_code: int = 200
-    headers: Mapping[str, str] = field(default_factory=dict)
-    final_url: str | None = None
-
-
-class HtmlTransport(Protocol):
-    """Minimal transport interface for fixture-backed public HTML reads."""
-
-    def get_html(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        timeout: float = 10.0,
-    ) -> HtmlResponse: ...
-
-
-@dataclass(frozen=True, slots=True)
 class StaticHtmlTransport:
     """Deterministic HTML transport for tests and curated fixtures."""
 
@@ -87,8 +70,9 @@ class StaticHtmlTransport:
         *,
         headers: Mapping[str, str] | None = None,
         timeout: float = 10.0,
+        max_bytes: int = DEFAULT_HTML_MAX_BYTES,
     ) -> HtmlResponse:
-        del headers, timeout
+        del headers, timeout, max_bytes
         page = self.pages.get(url)
         if page is None:
             raise ProviderTransportError(
@@ -99,37 +83,6 @@ class StaticHtmlTransport:
         if isinstance(page, HtmlResponse):
             return page
         return HtmlResponse(html=page, final_url=url)
-
-
-class UrllibHtmlTransport:
-    """Stdlib-backed HTML transport, only used when live scraping is explicitly enabled."""
-
-    def get_html(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        timeout: float = 10.0,
-    ) -> HtmlResponse:
-        request = Request(url, headers=dict(headers or {}))
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                body = response.read().decode("utf-8", errors="replace")
-                return HtmlResponse(
-                    html=body,
-                    status_code=int(getattr(response, "status", 200)),
-                    headers=dict(response.headers.items()),
-                    final_url=response.geturl(),
-                )
-        except HTTPError as exc:
-            raise ProviderTransportError(
-                str(exc),
-                status_code=exc.code,
-                retryable=exc.code in {408, 425, 429, 500, 502, 503, 504},
-                error_type="http_error",
-            ) from exc
-        except URLError as exc:
-            raise ProviderTransportError(str(exc), retryable=True, error_type="url_error") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -450,7 +403,10 @@ class RedditPublicPageProvider:
             )
         return self._transport.get_html(
             source_url,
-            headers={"User-Agent": self._user_agent, "Accept": "text/html"},
+            headers=build_scraping_headers(
+                user_agent=self._user_agent,
+                extra_headers={"Accept": "text/html"},
+            ),
             timeout=self._timeout,
         )
 
@@ -555,7 +511,7 @@ class RedditPublicPageProvider:
 
 
 def _raw_snapshot_id(source: str, html: str) -> str:
-    return f"raw-{source}-{stable_hash(html, length=20)}"
+    return raw_snapshot_id_for_html(source, html)
 
 
 def _is_stale_observation(discovery: TickerDiscoveryResult) -> bool:

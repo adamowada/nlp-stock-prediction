@@ -32,6 +32,7 @@ EXPECTED_AUDIT_FILES = {
     "final-reports.json",
     "audit-manifest.json",
 }
+EXPECTED_SCRAPE_AUDIT_FILES = EXPECTED_AUDIT_FILES | {"provider-results.json"}
 
 
 def _module_env() -> dict[str, str]:
@@ -314,6 +315,76 @@ def test_cli_offline_run_represents_no_trade_day(tmp_path: Path) -> None:
 
 
 @pytest.mark.e2e
+def test_cli_scrape_source_mode_writes_degraded_provider_report_bundle(tmp_path: Path) -> None:
+    output_dir = tmp_path / "reports"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nlp_stock_prediction",
+            "run",
+            "--date",
+            "2026-05-11",
+            "--output",
+            str(output_dir),
+            "--source-mode",
+            "scrape",
+        ],
+        cwd=PROJECT_ROOT,
+        env=_module_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "report.md" in result.stdout
+    assert result.stderr == ""
+
+    report_dir = output_dir / "2026-05-11"
+    audit_dir = report_dir / "audit"
+    report = DailyReport.model_validate_json(
+        (report_dir / "report.json").read_text(encoding="utf-8")
+    )
+
+    assert {path.name for path in audit_dir.iterdir()} == EXPECTED_SCRAPE_AUDIT_FILES
+    assert report.command_args["source_mode"] == "scrape"
+    assert report.provider_health
+    warning_codes = {
+        warning.code for health in report.provider_health for warning in health.warnings
+    }
+    assert {
+        "missing_credentials",
+        "rate_limited",
+        "upstream_unavailable",
+        "scraping_drift",
+        "stale_data",
+        "no_data",
+    }.issubset({code.value for code in warning_codes})
+    assert any(
+        evidence.provenance.provider_name == "x-recent-search"
+        and evidence.provenance.provider_metadata["sort_order"] == "relevancy"
+        for evidence in report.evidence_sources
+    )
+    provider_results = _read_json_object(audit_dir / "provider-results.json")
+    assert provider_results["source_mode"] == "scrape"
+    assert len(_json_records(provider_results)) >= 10
+    manifest = AuditManifest.model_validate(_read_json_object(audit_dir / "audit-manifest.json"))
+    assert manifest == report.audit_manifest
+    assert "provider-results" in {artifact.artifact_id for artifact in manifest.artifacts}
+    artifacts_by_id = {artifact.artifact_id: artifact for artifact in manifest.artifacts}
+    for artifact_id, filename in {
+        "raw-snapshots": "raw-snapshots.json",
+        "normalized-evidence": "normalized-evidence.json",
+        "provider-results": "provider-results.json",
+    }.items():
+        payload = _read_json_object(audit_dir / filename)
+        assert artifacts_by_id[artifact_id].sha256 == json_payload_sha256(payload)
+        assert artifacts_by_id[artifact_id].record_count == len(_json_records(payload))
+
+
+@pytest.mark.e2e
 def test_cli_run_requires_offline_until_live_orchestration_is_enabled(tmp_path: Path) -> None:
     output_dir = tmp_path / "reports"
 
@@ -337,5 +408,6 @@ def test_cli_run_requires_offline_until_live_orchestration_is_enabled(tmp_path: 
 
     assert result.returncode == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
     assert "Live-provider report orchestration is not enabled yet" in result.stderr
+    assert "--source-mode scrape" in result.stderr
     assert result.stdout == ""
     assert not output_dir.exists()

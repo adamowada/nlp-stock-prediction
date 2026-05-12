@@ -18,12 +18,13 @@ CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 PHASE_0_NOT_IMPLEMENTED_EXIT_CODE = CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
 _CLI_EPILOG = """Examples:
   python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+  python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
   python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ \\
     --capital 1000 --risk-profile exploratory --offline
 
 Configuration:
   Offline runs are deterministic and do not use network providers.
-  Live-provider report orchestration is not enabled yet.
+  Scrape source mode uses compliance-aware provider adapters with deterministic fixtures by default.
   Pass --offline to generate the deterministic fixture-backed report bundle.
   Keep provider credentials in environment variables or ignored local .env files;
   see docs/configuration.md.
@@ -113,14 +114,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_parser.add_argument(
+        "--source-mode",
+        choices=("offline", "scrape"),
+        default=None,
+        help=(
+            "Explicit source mode. Use 'scrape' for the experimental compliance-aware "
+            "provider path; default remains disabled unless --offline is supplied."
+        ),
+    )
+    run_parser.add_argument(
         "--offline",
         action="store_true",
-        help="Required for the current V1 report path; disallows live network providers.",
+        help=(
+            "Use the deterministic offline fixture-backed report path; disallows live network "
+            "providers."
+        ),
     )
     return parser
 
 
 def build_run_config(args: argparse.Namespace) -> RunConfig:
+    source_mode = "offline" if args.offline else args.source_mode or "disabled"
     return RunConfig(
         run_date=args.run_date,
         output_dir=args.output_dir,
@@ -129,6 +143,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         fixture_dir=args.fixture_dir,
         cache_dir=args.cache_dir,
         offline=args.offline,
+        source_mode=source_mode,
     )
 
 

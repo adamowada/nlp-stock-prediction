@@ -6,7 +6,7 @@ The app will discover the six tickers highlighted by r/wallstreetbets' daily Dev
 
 ## Current status
 
-Phase 3 is complete for the local V1 CLI on `feature/integration-and-hardening`. The current CLI generates a deterministic offline report bundle with Markdown, JSON, and audit artifacts, and the provider, extraction, analysis, scoring, reporting, reliability, and compliance lanes are present in the main application surface. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `plans/phase-3-integration-live-smoke.md` for the Phase 3 acceptance record, `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
+Phase 3 is complete for the local V1 CLI on `feature/release-v1`. The current CLI generates a deterministic offline report bundle with Markdown, JSON, and audit artifacts, and it also has an experimental fixture-backed `--source-mode scrape` path that wires the Reddit public-page, AP News, Candlecharts feasibility, and X recent-search adapters into provider health and audit artifacts. Live API and scraping checks remain opt-in, and live LLM smoke remains reserved until a live adapter and credential contract exist. See `AGENTS.md` for project conventions, `docs/contracts.md` for the contract baseline, and `PLANS.md` for the execution-plan format used for larger Codex tasks.
 
 ## Intended workflow
 
@@ -28,10 +28,11 @@ ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
 ```
 
 The canonical CLI invocation is the Python module form, `python -m nlp_stock_prediction`. If a console script is added later, it should remain a thin alias for that module command and the docs should be updated together.
 
-The offline run writes `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/` using deterministic fixture data. Non-offline report orchestration intentionally exits with code `3` until live orchestration is deliberately enabled in a later phase/stage. The default test harness blocks network access; live tests require explicit opt-in environment variables and, for provider-specific checks, credentials or configured URLs.
+The offline run writes `reports/YYYY-MM-DD/report.md`, `reports/YYYY-MM-DD/report.json`, and `reports/YYYY-MM-DD/audit/` using deterministic fixture data. `--source-mode scrape` writes the same report bundle plus `audit/provider-results.json`, using deterministic provider fixtures and degraded-provider probes rather than live network calls. The default test harness blocks network access; live tests require explicit opt-in environment variables and, for provider-specific checks, credentials or configured URLs.
 
 Configuration details, live-smoke environment variables, and `.env` handling are documented in `docs/configuration.md`. Real credentials belong in environment variables or ignored local `.env` files, never in committed files.
