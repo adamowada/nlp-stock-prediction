@@ -4,7 +4,7 @@
 
 This project is a TDD-first Python CLI application for generating a daily, evidence-grounded stock opportunity report for a retail trader with a small account.
 
-The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI path is deterministic and fixture-backed with `--offline`; live report orchestration remains disabled until explicitly enabled. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
+The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI supports deterministic `--offline`, fixture-backed `--source-mode scrape`, and explicit opt-in live provider evidence collection with `--source-mode scrape --live-providers`; live provider runs remain no-trade until live extraction/scoring is enabled. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
 
 The project should favor correctness, traceability, and testability over speed of adding features. Any generated recommendation must preserve its source evidence, assumptions, risks, and confidence inputs.
 
@@ -21,6 +21,7 @@ ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
 ```
 
 Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is introduced.

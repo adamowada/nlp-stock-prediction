@@ -9,13 +9,22 @@ from typing import cast
 from nlp_stock_prediction.contracts import AuditManifest, JsonObject
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.reporting.audit import write_json_artifact
-from nlp_stock_prediction.reporting.fixtures import build_offline_fixture_bundle
+from nlp_stock_prediction.reporting.fixtures import (
+    OfflineFixtureBundle,
+    build_offline_fixture_bundle,
+)
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
+from nlp_stock_prediction.reporting.scrape_fixtures import (
+    ScrapeFixtureBundle,
+    build_live_scrape_bundle,
+    build_scrape_fixture_bundle,
+)
 
 LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
-    "Live-provider report orchestration is not enabled yet; pass --offline to generate "
-    "the deterministic fixture-backed report bundle."
+    "No source mode selected; pass --offline for the deterministic fixture-backed report, "
+    "--source-mode scrape for the fixture-backed scrape-source provider path, or "
+    "--source-mode scrape --live-providers for explicit live provider evidence collection."
 )
 
 
@@ -31,10 +40,17 @@ class ReportBundle:
 def generate_daily_report(config: RunConfig) -> ReportBundle:
     """Generate a deterministic report bundle for the configured run."""
 
-    if not config.offline:
+    fixture_bundle: OfflineFixtureBundle | ScrapeFixtureBundle
+    if config.offline or config.source_mode == "offline":
+        fixture_bundle = build_offline_fixture_bundle(config)
+    elif config.source_mode == "scrape":
+        fixture_bundle = (
+            build_live_scrape_bundle(config)
+            if config.live_providers
+            else build_scrape_fixture_bundle(config)
+        )
+    else:
         raise ValueError(LIVE_ORCHESTRATION_DISABLED_MESSAGE)
-
-    fixture_bundle = build_offline_fixture_bundle(config)
     report = fixture_bundle.report
     report_dir = config.output_dir / config.run_date.isoformat()
     audit_dir = report_dir / "audit"

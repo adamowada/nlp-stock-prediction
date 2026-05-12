@@ -85,10 +85,8 @@ class _FailingJsonTransport:
 
 @pytest.mark.unit
 def test_x_recent_search_builds_cashtag_query() -> None:
-    assert build_x_recent_search_query("tsla") == "$TSLA lang:en"
-    assert build_x_recent_search_query("NVDA", lang="en", exclude_retweets=True) == (
-        "$NVDA lang:en -is:retweet"
-    )
+    assert build_x_recent_search_query("tsla") == "$TSLA lang:en -is:retweet"
+    assert build_x_recent_search_query("NVDA", lang="en", exclude_retweets=False) == "$NVDA lang:en"
 
 
 @pytest.mark.contract
@@ -125,10 +123,36 @@ def test_x_provider_maps_recent_search_posts_to_evidence() -> None:
     assert evidence.match_spans[0].text == "$TSLA"
     assert evidence.provenance.provider_name == "x-recent-search"
     assert evidence.provenance.retrieval_method == RetrievalMethod.OFFICIAL_API
-    assert evidence.provenance.query == "$TSLA lang:en"
+    assert evidence.provenance.query == "$TSLA lang:en -is:retweet"
+    assert evidence.provenance.provider_metadata["sort_order"] == "relevancy"
     assert evidence.provenance.raw_snapshot_id == result.raw_snapshot_id
     assert evidence.provenance.freshness_status == FreshnessStatus.FRESH
-    assert "query=%24TSLA+lang%3Aen" in transport.calls[0]
+    assert "query=%24TSLA+lang%3Aen+-is%3Aretweet" in transport.calls[0]
+    assert "sort_order=relevancy" in transport.calls[0]
+    assert "max_results=10" in transport.calls[0]
+
+
+@pytest.mark.contract
+def test_x_provider_defaults_to_relevancy_and_fifty_posts() -> None:
+    transport = _FakeJsonTransport(
+        {"tweets/search/recent": JsonResponse(payload=_fixture("x", "recent_tsla.json"))}
+    )
+    provider = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="x-tsla-defaults-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_social_posts(request)
+
+    assert result.status == ProviderStatus.OK
+    assert "sort_order=relevancy" in transport.calls[0]
+    assert "max_results=50" in transport.calls[0]
 
 
 @pytest.mark.contract

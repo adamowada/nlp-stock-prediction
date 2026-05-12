@@ -12,18 +12,22 @@ from pathlib import Path
 
 from nlp_stock_prediction.contracts.enums import RiskProfile
 from nlp_stock_prediction.contracts.providers import RunConfig
+from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.pipeline import generate_daily_report
 
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 PHASE_0_NOT_IMPLEMENTED_EXIT_CODE = CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
 _CLI_EPILOG = """Examples:
   python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
+  python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
   python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ \\
     --capital 1000 --risk-profile exploratory --offline
 
 Configuration:
   Offline runs are deterministic and do not use network providers.
-  Live-provider report orchestration is not enabled yet.
+  Scrape source mode uses compliance-aware provider adapters with deterministic fixtures by default.
+  Add --live-providers with --source-mode scrape to call configured live providers.
+  A local .env file is loaded automatically without overriding exported shell variables.
   Pass --offline to generate the deterministic fixture-backed report bundle.
   Keep provider credentials in environment variables or ignored local .env files;
   see docs/configuration.md.
@@ -108,19 +112,45 @@ def build_parser() -> argparse.ArgumentParser:
         "--cache-dir",
         type=Path,
         help=(
-            "Optional provider cache directory for future live/provider runs; current offline "
-            "runs record this path in command metadata."
+            "Optional provider cache directory for live provider runs; deterministic runs record "
+            "this path in command metadata."
+        ),
+    )
+    run_parser.add_argument(
+        "--source-mode",
+        choices=("offline", "scrape"),
+        default=None,
+        help=(
+            "Explicit source mode. Use 'scrape' for the experimental compliance-aware "
+            "provider path with deterministic fixtures by default; add --live-providers for "
+            "real provider calls."
         ),
     )
     run_parser.add_argument(
         "--offline",
         action="store_true",
-        help="Required for the current V1 report path; disallows live network providers.",
+        help=(
+            "Use the deterministic offline fixture-backed report path; disallows live network "
+            "providers."
+        ),
+    )
+    run_parser.add_argument(
+        "--live-providers",
+        action="store_true",
+        help=(
+            "Opt into real provider calls for --source-mode scrape. Fixture-backed scrape mode "
+            "remains the default."
+        ),
     )
     return parser
 
 
 def build_run_config(args: argparse.Namespace) -> RunConfig:
+    source_mode = "offline" if args.offline else args.source_mode or "disabled"
+    if args.live_providers and (args.offline or source_mode != "scrape"):
+        raise ValueError(
+            "--live-providers requires --source-mode scrape and cannot be used with --offline"
+        )
     return RunConfig(
         run_date=args.run_date,
         output_dir=args.output_dir,
@@ -129,10 +159,13 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         fixture_dir=args.fixture_dir,
         cache_dir=args.cache_dir,
         offline=args.offline,
+        source_mode=source_mode,
+        live_providers=args.live_providers,
     )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    load_local_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:

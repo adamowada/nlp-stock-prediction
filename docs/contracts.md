@@ -11,9 +11,12 @@ frozen contract invariants.
 - Source layout: `src/nlp_stock_prediction/`.
 - Canonical invocation: `python -m nlp_stock_prediction`.
 - `run` accepts `--date`, `--output`, `--capital`, `--risk-profile`, `--fixture-dir`,
-  `--cache-dir`, and `--offline`.
-- With `--offline`, `run` writes a deterministic fixture-backed report bundle. Without `--offline`,
-  it currently exits with code `3` because live-provider report orchestration is not enabled yet.
+  `--cache-dir`, `--source-mode`, `--offline`, and `--live-providers`.
+- With `--offline`, `run` writes a deterministic fixture-backed report bundle. With
+  `--source-mode scrape`, it writes an experimental scrape-source report bundle backed by
+  deterministic provider fixtures. Adding `--live-providers` to scrape mode calls configured live
+  providers for evidence collection and provider health while keeping live extraction/scoring
+  disabled and emitting no-trade guidance. Without an explicit source mode, it exits with code `3`.
 - No console script is frozen in the contract gate.
 - Environment variables and optional ignored `.env` files are documented in
   `docs/configuration.md`; the default offline path does not require credentials or network access.
@@ -142,6 +145,7 @@ Core scenario names to use first:
 
 ## Phase Boundary
 
-Phase 0 and Phase 1 are complete, Phase 2 implementation lanes have been integrated, and Phase 3
-local V1 acceptance is complete on `feature/integration-and-hardening`. Shared public contracts
-should stay stable unless a single-threaded contract revision is recorded in a new active plan.
+Phase 0 and Phase 1 are complete, Phase 2 implementation lanes have been integrated, Phase 3 local
+V1 acceptance is complete, and the follow-on opt-in live scrape orchestration path has been merged
+on `feature/release-v1`. Shared public contracts should stay stable unless a single-threaded
+contract revision is recorded in a new active plan.

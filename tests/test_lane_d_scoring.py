@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Literal
 
 import pytest
 
@@ -10,6 +11,7 @@ from nlp_stock_prediction.contracts import (
     AnalysisSignal,
     Direction,
     EvidenceReference,
+    FreshnessStatus,
     FundamentalAnalysis,
     InstrumentType,
     JsonObject,
@@ -21,6 +23,7 @@ from nlp_stock_prediction.contracts import (
     SectorContext,
     StrategyCluster,
     TechnicalAnalysis,
+    TechnicalMlSignal,
     TimeHorizon,
     WarningCode,
     WarningSeverity,
@@ -69,10 +72,39 @@ def _cluster(
     )
 
 
+def _ml_signal(
+    *,
+    signal: AnalysisSignal = AnalysisSignal.SUPPORTS,
+    status: Literal["usable", "weak", "stale", "conflicting", "unavailable"] = "usable",
+    calibrated_confidence: float = 0.31,
+) -> TechnicalMlSignal:
+    probability = 0.61
+    if signal == AnalysisSignal.CONFLICTS:
+        probability = 0.39
+    elif signal == AnalysisSignal.MIXED:
+        probability = 0.50
+    return TechnicalMlSignal(
+        model_hash="fixture-model-hash",
+        dataset_hash="fixture-dataset-hash",
+        as_of=RUN_DATE,
+        feature_end=RUN_DATE,
+        prediction_horizon_sessions=1,
+        probability_positive=probability,
+        calibrated_confidence=calibrated_confidence,
+        signal=signal,
+        status=status,
+        freshness_status=FreshnessStatus.FRESH,
+        validation_accuracy=0.58,
+        validation_brier_score=0.21,
+        warning_ids=(f"ml-technical-signal:{status}",) if status != "usable" else (),
+    )
+
+
 def _analysis_bundle(
     *,
     ticker: str = "NVDA",
     technical_signal: AnalysisSignal = AnalysisSignal.SUPPORTS,
+    technical_ml_signal: TechnicalMlSignal | None = None,
     fundamental_signal: AnalysisSignal = AnalysisSignal.SUPPORTS,
     sector_signal: AnalysisSignal = AnalysisSignal.SUPPORTS,
     macro_signal: AnalysisSignal = AnalysisSignal.SUPPORTS,
@@ -91,6 +123,7 @@ def _analysis_bundle(
             trend="uptrend" if technical_signal != AnalysisSignal.CONFLICTS else "downtrend",
             support_levels=(Decimal("940"),),
             resistance_levels=(Decimal("1010"),),
+            ml_signal=technical_ml_signal,
         ),
         fundamental=FundamentalAnalysis(
             ticker=ticker,
@@ -243,6 +276,66 @@ def test_scoring_emits_qualified_defined_risk_candidate_with_auditable_component
     assert isinstance(confidence_inputs, dict)
     assert confidence_inputs["technical"] == 0.82
     assert candidate.evidence == cluster.evidence
+
+
+@pytest.mark.unit
+def test_ml_signal_conflict_penalizes_and_prevents_qualification() -> None:
+    candidate = score_strategy_cluster(
+        cluster=_cluster(direction=Direction.BULLISH),
+        analysis=_analysis_bundle(technical_ml_signal=_ml_signal(signal=AnalysisSignal.CONFLICTS)),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+        disclaimer_id=DISCLAIMER_ID,
+    )
+
+    assert candidate.action == RecommendationAction.WATCH
+    assert "ml-technical-conflict" in candidate.score.failed_gates
+    assert any(
+        penalty.name == "ml-technical-conflict-penalty" for penalty in candidate.score.penalties
+    )
+
+
+@pytest.mark.unit
+def test_weak_ml_signal_penalizes_and_prevents_qualification() -> None:
+    candidate = score_strategy_cluster(
+        cluster=_cluster(direction=Direction.BULLISH),
+        analysis=_analysis_bundle(
+            technical_ml_signal=_ml_signal(
+                signal=AnalysisSignal.SUPPORTS,
+                status="weak",
+                calibrated_confidence=0.08,
+            )
+        ),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+        disclaimer_id=DISCLAIMER_ID,
+    )
+
+    assert candidate.action == RecommendationAction.WATCH
+    assert "ml-signal-not-actionable" in candidate.score.failed_gates
+    penalty_names = {penalty.name for penalty in candidate.score.penalties}
+    assert "ml-signal-quality-penalty" in penalty_names
+    assert "ml-signal-weak-penalty" in penalty_names
 
 
 @pytest.mark.unit

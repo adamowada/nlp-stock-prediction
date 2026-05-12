@@ -2,8 +2,8 @@
 
 This is the historical Phase 2 worktree runbook. Phase 2 has already been integrated; keep this
 document as the reproducible procedure for the lane-based implementation model and for future
-parallel lane work. Phase 3 local V1 acceptance is complete; future live-provider orchestration
-should use a new active plan.
+parallel lane work. Phase 3 local V1 acceptance is complete; follow-on live-provider orchestration
+work was tracked in `plans/scraping-ml-agent-analysis.md`.
 
 ## Frozen Contract Ref
 

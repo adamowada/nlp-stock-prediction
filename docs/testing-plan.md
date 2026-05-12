@@ -16,10 +16,20 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 
 - Validate pure functions and small modules without network access.
 - Cover ticker extraction, ticker matching, evidence normalization, clustering, technical indicators, scoring rules, risk gates, and report rendering helpers.
+- Cover ML technical datasets with deterministic OHLCV fixtures, including candle, volatility,
+  volume, gap, and forward-return label generation.
+- Cover ML technical sidecar integration, including model/evaluation conversion, report attachment,
+  weak or conflicting signal gates, and scoring penalties.
+- Cover fundamental-agent integration, including valid citation-bound sidecars, malformed output,
+  unsupported claims, stale or contradictory evidence, and unavailable-agent fallbacks.
 - Include negative cases for malformed HTML, duplicate or insufficient tickers, missing provider
   data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
   recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
   ticker false positives.
+- Include ML negative cases for insufficient history, duplicate bars, missing OHLCV, impossible
+  prices, split-like leakage, and temporal train/validation leakage.
+- Include local training command smoke coverage that verifies model, metrics, metadata, artifact
+  SHA-256 hashes, split metadata, selected-device metadata, and usage-limitations are written.
 
 ### 2. Schema and model tests
 
@@ -36,9 +46,11 @@ set `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` before opening sockets.
 
 ### 4. Live API integration tests
 
-- Current Phase 3 live API coverage verifies the SEC company tickers endpoint and keeps a reserved
-  LLM smoke gate explicit. Future live provider coverage should extend to Reddit, X/Twitter, news,
-  market data, fundamentals, FRED, and any enabled LLM provider.
+- Current live API coverage verifies the SEC company tickers endpoint and X API recent search, and
+  keeps a reserved LLM smoke gate explicit. Future live provider coverage should extend to market
+  data, fundamentals, FRED, and any enabled LLM provider.
+- X API provider coverage should verify the production stock-news/social query shape:
+  `$TICKER lang:en -is:retweet`, `sort_order=relevancy`, and `max_results=50`.
 - Require explicit environment variables for credentials and opt-in execution.
 - Check authentication failures, quota/rate-limit responses, malformed upstream responses, and stale data behavior.
 - Mark these tests separately from fast local tests, for example:
@@ -51,8 +63,8 @@ python -m pytest -m live_api
 
 - Verify that permitted public HTML scraping fallbacks still locate expected page sections and fail clearly when markup changes.
 - Keep scraping tests narrow: assert configured expected text, selectors, or parseable required
-  structures rather than broad page content. Current Phase 3 coverage uses a configured public URL
-  and literal expected text.
+  structures rather than broad page content. Current coverage includes source-specific Reddit, AP
+  News, and Candlecharts smoke checks plus a configured public URL and literal expected text.
 - Include alerts or failure messages that explain which selector, subtree, or regex no longer matches.
 - Mark scraping tests separately, for example:
 
@@ -74,6 +86,9 @@ python -m pytest -m live_scraping
 - Run the full CLI from fixtures and verify that Markdown, JSON, and audit artifacts are generated.
 - Include scenarios for:
   - A normal six-ticker day.
+  - Experimental scrape source mode with provider health, warnings, and `provider-results.json`.
+  - Experimental scrape source mode with ML sidecar and fundamental-agent sidecar entries in
+    Markdown, JSON, provider-result, and analysis-context audit payloads.
   - No qualifying trade ideas.
   - Partial provider outages.
   - Conflicting Reddit/news/technical/fundamental signals.
@@ -106,10 +121,20 @@ ruff format --check .
 mypy .
 ```
 
-Fixture-backed e2e coverage now exercises offline CLI report generation. Live API and live scraping
-checks remain opt-in, and live LLM checks are reserved until a live adapter and credential contract
-exist. See `docs/configuration.md` for the current live-smoke environment variables and `.env`
-guidance.
+Fixture-backed e2e coverage now exercises offline CLI report generation and experimental
+`--source-mode scrape` orchestration. Live API and live scraping checks remain opt-in; the explicit
+`--source-mode scrape --live-providers` report path is local opt-in and should be validated with
+credentials/configuration outside the default deterministic suite. Live LLM checks are reserved
+until a live adapter and credential contract exist. See `docs/configuration.md` for the current
+live-smoke environment variables and `.env` guidance.
+
+ML lane smoke coverage is CPU-only by default:
+
+```sh
+python -m pytest tests/test_ml_dataset.py tests/test_ml_training_smoke.py -q
+```
+
+GPU/RTX training is a local opt-in command path and should not be required in PR CI.
 
 Stage 5 failure drills are represented across parser, provider-adapter, extraction/clustering,
 scoring, report-rendering, and CLI e2e tests. The matrix covers malformed Reddit ticker-card HTML,
@@ -130,7 +155,8 @@ joke/sarcasm risk, and no qualified strategies.
 - Each provider adapter has fixture-backed contract tests; live opt-in tests are added as each live
   provider path is enabled.
 - Scraping fallbacks have narrow live tests that detect markup drift.
-- The full report can be generated from fixtures.
-- Selected live provider edges can be smoke-tested when credentials/configuration and network access
-  are available; full live report orchestration remains disabled until explicitly enabled.
+- The full report can be generated from offline fixtures and from fixture-backed scrape source mode.
+- Selected live provider edges and the explicit live-provider scrape report path can be
+  smoke-tested when credentials/configuration and network access are available; default report
+  generation remains network-free.
 - Recommendation scoring has tests for both confident-trade and no-trade outcomes.

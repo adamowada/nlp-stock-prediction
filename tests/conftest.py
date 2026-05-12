@@ -6,6 +6,8 @@ from collections.abc import Iterator
 
 import pytest
 
+os.environ.setdefault("NLP_STOCK_PREDICTION_DISABLE_DOTENV", "1")
+
 
 def _network_guard(*_args: object, **_kwargs: object) -> None:
     raise RuntimeError(

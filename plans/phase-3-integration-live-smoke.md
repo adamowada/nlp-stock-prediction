@@ -1,5 +1,10 @@
 # Phase 3 Integration And Live Smoke
 
+Status: complete. This is the historical Phase 3 local V1 acceptance plan; later follow-on work on
+`feature/release-v1` added opt-in `--source-mode scrape --live-providers` evidence collection. Any
+older notes below that describe live-provider report orchestration as outside V1 refer to the Phase
+3 acceptance boundary at that time, not to the current branch behavior.
+
 ## Goal
 
 Complete the V1 local CLI application so it can generate an auditable daily stock opportunity report
@@ -25,7 +30,8 @@ unqualified investment advice.
 
 ## Context
 
-- Current branch: `feature/integration-and-hardening`.
+- Original Phase 3 branch: `feature/integration-and-hardening`; current release integration branch:
+  `feature/release-v1`.
 - Phase 0 and Phase 1 established the frozen public contracts and deterministic contract harness.
 - Phase 2 implementation lanes A-F have been integrated into the main application surface.
 - The strongest Phase 2 source of truth is `plans/phase-2-parallel-implementation.md`, whose final
@@ -215,9 +221,10 @@ Live checks remain opt-in:
 - 2026-05-11-16-10: Stage 5 treats high sarcasm/joke risk and conflicting source evidence as
   extraction/cluster warnings that add score penalties and failed gates, keeping affected setups
   watch-only instead of silently qualified.
-- 2026-05-11-16-25: Stage 6 final acceptance keeps live-provider report orchestration outside V1;
-  configured SEC API and public scraping smoke checks passed as opt-in gates, while live LLM smoke
-  remains a reserved skip until a live adapter and credential contract exist.
+- 2026-05-11-16-25: Stage 6 final acceptance kept live-provider report orchestration outside the
+  Phase 3 local V1 boundary; configured SEC API and public scraping smoke checks passed as opt-in
+  gates, while live LLM smoke remains a reserved skip until a live adapter and credential contract
+  exist.
 
 ## Progress log
 
@@ -331,3 +338,6 @@ Live checks remain opt-in:
   and 257 deselected; configured live scraping reported 1 passed and 258 deselected; and direct
   offline CLI smoke wrote Markdown, JSON, and audit artifacts to a temporary directory that was
   removed after verification.
+- 2026-05-12-00-00: Follow-on work after this Phase 3 plan added fixture-backed scrape mode and
+  explicit live-provider scrape evidence collection on `feature/release-v1`. Current active status
+  is tracked in `plans/scraping-ml-agent-analysis.md`.

@@ -4,7 +4,8 @@ import json
 import os
 import subprocess
 import sys
-from datetime import date
+from collections.abc import Mapping
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
 
@@ -14,11 +15,14 @@ from nlp_stock_prediction.cli import CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
 from nlp_stock_prediction.contracts import (
     AuditManifest,
     DailyReport,
+    EvidenceRequest,
     JsonObject,
     RiskProfile,
     RunConfig,
 )
 from nlp_stock_prediction.pipeline import generate_daily_report
+from nlp_stock_prediction.providers._base import JsonResponse
+from nlp_stock_prediction.providers.social import XRecentSearchProvider
 from nlp_stock_prediction.reporting.audit import json_payload_sha256
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +36,7 @@ EXPECTED_AUDIT_FILES = {
     "final-reports.json",
     "audit-manifest.json",
 }
+EXPECTED_SCRAPE_AUDIT_FILES = EXPECTED_AUDIT_FILES | {"provider-results.json"}
 
 
 def _module_env() -> dict[str, str]:
@@ -314,6 +319,243 @@ def test_cli_offline_run_represents_no_trade_day(tmp_path: Path) -> None:
 
 
 @pytest.mark.e2e
+def test_cli_scrape_source_mode_writes_degraded_provider_report_bundle(tmp_path: Path) -> None:
+    output_dir = tmp_path / "reports"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nlp_stock_prediction",
+            "run",
+            "--date",
+            "2026-05-11",
+            "--output",
+            str(output_dir),
+            "--source-mode",
+            "scrape",
+        ],
+        cwd=PROJECT_ROOT,
+        env=_module_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "report.md" in result.stdout
+    assert result.stderr == ""
+
+    report_dir = output_dir / "2026-05-11"
+    audit_dir = report_dir / "audit"
+    report = DailyReport.model_validate_json(
+        (report_dir / "report.json").read_text(encoding="utf-8")
+    )
+
+    assert {path.name for path in audit_dir.iterdir()} == EXPECTED_SCRAPE_AUDIT_FILES
+    assert report.command_args["source_mode"] == "scrape"
+    assert report.provider_health
+    warning_codes = {
+        warning.code for health in report.provider_health for warning in health.warnings
+    }
+    assert {
+        "missing_credentials",
+        "rate_limited",
+        "upstream_unavailable",
+        "scraping_drift",
+        "stale_data",
+        "no_data",
+    }.issubset({code.value for code in warning_codes})
+    assert any(
+        evidence.provenance.provider_name == "x-recent-search"
+        and evidence.provenance.provider_metadata["sort_order"] == "relevancy"
+        for evidence in report.evidence_sources
+    )
+    tsla_section = next(section for section in report.ticker_sections if section.ticker == "TSLA")
+    assert tsla_section.technical_analysis is not None
+    assert tsla_section.technical_analysis.ml_signal is not None
+    assert tsla_section.technical_analysis.ml_signal.status == "usable"
+    assert tsla_section.fundamental_analysis is not None
+    assert tsla_section.fundamental_analysis.agent_signal is not None
+    assert tsla_section.fundamental_analysis.agent_signal.provider_name == "fundamental-agent"
+    markdown = (report_dir / "report.md").read_text(encoding="utf-8")
+    assert "ML signal: supports" in markdown
+    assert "Fundamental agent: mixed" in markdown
+
+    provider_results = _read_json_object(audit_dir / "provider-results.json")
+    assert provider_results["source_mode"] == "scrape"
+    provider_records = _json_records(provider_results)
+    assert len(provider_records) >= 10
+    assert any(record["provider_name"] == "fundamental-agent" for record in provider_records)
+    analysis_records = _json_records(_read_json_object(audit_dir / "analysis-contexts.json"))
+    tsla_context = next(record for record in analysis_records if record["ticker"] == "TSLA")
+    technical_context = cast(JsonObject, tsla_context["technical"])
+    fundamental_context = cast(JsonObject, tsla_context["fundamental"])
+    assert isinstance(technical_context["ml_signal"], dict)
+    assert isinstance(fundamental_context["agent_signal"], dict)
+    manifest = AuditManifest.model_validate(_read_json_object(audit_dir / "audit-manifest.json"))
+    assert manifest == report.audit_manifest
+    assert "provider-results" in {artifact.artifact_id for artifact in manifest.artifacts}
+    artifacts_by_id = {artifact.artifact_id: artifact for artifact in manifest.artifacts}
+    for artifact_id, filename in {
+        "raw-snapshots": "raw-snapshots.json",
+        "normalized-evidence": "normalized-evidence.json",
+        "provider-results": "provider-results.json",
+    }.items():
+        payload = _read_json_object(audit_dir / filename)
+        assert artifacts_by_id[artifact_id].sha256 == json_payload_sha256(payload)
+        assert artifacts_by_id[artifact_id].record_count == len(_json_records(payload))
+
+
+@pytest.mark.e2e
+def test_generate_daily_report_live_scrape_mode_dispatches_live_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nlp_stock_prediction.reporting.scrape_fixtures import (
+        ScrapeFixtureBundle,
+        build_scrape_fixture_bundle,
+    )
+
+    output_dir = tmp_path / "reports"
+    calls: list[RunConfig] = []
+
+    def fake_live_bundle(config: RunConfig) -> ScrapeFixtureBundle:
+        calls.append(config)
+        return build_scrape_fixture_bundle(config)
+
+    monkeypatch.setattr(
+        "nlp_stock_prediction.pipeline.build_live_scrape_bundle",
+        fake_live_bundle,
+    )
+
+    bundle = generate_daily_report(
+        RunConfig(
+            run_date=date(2026, 5, 11),
+            output_dir=output_dir,
+            risk_profile=RiskProfile.EXPLORATORY,
+            source_mode="scrape",
+            live_providers=True,
+        )
+    )
+
+    assert calls and calls[0].live_providers is True
+    assert bundle.markdown_path.exists()
+    assert (output_dir / "2026-05-11" / "audit" / "provider-results.json").exists()
+
+
+@pytest.mark.e2e
+def test_live_scrape_bundle_suppresses_fixture_recommendations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nlp_stock_prediction.reporting import scrape_fixtures
+    from nlp_stock_prediction.reporting.markdown import render_markdown_report
+
+    output_dir = tmp_path / "reports"
+    config = RunConfig(
+        run_date=date(2026, 5, 11),
+        output_dir=output_dir,
+        risk_profile=RiskProfile.EXPLORATORY,
+        source_mode="scrape",
+        live_providers=True,
+    )
+
+    monkeypatch.setattr(
+        scrape_fixtures,
+        "_live_provider_results",
+        scrape_fixtures._provider_results,
+    )
+
+    bundle = scrape_fixtures.build_live_scrape_bundle(config)
+    report = bundle.report
+
+    assert report.command_args["live_providers"] is True
+    assert report.trade_candidates == ()
+    assert report.no_trade_summary is not None
+    assert "Live scrape mode collected provider evidence" in report.no_trade_summary
+    assert all(section.recommendation_ids == () for section in report.ticker_sections)
+    assert all(section.strategy_clusters == () for section in report.ticker_sections)
+    assert all(
+        section.technical_analysis is None and section.fundamental_analysis is None
+        for section in report.ticker_sections
+    )
+    assert report.evidence_sources
+    assert all(
+        evidence.provenance.provider_name != "fixture-reddit"
+        for evidence in report.evidence_sources
+    )
+    provider_results = bundle.audit_payloads["provider-results.json"]
+    assert provider_results["source_profile"] == "live"
+    assert provider_results["live_providers"] is True
+    assert _json_records(bundle.audit_payloads["scoring-inputs.json"]) == []
+    markdown = render_markdown_report(report)
+    assert "### No-Trade Summary" in markdown
+    assert "Live app analysis is not available" in markdown
+    assert "fixture/provider inputs" not in markdown
+
+
+@pytest.mark.e2e
+def test_live_section_evidence_refs_prefer_non_promotional_x_posts() -> None:
+    from nlp_stock_prediction.reporting import scrape_fixtures
+
+    class FakeXTransport:
+        def get_json(
+            self,
+            url: str,
+            *,
+            headers: Mapping[str, str] | None = None,
+            timeout: float = 10.0,
+        ) -> JsonResponse:
+            del url, headers, timeout
+            return JsonResponse(
+                payload={
+                    "data": [
+                        {
+                            "id": "promo",
+                            "text": (
+                                "I fully recommend stock blogger @promo. Every trader should "
+                                "follow him. $AAPL"
+                            ),
+                            "created_at": "2026-05-11T17:30:00Z",
+                            "author_id": "promo-author",
+                            "lang": "en",
+                            "public_metrics": {},
+                        },
+                        {
+                            "id": "research",
+                            "text": "$AAPL traders are watching services revenue and margins.",
+                            "created_at": "2026-05-11T17:31:00Z",
+                            "author_id": "research-author",
+                            "lang": "en",
+                            "public_metrics": {},
+                        },
+                    ]
+                }
+            )
+
+    result = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=FakeXTransport(),
+        now=lambda: datetime(2026, 5, 11, 18, 0, tzinfo=UTC),
+    ).fetch_social_posts(
+        EvidenceRequest(
+            request_id="fixture-x-noise-filter",
+            run_date=date(2026, 5, 11),
+            tickers=("AAPL",),
+        )
+    )
+    assert result.data is not None
+
+    refs = scrape_fixtures._provider_evidence_refs(result.data, "AAPL", limit=1)
+
+    assert len(refs) == 1
+    assert refs[0].evidence_id == "x:research"
+    promo_only_refs = scrape_fixtures._provider_evidence_refs(result.data[:1], "AAPL", limit=1)
+    assert promo_only_refs == ()
+
+
+@pytest.mark.e2e
 def test_cli_run_requires_offline_until_live_orchestration_is_enabled(tmp_path: Path) -> None:
     output_dir = tmp_path / "reports"
 
@@ -336,6 +578,8 @@ def test_cli_run_requires_offline_until_live_orchestration_is_enabled(tmp_path: 
     )
 
     assert result.returncode == CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
-    assert "Live-provider report orchestration is not enabled yet" in result.stderr
+    assert "No source mode selected" in result.stderr
+    assert "--source-mode scrape" in result.stderr
+    assert "--live-providers" in result.stderr
     assert result.stdout == ""
     assert not output_dir.exists()

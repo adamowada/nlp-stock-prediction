@@ -6,8 +6,14 @@ import pytest
 
 from nlp_stock_prediction.compliance import (
     ComplianceError,
+    SourcePolicy,
     build_v1_disclaimer,
     classify_retrieval_source,
+    evaluate_source_policy,
+    list_source_policies,
+    scraping_drift_warning,
+    source_policy_result,
+    source_policy_warning,
     validate_disclaimer_guardrails,
     validate_no_auto_trading_metadata,
     validate_report_guardrails,
@@ -17,8 +23,10 @@ from nlp_stock_prediction.contracts import (
     DailyReport,
     DataFreshnessSummary,
     Disclaimer,
+    EvidenceRequest,
     FreshnessStatus,
     ProviderHealth,
+    ProviderResult,
     ProviderStatus,
     RetrievalMethod,
     RiskProfile,
@@ -28,6 +36,8 @@ from nlp_stock_prediction.contracts import (
     TickerDiscoveryResult,
     TickerDiscoveryStatus,
     TickerReportSection,
+    WarningCode,
+    WarningSeverity,
 )
 
 pytestmark = pytest.mark.unit
@@ -193,3 +203,107 @@ def test_retrieval_source_classification_distinguishes_api_from_scraping_fallbac
 
 def test_compliant_report_has_no_guardrail_issues() -> None:
     assert validate_report_guardrails(_report()) == ()
+
+
+def test_source_policy_registry_contains_scraping_and_api_entrypoints() -> None:
+    policies = list_source_policies()
+    source_ids = [policy.source_id for policy in policies]
+
+    assert source_ids == sorted(source_ids)
+    assert {policy.source_id for policy in policies} >= {
+        "reddit_wsb",
+        "apnews_financial_markets",
+        "candlecharts_live_charts",
+        "x_recent_search",
+    }
+    x_policy = next(policy for policy in policies if policy.source_id == "x_recent_search")
+    assert x_policy.fallback_behavior == "official_api"
+    assert x_policy.robots_status == "not_applicable"
+
+
+def test_source_policy_allows_public_allowlisted_path() -> None:
+    evaluation = evaluate_source_policy(
+        "apnews_financial_markets",
+        "https://apnews.com/hub/financial-markets",
+    )
+
+    assert evaluation.allowed is True
+    assert evaluation.decision == "allowed"
+    assert evaluation.matched_path == "/hub/financial-markets"
+    assert evaluation.metadata["source_id"] == "apnews_financial_markets"
+    assert evaluation.metadata["fallback_behavior"] == "degraded_result"
+
+
+def test_source_policy_blocks_disallowed_path_with_structured_warning() -> None:
+    evaluation = evaluate_source_policy(
+        "reddit_wsb",
+        "https://www.reddit.com/r/wallstreetbets/search/?q=TSLA",
+    )
+
+    warning = source_policy_warning(
+        provider_name="reddit-public",
+        evaluation=evaluation,
+        occurred_at=FETCHED_AT,
+    )
+
+    assert evaluation.allowed is False
+    assert evaluation.reason == "path_disallowed_by_source_policy"
+    assert warning.code == WarningCode.UPSTREAM_UNAVAILABLE
+    assert warning.severity == WarningSeverity.ERROR
+    assert warning.provider_error_type == "scraping_blocked_by_policy"
+    assert warning.source_url == "https://www.reddit.com/r/wallstreetbets/search/?q=TSLA"
+    assert warning.metadata["source_id"] == "reddit_wsb"
+    assert warning.metadata["matched_path"] == "/r/wallstreetbets/search/"
+
+
+def test_source_policy_login_required_becomes_unauthorized_result() -> None:
+    policy = SourcePolicy(
+        source_id="login_source",
+        provider_name="login-provider",
+        display_name="Login Source",
+        base_url="https://example.invalid",
+        robots_txt_url="https://example.invalid/robots.txt",
+        robots_status="allowed",
+        allowed_paths=("/members/",),
+        login_required=True,
+        fallback_behavior="degraded_result",
+        last_reviewed=date(2026, 5, 11),
+    )
+    evaluation = policy.evaluate_url("https://example.invalid/members/research")
+    request = EvidenceRequest(
+        request_id="login-required-source-2026-05-11",
+        run_date=date(2026, 5, 11),
+        tickers=("TSLA",),
+    )
+
+    result: ProviderResult[tuple[str, ...]] = source_policy_result(
+        provider_name="login-provider",
+        request=request,
+        fetched_at=FETCHED_AT,
+        evaluation=evaluation,
+    )
+
+    assert result.status == ProviderStatus.UNAUTHORIZED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.AUTH_FAILED
+    assert result.warnings[0].provider_error_type == "scraping_login_required"
+    assert result.health.credential_state == CredentialState.INVALID
+
+
+def test_scraping_drift_warning_preserves_selector_context() -> None:
+    warning = scraping_drift_warning(
+        provider_name="apnews-public",
+        source_url="https://apnews.com/hub/financial-markets",
+        selector="article[data-key]",
+        occurred_at=FETCHED_AT,
+        raw_snapshot_id="raw-apnews-fixture",
+        metadata={"section": "financial-markets"},
+    )
+
+    assert warning.code == WarningCode.SCRAPING_DRIFT
+    assert warning.severity == WarningSeverity.ERROR
+    assert warning.provider_error_type == "scraping_drift"
+    assert warning.raw_snapshot_id == "raw-apnews-fixture"
+    assert warning.metadata["selector"] == "article[data-key]"
+    assert warning.metadata["required"] is True
+    assert warning.metadata["section"] == "financial-markets"
