@@ -196,6 +196,7 @@ def _command_args(config: RunConfig) -> JsonObject:
         "cache_dir": _posix(config.cache_dir) if config.cache_dir else None,
         "offline": config.offline,
         "source_mode": config.source_mode,
+        "live_providers": config.live_providers,
     }
 
 
