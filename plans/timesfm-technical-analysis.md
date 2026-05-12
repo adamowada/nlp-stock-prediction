@@ -153,6 +153,8 @@ Status: implemented.
 
 ### Stage 5: Rolling Evaluation And Baselines
 
+Status: implemented.
+
 - Changes:
   - Add a walk-forward evaluation command for a given ticker and trained adapter.
   - Compare TimesFM against simple baselines:
@@ -264,7 +266,7 @@ Status: implemented.
 - [x] TimesFM dependencies are optional and do not affect the default deterministic test suite.
 - [x] Local OHLCV input is validated for freshness, ordering, sufficient history, and leakage risks.
 - [x] Training writes adapter, metadata, metrics, hashes, package versions, and hardware metadata.
-- [ ] Evaluation compares TimesFM to simple baselines and records suitability flags.
+- [x] Evaluation compares TimesFM to simple baselines and records suitability flags.
 - [ ] Report integration preserves model provenance, dataset provenance, confidence inputs, warnings,
       and limitations.
 - [ ] TimesFM output cannot create a standalone recommendation or bypass evidence/risk gates.
@@ -285,7 +287,7 @@ mypy .
 Focused TimesFM deterministic checks:
 
 ```sh
-python -m pytest tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py
+python -m pytest tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py tests/test_timesfm_evaluation.py
 ```
 
 Opt-in local Windows CUDA checks:
@@ -294,6 +296,7 @@ Opt-in local Windows CUDA checks:
 python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2 --output artifacts/ml/timesfm-smoke/smoke-result.json
 python -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json
 python -m nlp_stock_prediction.ml.timesfm.train --synthetic --ticker TSLA --device cuda --output-dir artifacts/ml/timesfm-train-smoke --epochs 1 --max-steps 1 --batch-size 1 --validation-batches 1
+python -m nlp_stock_prediction.ml.timesfm.evaluate --synthetic --ticker TSLA --model-dir artifacts/ml/timesfm-train-smoke --device cuda --output artifacts/ml/timesfm-eval-smoke/evaluation.json --max-windows 1 --min-evaluation-windows 1
 python -m nlp_stock_prediction.ml.timesfm.train --ticker TSLA --csv data/ml/TSLA.csv --output-dir artifacts/ml/TSLA/timesfm --device cuda --epochs 1 --max-steps 20
 python -m nlp_stock_prediction.ml.timesfm.evaluate --ticker TSLA --csv data/ml/TSLA.csv --model-dir artifacts/ml/TSLA/timesfm --output artifacts/ml/TSLA/timesfm/evaluation.json
 ```
@@ -367,4 +370,21 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 - 2026-05-12-00-00: Stage 4 deterministic verification passed: focused TimesFM tests reported
   22 passed; full pytest reported 349 passed and 7 opt-in live skips; non-live pytest reported
   349 passed and 7 deselected; `ruff check . --no-cache`, `ruff format --check .`, `mypy .`, and
+  `git diff --check` passed.
+- 2026-05-12-00-00: Implemented Stage 5 with a dependency-gated
+  `nlp_stock_prediction.ml.timesfm.evaluate` command, rolling held-out window evaluation, TimesFM
+  MAE/RMSE/directional accuracy and interval metrics, last-close persistence and recent-mean-return
+  baselines, benchmark deltas, adapter/model/training metadata hashes, stale and underperforming
+  suitability reasons, and fake-predictor tests that do not download model weights.
+- 2026-05-12-00-00: Stage 5 Windows CUDA evaluation smoke passed:
+  `python -m nlp_stock_prediction.ml.timesfm.evaluate --synthetic --ticker TSLA --model-dir artifacts/ml/timesfm-train-smoke --device cuda --output artifacts/ml/timesfm-eval-smoke/evaluation.json --max-windows 1 --min-evaluation-windows 1 --min-directional-accuracy 0 --max-rmse-ratio-vs-best-baseline 10`
+  loaded the Stage 4 synthetic LoRA adapter on the RTX 3090 and wrote an evaluation artifact with
+  status `weak`, `suitable_for_scoring=false`, model hash, adapter hash, dataset hash, baseline
+  metrics, and underperformance suitability reasons.
+- 2026-05-12-00-00: Stage 5 review tightened adapter provenance handling so a mismatch between the
+  recorded training metadata adapter hash and the current adapter directory hash is a blocking weak
+  suitability reason, not just a non-blocking warning.
+- 2026-05-12-00-00: Stage 5 deterministic verification passed: focused TimesFM tests reported
+  29 passed; full pytest reported 356 passed and 7 opt-in live skips; non-live pytest reported
+  356 passed and 7 deselected; `ruff check . --no-cache`, `ruff format --check .`, `mypy .`, and
   `git diff --check` passed.

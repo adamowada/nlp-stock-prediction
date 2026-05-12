@@ -249,6 +249,32 @@ dependencies, CUDA unavailability, and Hugging Face model-load failures produce 
 errors. TimesFM training output remains a local technical-analysis research artifact; it is not
 financial advice, a standalone recommendation, or live trading instructions.
 
+### TimesFM Rolling Evaluation
+
+Stage 5 adds a local rolling evaluation command for trained TimesFM adapters. It loads a Stage 4
+training directory, scores held-out TimesFM windows, compares the adapter against last-close
+persistence and recent-mean-return baselines, and writes suitability flags for later report/scoring
+integration.
+
+Synthetic Windows CUDA smoke using the Stage 4 smoke adapter:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --synthetic --ticker TSLA --model-dir artifacts/ml/timesfm-train-smoke --device cuda --output artifacts/ml/timesfm-eval-smoke/evaluation.json --max-windows 1 --min-evaluation-windows 1
+```
+
+CSV-backed local evaluation:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --csv data/ml/TSLA.csv --ticker TSLA --model-dir artifacts/ml/TSLA/timesfm --device cuda --output artifacts/ml/TSLA/timesfm/evaluation.json --as-of 2026-05-11 --suitability-max-latest-bar-age-days 5
+```
+
+The evaluation artifact records the model ID/revision, model hash, adapter hash, training metadata
+hash, evaluation dataset hash, source hash, per-window records, TimesFM MAE/RMSE/directional
+accuracy, interval coverage when full predictions are available, baseline metrics, benchmark deltas,
+and `suitable_for_scoring`. Underperforming, insufficient, or stale evaluations are marked `weak`;
+later report/scoring integration must not treat weak or unevaluated TimesFM artifacts as strong
+signals.
+
 Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
 access, or local training data. CUDA/RTX metadata is detected only when available and when the local
 training command is configured with `--device auto` or `--device cuda`.

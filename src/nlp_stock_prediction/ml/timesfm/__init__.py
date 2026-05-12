@@ -19,6 +19,7 @@ __all__ = [
     "artifacts",
     "build_timesfm_dataset",
     "contracts",
+    "evaluate",
     "smoke",
     "train",
 ]
