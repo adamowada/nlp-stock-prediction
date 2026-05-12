@@ -46,6 +46,7 @@ IMPLEMENTED_STAGES = (
     "raw_timesfm_screen",
     "adapter_smoke",
     "survivor_hpo",
+    "final_eval",
 )
 FUNNEL_STAGES = (
     "data_check",
@@ -235,12 +236,37 @@ SurvivorHpoRunner = Callable[
 ]
 
 
+class _FinalEvalPredictionBatch(ContractModel):
+    source_trial_id: NonEmptyStr
+    model_id: str | None = None
+    model_revision: str | None = None
+    adapter_sha256: str | None = None
+    training_metadata_path: str | None = None
+    validation_mean_loss: float | None = Field(default=None, ge=0.0)
+    point_forecasts: tuple[tuple[float, ...], ...]
+    full_predictions: tuple[tuple[tuple[float, ...], ...], ...] = Field(default_factory=tuple)
+    runtime_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+FinalEvalRunner = Callable[
+    [
+        TimesFmDataset,
+        Sequence[TimesFmWindow],
+        SignalFunnelLeaderboardRow,
+        Path,
+        argparse.Namespace,
+    ],
+    _FinalEvalPredictionBatch,
+]
+
+
 def run_signal_funnel(
     args: argparse.Namespace,
     *,
     raw_predictor: RawTimesFmPredictor | None = None,
     adapter_smoke_runner: AdapterSmokeRunner | None = None,
     survivor_hpo_runner: SurvivorHpoRunner | None = None,
+    final_eval_runner: FinalEvalRunner | None = None,
 ) -> int:
     """Run the implemented signal-funnel stages and write manifest/leaderboard artifacts."""
 
@@ -374,6 +400,25 @@ def run_signal_funnel(
         )
         rows.extend(survivor_rows)
         manifest["records"].extend(row.model_dump(mode="json") for row in survivor_rows)
+        _write_signal_funnel_outputs(output_root, manifest, rows)
+        if _should_stop_after("survivor_hpo", args.stop_after):
+            continue
+        print(f"{symbol}: final_eval")
+        final_row = _run_final_eval(
+            symbol,
+            policy,
+            data_check_row=row,
+            survivor_rows=survivor_rows,
+            args=args,
+            data_dir=data_dir,
+            output_root=output_root,
+            as_of=as_of,
+            run_id=run_id,
+            created_at=created_at,
+            final_eval_runner=final_eval_runner,
+        )
+        rows.append(final_row)
+        manifest["records"].append(final_row.model_dump(mode="json"))
         _write_signal_funnel_outputs(output_root, manifest, rows)
 
     return 0 if all(row.status != "failed" for row in rows) else 1
@@ -2261,6 +2306,398 @@ def _survivor_hpo_config_payload(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _run_final_eval(
+    symbol: str,
+    policy: TickerPolicy,
+    *,
+    data_check_row: SignalFunnelLeaderboardRow,
+    survivor_rows: Sequence[SignalFunnelLeaderboardRow],
+    args: argparse.Namespace,
+    data_dir: Path,
+    output_root: Path,
+    as_of: date,
+    run_id: str,
+    created_at: str,
+    final_eval_runner: FinalEvalRunner | None,
+) -> SignalFunnelLeaderboardRow:
+    started_at = time.perf_counter()
+    if data_check_row.status == "failed":
+        return _final_eval_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method="final_eval",
+            status="skipped",
+            decision="stop",
+            kill_reason="data_check_failed",
+            runtime_seconds=_elapsed_seconds(started_at),
+            notes="final_eval skipped because data_check failed",
+        )
+    if args.dry_run:
+        return _final_eval_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method="final_eval",
+            status="skipped",
+            decision="audit_only",
+            kill_reason="dry_run_no_final_eval",
+            runtime_seconds=_elapsed_seconds(started_at),
+            notes="final_eval requires real OHLCV rows and a selected HPO adapter",
+        )
+
+    selected_hpo_row = _selected_survivor_hpo_row(survivor_rows)
+    if selected_hpo_row is None:
+        return _final_eval_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method="final_eval",
+            status="skipped",
+            decision=_final_eval_skip_decision(survivor_rows),
+            kill_reason="survivor_hpo_not_selected",
+            runtime_seconds=_elapsed_seconds(started_at),
+            notes=_survivor_hpo_skip_notes(survivor_rows),
+        )
+
+    try:
+        csv_path = data_dir / f"{symbol}.csv"
+        bars = load_price_bars_csv(csv_path, ticker=symbol)
+        dataset = build_timesfm_dataset(
+            symbol,
+            bars,
+            config=TimesFmDatasetConfig(
+                context_length=args.context_length,
+                horizon_length=args.horizon_length,
+                target_field=args.target_field,
+                as_of=as_of,
+                max_latest_bar_age_days=args.max_latest_bar_age_days,
+            ),
+        )
+        windows = _final_eval_windows(dataset, max_windows=args.final_max_windows)
+        runner = final_eval_runner or _run_final_eval_model
+        final_dir = output_root / "final_eval" / symbol
+        prediction_batch = runner(dataset, windows, selected_hpo_row, final_dir, args)
+        records = _forecast_records(
+            windows,
+            point_forecasts=prediction_batch.point_forecasts,
+            full_predictions=prediction_batch.full_predictions,
+            label=f"final eval {prediction_batch.source_trial_id}",
+        )
+        metrics = _raw_timesfm_metrics(records)
+        baseline_metrics = _baseline_metrics(windows)
+        best_rmse = min(metric.rmse for metric in baseline_metrics)
+        best_directional_accuracy = max(metric.directional_accuracy for metric in baseline_metrics)
+        rmse_ratio = _safe_ratio(metrics.rmse, best_rmse)
+        directional_delta = round(metrics.directional_accuracy - best_directional_accuracy, 8)
+        suitability_reasons = _final_eval_suitability_reasons(
+            metrics,
+            rmse_ratio=rmse_ratio,
+            directional_delta=directional_delta,
+            args=args,
+        )
+        status: FunnelStatus = "suitable" if not suitability_reasons else "weak"
+        decision: FunnelDecision = "promote_for_scoring" if status == "suitable" else "audit_only"
+        kill_reason = ";".join(suitability_reasons) if suitability_reasons else None
+        artifact_path = _write_final_eval_artifact(
+            output_root,
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            dataset=dataset,
+            selected_hpo_row=selected_hpo_row,
+            prediction_batch=prediction_batch,
+            status=status,
+            decision=decision,
+            kill_reason=kill_reason,
+            suitability_reasons=suitability_reasons,
+            metrics=metrics,
+            baseline_metrics=baseline_metrics,
+            rmse_ratio=rmse_ratio,
+            directional_delta=directional_delta,
+            records=records,
+            args=args,
+        )
+        return _final_eval_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method=prediction_batch.source_trial_id,
+            status=status,
+            decision=decision,
+            kill_reason=kill_reason,
+            runtime_seconds=_elapsed_seconds(started_at),
+            model_id=prediction_batch.model_id or selected_hpo_row.model_id or args.model_id,
+            model_revision=(
+                prediction_batch.model_revision
+                or selected_hpo_row.model_revision
+                or args.model_revision
+            ),
+            adapter_sha256=prediction_batch.adapter_sha256 or selected_hpo_row.adapter_sha256,
+            evaluation_artifact=str(artifact_path),
+            training_metadata=(
+                prediction_batch.training_metadata_path or selected_hpo_row.training_metadata
+            ),
+            rmse=metrics.rmse,
+            best_baseline_rmse=best_rmse,
+            rmse_ratio_vs_best_baseline=rmse_ratio,
+            directional_accuracy=metrics.directional_accuracy,
+            best_baseline_directional_accuracy=best_directional_accuracy,
+            directional_delta_vs_best_baseline=directional_delta,
+            validation_mean_loss=(
+                prediction_batch.validation_mean_loss
+                if prediction_batch.validation_mean_loss is not None
+                else selected_hpo_row.validation_mean_loss
+            ),
+            interval_coverage=metrics.interval_coverage,
+            mean_interval_width=metrics.mean_interval_width,
+            calibration_proxy=metrics.calibration_proxy,
+            selected_for_next_stage=status == "suitable",
+            promoted_for_scoring=status == "suitable",
+            notes=(
+                f"sample_count={metrics.sample_count}; split=test; "
+                f"selected_hpo={selected_hpo_row.method}; "
+                f"backend={prediction_batch.runtime_metadata.get('backend', 'unknown')}"
+            ),
+        )
+    except Exception as exc:
+        return _final_eval_leaderboard_row(
+            run_id=run_id,
+            created_at=created_at,
+            as_of=as_of,
+            symbol=symbol,
+            policy=policy,
+            args=args,
+            data_check_row=data_check_row,
+            method="final_eval",
+            status="failed",
+            decision="stop",
+            kill_reason=str(exc),
+            runtime_seconds=_elapsed_seconds(started_at),
+            notes="final_eval failed before a scoring promotion decision could be made",
+        )
+
+
+def _run_final_eval_model(
+    dataset: TimesFmDataset,
+    windows: Sequence[TimesFmWindow],
+    selected_hpo_row: SignalFunnelLeaderboardRow,
+    output_dir: Path,
+    args: argparse.Namespace,
+) -> _FinalEvalPredictionBatch:
+    from nlp_stock_prediction.ml.timesfm.evaluate import (
+        TimesFmEvaluationConfig,
+        _load_model_predictor,
+        load_timesfm_evaluation_model_source,
+    )
+
+    if selected_hpo_row.training_metadata is None:
+        raise ValueError("selected survivor_hpo row is missing training metadata")
+    model_dir = Path(selected_hpo_row.training_metadata).parent
+    model_source = load_timesfm_evaluation_model_source(model_dir)
+    evaluation_config = TimesFmEvaluationConfig(
+        requested_device=args.device,
+        max_windows=args.final_max_windows,
+        min_evaluation_windows=args.min_evaluation_windows,
+        min_directional_accuracy=args.min_final_directional_accuracy,
+        max_rmse_ratio_vs_best_baseline=args.max_final_rmse_ratio_vs_best_baseline,
+        suitability_max_latest_bar_age_days=args.max_latest_bar_age_days,
+        as_of=date.fromisoformat(args.as_of),
+    )
+    predictor, runtime_metadata = _load_model_predictor(model_source, evaluation_config)
+    point_forecasts: list[tuple[float, ...]] = []
+    full_predictions: list[tuple[tuple[float, ...], ...]] = []
+    for window in windows:
+        prediction = predictor(window)
+        point_forecasts.append(prediction.point_forecast)
+        full_predictions.append(prediction.full_predictions)
+    return _FinalEvalPredictionBatch(
+        source_trial_id=selected_hpo_row.method,
+        model_id=model_source.model_id,
+        model_revision=model_source.model_revision,
+        adapter_sha256=model_source.adapter_sha256,
+        training_metadata_path=selected_hpo_row.training_metadata,
+        validation_mean_loss=selected_hpo_row.validation_mean_loss,
+        point_forecasts=tuple(point_forecasts),
+        full_predictions=tuple(full_predictions),
+        runtime_metadata={
+            **runtime_metadata,
+            "final_eval_dir": str(output_dir),
+            "selected_hpo_evaluation_artifact": selected_hpo_row.evaluation_artifact,
+        },
+    )
+
+
+def _selected_survivor_hpo_row(
+    survivor_rows: Sequence[SignalFunnelLeaderboardRow],
+) -> SignalFunnelLeaderboardRow | None:
+    for row in survivor_rows:
+        if (
+            row.stage == "survivor_hpo"
+            and row.status == "passed"
+            and row.decision == "continue"
+            and row.selected_for_next_stage
+        ):
+            return row
+    return None
+
+
+def _final_eval_skip_decision(
+    survivor_rows: Sequence[SignalFunnelLeaderboardRow],
+) -> FunnelDecision:
+    return "stop" if any(row.decision == "stop" for row in survivor_rows) else "audit_only"
+
+
+def _survivor_hpo_skip_notes(survivor_rows: Sequence[SignalFunnelLeaderboardRow]) -> str:
+    if not survivor_rows:
+        return "final_eval skipped because survivor_hpo produced no rows"
+    states = ",".join(f"{row.method}:{row.status}" for row in survivor_rows)
+    return f"final_eval skipped because no survivor_hpo candidate was selected; {states}"
+
+
+def _final_eval_windows(
+    dataset: TimesFmDataset,
+    *,
+    max_windows: int | None,
+) -> tuple[TimesFmWindow, ...]:
+    windows = tuple(sorted(dataset.test_windows, key=lambda window: window.context_end_index))
+    if max_windows is not None:
+        windows = windows[-max_windows:]
+    if not windows:
+        raise ValueError("final_eval requires at least one held-out test window")
+    return windows
+
+
+def _final_eval_suitability_reasons(
+    metrics: _RawTimesFmMetrics,
+    *,
+    rmse_ratio: float | None,
+    directional_delta: float,
+    args: argparse.Namespace,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if metrics.sample_count < args.min_evaluation_windows:
+        reasons.append("insufficient_final_windows")
+    if metrics.directional_accuracy < args.min_final_directional_accuracy:
+        reasons.append("low_directional_accuracy")
+    if rmse_ratio is None or rmse_ratio > args.max_final_rmse_ratio_vs_best_baseline:
+        reasons.append("underperforms_best_rmse_baseline")
+    if directional_delta < 0.0:
+        reasons.append("underperforms_best_directional_baseline")
+    return tuple(reasons)
+
+
+def _write_final_eval_artifact(
+    output_root: Path,
+    *,
+    run_id: str,
+    created_at: str,
+    as_of: date,
+    symbol: str,
+    dataset: TimesFmDataset,
+    selected_hpo_row: SignalFunnelLeaderboardRow,
+    prediction_batch: _FinalEvalPredictionBatch,
+    status: FunnelStatus,
+    decision: FunnelDecision,
+    kill_reason: str | None,
+    suitability_reasons: Sequence[str],
+    metrics: _RawTimesFmMetrics,
+    baseline_metrics: Sequence[_BaselineMetrics],
+    rmse_ratio: float | None,
+    directional_delta: float,
+    records: Sequence[_RawTimesFmRecord],
+    args: argparse.Namespace,
+) -> Path:
+    artifact_path = output_root / "final_eval" / f"{symbol}.evaluation.json"
+    payload = {
+        "schema_version": "ml.timesfm.final_evaluation.v1",
+        "run_id": run_id,
+        "created_at": created_at,
+        "as_of": as_of.isoformat(),
+        "symbol": symbol,
+        "stage": "final_eval",
+        "method": prediction_batch.source_trial_id,
+        "status": status,
+        "decision": decision,
+        "kill_reason": kill_reason,
+        "suitable_for_scoring": status == "suitable",
+        "suitability_reasons": list(suitability_reasons),
+        "model_id": prediction_batch.model_id or selected_hpo_row.model_id or args.model_id,
+        "model_revision": (
+            prediction_batch.model_revision
+            or selected_hpo_row.model_revision
+            or args.model_revision
+        ),
+        "adapter_sha256": prediction_batch.adapter_sha256 or selected_hpo_row.adapter_sha256,
+        "training_metadata": (
+            prediction_batch.training_metadata_path or selected_hpo_row.training_metadata
+        ),
+        "validation_mean_loss": (
+            prediction_batch.validation_mean_loss
+            if prediction_batch.validation_mean_loss is not None
+            else selected_hpo_row.validation_mean_loss
+        ),
+        "dataset_hash": dataset.dataset_hash,
+        "target_field": dataset.target_field,
+        "context_length": dataset.context_length,
+        "horizon_length": dataset.horizon_length,
+        "max_windows": args.final_max_windows,
+        "config": _final_eval_config_payload(args),
+        "selected_hpo": {
+            "method": selected_hpo_row.method,
+            "evaluation_artifact": selected_hpo_row.evaluation_artifact,
+            "training_metadata": selected_hpo_row.training_metadata,
+            "adapter_sha256": selected_hpo_row.adapter_sha256,
+            "validation_rmse": selected_hpo_row.rmse,
+            "validation_rmse_ratio_vs_best_baseline": (
+                selected_hpo_row.rmse_ratio_vs_best_baseline
+            ),
+            "validation_directional_accuracy": selected_hpo_row.directional_accuracy,
+            "validation_mean_loss": selected_hpo_row.validation_mean_loss,
+        },
+        "metrics": metrics.model_dump(mode="json"),
+        "baselines": [metric.model_dump(mode="json") for metric in baseline_metrics],
+        "rmse_ratio_vs_best_baseline": rmse_ratio,
+        "directional_delta_vs_best_baseline": directional_delta,
+        "records": [record.model_dump(mode="json") for record in records],
+        "runtime_metadata": prediction_batch.runtime_metadata,
+    }
+    write_manifest(artifact_path, payload)
+    return artifact_path
+
+
+def _final_eval_config_payload(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "model_id": args.model_id,
+        "model_revision": args.model_revision,
+        "context_length": args.context_length,
+        "horizon_length": args.horizon_length,
+        "target_field": args.target_field,
+        "final_max_windows": args.final_max_windows,
+        "min_evaluation_windows": args.min_evaluation_windows,
+        "min_final_directional_accuracy": args.min_final_directional_accuracy,
+        "max_final_rmse_ratio_vs_best_baseline": (args.max_final_rmse_ratio_vs_best_baseline),
+        "max_latest_bar_age_days": args.max_latest_bar_age_days,
+    }
+
+
 def _hpo_trial_payload(trial: HpoTrial) -> dict[str, Any]:
     return {
         "run_id": trial.run_id,
@@ -2766,6 +3203,86 @@ def _survivor_hpo_leaderboard_row(
     )
 
 
+def _final_eval_leaderboard_row(
+    *,
+    run_id: str,
+    created_at: str,
+    as_of: date,
+    symbol: str,
+    policy: TickerPolicy,
+    args: argparse.Namespace,
+    data_check_row: SignalFunnelLeaderboardRow,
+    method: str,
+    status: FunnelStatus,
+    decision: FunnelDecision,
+    kill_reason: str | None,
+    runtime_seconds: float,
+    notes: str | None,
+    model_id: str | None = None,
+    model_revision: str | None = None,
+    adapter_sha256: str | None = None,
+    evaluation_artifact: str | None = None,
+    training_metadata: str | None = None,
+    rmse: float | None = None,
+    best_baseline_rmse: float | None = None,
+    rmse_ratio_vs_best_baseline: float | None = None,
+    directional_accuracy: float | None = None,
+    best_baseline_directional_accuracy: float | None = None,
+    directional_delta_vs_best_baseline: float | None = None,
+    validation_mean_loss: float | None = None,
+    interval_coverage: float | None = None,
+    mean_interval_width: float | None = None,
+    calibration_proxy: float | None = None,
+    selected_for_next_stage: bool = False,
+    promoted_for_scoring: bool = False,
+) -> SignalFunnelLeaderboardRow:
+    return SignalFunnelLeaderboardRow(
+        run_id=run_id,
+        created_at=created_at,
+        as_of=as_of.isoformat(),
+        symbol=symbol,
+        stage="final_eval",
+        method=method,
+        status=status,
+        kill_reason=kill_reason,
+        decision=decision,
+        asset_type=policy.asset_type,
+        history_start=data_check_row.history_start,
+        latest_bar=data_check_row.latest_bar,
+        bar_count=data_check_row.bar_count,
+        train_windows=data_check_row.train_windows,
+        validation_windows=data_check_row.validation_windows,
+        test_windows=data_check_row.test_windows,
+        context_length=args.context_length,
+        horizon_length=args.horizon_length,
+        max_windows=args.final_max_windows,
+        runtime_seconds=runtime_seconds,
+        device=args.device,
+        model_id=model_id,
+        model_revision=model_revision,
+        adapter_sha256=adapter_sha256,
+        dataset_hash=data_check_row.dataset_hash,
+        evaluation_artifact=evaluation_artifact,
+        training_metadata=training_metadata,
+        rmse=rmse,
+        best_baseline_rmse=best_baseline_rmse,
+        rmse_ratio_vs_best_baseline=rmse_ratio_vs_best_baseline,
+        directional_accuracy=directional_accuracy,
+        best_baseline_directional_accuracy=best_baseline_directional_accuracy,
+        directional_delta_vs_best_baseline=directional_delta_vs_best_baseline,
+        raw_timesfm_rmse=None,
+        adapter_rmse_ratio_vs_raw=None,
+        adapter_directional_delta_vs_raw=None,
+        validation_mean_loss=validation_mean_loss,
+        interval_coverage=interval_coverage,
+        mean_interval_width=mean_interval_width,
+        calibration_proxy=calibration_proxy,
+        selected_for_next_stage=selected_for_next_stage,
+        promoted_for_scoring=promoted_for_scoring,
+        notes=notes,
+    )
+
+
 def _stage0_notes(data_record: dict[str, Any], counts: _WindowCounts) -> str:
     metadata = data_record.get("metadata")
     source = metadata.get("source") if isinstance(metadata, dict) else None
@@ -2830,7 +3347,7 @@ def _should_stop_after(completed_stage: FunnelStage, requested_stop_after: str) 
 def _default_stop_after_for_profile(profile: FunnelProfile) -> FunnelStage:
     if profile == "quick":
         return "raw_timesfm_screen"
-    return "survivor_hpo"
+    return "final_eval"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2855,7 +3372,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Stop after the named funnel stage. Defaults to raw_timesfm_screen for quick "
-            "profile and survivor_hpo otherwise."
+            "profile and final_eval otherwise."
         ),
     )
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
@@ -2891,6 +3408,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hpo-lora-dropouts", default="0.05,0.10")
     parser.add_argument("--hpo-lora-target-modules", default="all-linear")
     parser.add_argument("--hpo-lora-bias", choices=("none", "all", "lora_only"), default="none")
+    parser.add_argument("--final-max-windows", type=int, default=128)
     parser.add_argument("--raw-rmse-kill-threshold", type=float, default=1.15)
     parser.add_argument("--raw-directional-kill-threshold", type=float, default=-0.05)
     parser.add_argument("--raw-rmse-promote-threshold", type=float, default=1.05)
@@ -2910,6 +3428,7 @@ def main(
     raw_predictor: RawTimesFmPredictor | None = None,
     adapter_smoke_runner: AdapterSmokeRunner | None = None,
     survivor_hpo_runner: SurvivorHpoRunner | None = None,
+    final_eval_runner: FinalEvalRunner | None = None,
 ) -> int:
     """CLI entry point for ``python -m nlp_stock_prediction.ml.timesfm.signal_funnel``."""
 
@@ -2918,6 +3437,7 @@ def main(
         raw_predictor=raw_predictor,
         adapter_smoke_runner=adapter_smoke_runner,
         survivor_hpo_runner=survivor_hpo_runner,
+        final_eval_runner=final_eval_runner,
     )
 
 

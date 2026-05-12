@@ -142,9 +142,11 @@ The signal funnel is the preferred research workflow while the baseline-aware ga
 developed. It writes `manifest.json`, `leaderboard.json`, and `leaderboard.csv` under
 `artifacts/ml/timesfm-funnel/`, evaluates cheap baselines before raw base TimesFM, and runs one
 cheap LoRA adapter smoke only for raw TimesFM survivors. Smoke winners then enter bounded survivor
-HPO, where candidates are ranked by validation-window baseline lift before validation loss. Use
-`--profile quick` to stop after the raw TimesFM screen, or `--stop-after adapter_smoke` for an
-explicit smoke-stage run.
+HPO, where candidates are ranked by validation-window baseline lift before validation loss. The
+walkaway/full default then evaluates the selected adapter on untouched held-out test windows and
+marks it `promote_for_scoring` only when the final baseline-aware gates pass. Use `--profile quick`
+to stop after the raw TimesFM screen, or `--stop-after adapter_smoke` for an explicit smoke-stage
+run.
 
 Focused six-ticker HPO workflow:
 
@@ -169,11 +171,12 @@ and `reports/`.
 | `artifacts/ml/<TICKER>/timesfm/training-metrics.json` | train | Train and validation loss summaries. |
 | `artifacts/ml/<TICKER>/timesfm/evaluation.json` | evaluate | Rolling evaluation, baseline comparisons, suitability flags, and forward forecast. |
 | `data/ml/wsb_10y/<TICKER>.csv` | focused_hpo | Adjusted OHLCV inputs for the current focused WSB ticker set. |
-| `artifacts/ml/timesfm-funnel/leaderboard.json` | signal_funnel | Incremental staged leaderboard with data, baseline, raw TimesFM, and adapter-smoke decisions. |
+| `artifacts/ml/timesfm-funnel/leaderboard.json` | signal_funnel | Incremental staged leaderboard with data, baseline, raw TimesFM, adapter-smoke, HPO, and final-eval decisions. |
 | `artifacts/ml/timesfm-funnel/raw_timesfm_screen/<TICKER>.evaluation.json` | signal_funnel | Raw base TimesFM validation-window screen artifact. |
 | `artifacts/ml/timesfm-funnel/adapter_smoke/<TICKER>.evaluation.json` | signal_funnel | Cheap LoRA adapter-smoke validation-window screen artifact. |
 | `artifacts/ml/timesfm-funnel/survivor_hpo/<TICKER>/<TRIAL>.evaluation.json` | signal_funnel | Per-trial survivor HPO validation-window artifact. |
 | `artifacts/ml/timesfm-funnel/survivor_hpo/<TICKER>.summary.json` | signal_funnel | Survivor HPO selection summary, including the validation-selected trial. |
+| `artifacts/ml/timesfm-funnel/final_eval/<TICKER>.evaluation.json` | signal_funnel | Held-out test-window final evaluation and scoring-promotion decision for the selected HPO adapter. |
 | `artifacts/ml/wsb-six-10y/focused-hpo-manifest.json` | focused_hpo | Per-ticker HPO status, selected run, suitability, and failure metadata. |
 | `artifacts/ml/wsb-six-10y/<TICKER>/best/evaluation.json` | focused_hpo | Promoted evaluation artifact for the selected focused HPO adapter. |
 | `reports/<YYYY-MM-DD>/audit/ml-artifacts.json` | report run | TimesFM evaluation payload copied into the report audit bundle. |

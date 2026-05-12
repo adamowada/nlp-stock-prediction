@@ -54,8 +54,9 @@ Staged six-ticker signal funnel:
 ```
 
 The funnel writes an incremental leaderboard, runs cheap baselines before raw TimesFM, runs a cheap
-adapter smoke only for raw TimesFM survivors, and runs bounded survivor HPO only for smoke winners.
-Use `--profile quick` to stop after the raw TimesFM screen.
+adapter smoke only for raw TimesFM survivors, runs bounded survivor HPO only for smoke winners, and
+promotes a held-out final evaluation only when the selected adapter clears the final baseline-aware
+scoring gates. Use `--profile quick` to stop after the raw TimesFM screen.
 
 Focused six-ticker HPO:
 

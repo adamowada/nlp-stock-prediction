@@ -49,9 +49,10 @@ def test_signal_funnel_stage0_dry_run_writes_manifest_and_leaderboard(tmp_path: 
         "raw_timesfm_screen",
         "adapter_smoke",
         "survivor_hpo",
+        "final_eval",
     ]
     assert manifest["skipped_stages"][0]["reason"] == "stage_not_implemented"
-    assert len(leaderboard["rows"]) == 5
+    assert len(leaderboard["rows"]) == 6
     assert leaderboard["rows"][0]["symbol"] == "MU"
     assert leaderboard["rows"][0]["status"] == "passed"
     assert leaderboard["rows"][0]["decision"] == "continue"
@@ -69,6 +70,9 @@ def test_signal_funnel_stage0_dry_run_writes_manifest_and_leaderboard(tmp_path: 
     assert leaderboard["rows"][4]["stage"] == "survivor_hpo"
     assert leaderboard["rows"][4]["status"] == "skipped"
     assert leaderboard["rows"][4]["kill_reason"] == "dry_run_no_hpo"
+    assert leaderboard["rows"][5]["stage"] == "final_eval"
+    assert leaderboard["rows"][5]["status"] == "skipped"
+    assert leaderboard["rows"][5]["kill_reason"] == "dry_run_no_final_eval"
     assert csv_rows[0]["symbol"] == "MU"
     assert csv_rows[0]["status"] == "passed"
 
@@ -788,6 +792,8 @@ def test_signal_funnel_stage4_selects_hpo_by_baseline_lift_before_loss(
             "cpu",
             "--screen-max-windows",
             "16",
+            "--stop-after",
+            "survivor_hpo",
         ],
         raw_predictor=_halfway_positive_raw_predictor,
         adapter_smoke_runner=_exact_adapter_smoke_runner,
@@ -856,6 +862,8 @@ def test_signal_funnel_stage4_skips_when_adapter_smoke_does_not_promote(
             "cpu",
             "--screen-max-windows",
             "16",
+            "--stop-after",
+            "survivor_hpo",
         ],
         raw_predictor=_halfway_positive_raw_predictor,
         adapter_smoke_runner=_bad_adapter_smoke_runner,
@@ -914,6 +922,8 @@ def test_signal_funnel_stage4_records_hpo_failure(
             "cpu",
             "--screen-max-windows",
             "16",
+            "--stop-after",
+            "survivor_hpo",
         ],
         raw_predictor=_halfway_positive_raw_predictor,
         adapter_smoke_runner=_exact_adapter_smoke_runner,
@@ -926,6 +936,257 @@ def test_signal_funnel_stage4_records_hpo_failure(
     assert hpo_row["status"] == "failed"
     assert hpo_row["decision"] == "stop"
     assert hpo_row["kill_reason"] == "synthetic survivor hpo failure"
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage5_promotes_suitable_held_out_final_eval(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage5-promote",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+            "--final-max-windows",
+            "8",
+        ],
+        raw_predictor=_halfway_positive_raw_predictor,
+        adapter_smoke_runner=_exact_adapter_smoke_runner,
+        survivor_hpo_runner=_baseline_lift_hpo_runner,
+        final_eval_runner=_exact_final_eval_runner,
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    final_row = next(row for row in records if row["stage"] == "final_eval")
+
+    assert manifest["requested_stop_after"] == "final_eval"
+    assert final_row["method"] == "trial_high_loss_exact"
+    assert final_row["status"] == "suitable"
+    assert final_row["decision"] == "promote_for_scoring"
+    assert final_row["selected_for_next_stage"] is True
+    assert final_row["promoted_for_scoring"] is True
+    assert final_row["rmse"] == 0.0
+    assert final_row["rmse_ratio_vs_best_baseline"] == 0.0
+    assert final_row["max_windows"] == 8
+    assert "split=test" in final_row["notes"]
+
+    artifact = json.loads(Path(final_row["evaluation_artifact"]).read_text(encoding="utf-8"))
+    assert artifact["schema_version"] == "ml.timesfm.final_evaluation.v1"
+    assert artifact["status"] == "suitable"
+    assert artifact["suitable_for_scoring"] is True
+    assert artifact["selected_hpo"]["method"] == "trial_high_loss_exact"
+    assert artifact["metrics"]["sample_count"] == 8
+    assert len(artifact["records"]) == 8
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage5_keeps_weak_final_eval_audit_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage5-weak",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+            "--final-max-windows",
+            "12",
+        ],
+        raw_predictor=_halfway_positive_raw_predictor,
+        adapter_smoke_runner=_exact_adapter_smoke_runner,
+        survivor_hpo_runner=_baseline_lift_hpo_runner,
+        final_eval_runner=_bad_final_eval_runner,
+    )
+
+    assert exit_code == 0
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    final_row = next(row for row in records if row["stage"] == "final_eval")
+
+    assert final_row["status"] == "weak"
+    assert final_row["decision"] == "audit_only"
+    assert final_row["selected_for_next_stage"] is False
+    assert final_row["promoted_for_scoring"] is False
+    assert "low_directional_accuracy" in final_row["kill_reason"]
+    assert "underperforms_best_rmse_baseline" in final_row["kill_reason"]
+
+    artifact = json.loads(Path(final_row["evaluation_artifact"]).read_text(encoding="utf-8"))
+    assert artifact["suitable_for_scoring"] is False
+    assert "low_directional_accuracy" in artifact["suitability_reasons"]
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage5_skips_when_survivor_hpo_has_no_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    def forbidden_hpo_runner(
+        *_args: Any, **_kwargs: Any
+    ) -> tuple[signal_funnel._SurvivorHpoPredictionBatch, ...]:
+        raise AssertionError("survivor HPO should not run after adapter smoke kill")
+
+    def forbidden_final_runner(
+        *_args: Any, **_kwargs: Any
+    ) -> signal_funnel._FinalEvalPredictionBatch:
+        raise AssertionError("final eval should not run without a selected HPO survivor")
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage5-skip",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+        ],
+        raw_predictor=_halfway_positive_raw_predictor,
+        adapter_smoke_runner=_bad_adapter_smoke_runner,
+        survivor_hpo_runner=forbidden_hpo_runner,
+        final_eval_runner=forbidden_final_runner,
+    )
+
+    assert exit_code == 0
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    final_row = next(row for row in records if row["stage"] == "final_eval")
+
+    assert final_row["status"] == "skipped"
+    assert final_row["decision"] == "stop"
+    assert final_row["kill_reason"] == "survivor_hpo_not_selected"
+
+
+@pytest.mark.unit
+def test_signal_funnel_stage5_records_final_eval_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "MU.csv"
+    rows = _ohlcv_rows("2026-05-11", count=420)
+    write_ohlcv_csv(csv_path, rows)
+
+    monkeypatch.setattr(
+        signal_funnel,
+        "ensure_symbol_data",
+        lambda *_args, **_kwargs: _data_record(csv_path, rows),
+    )
+
+    def failing_final_eval_runner(
+        *_args: Any, **_kwargs: Any
+    ) -> signal_funnel._FinalEvalPredictionBatch:
+        raise RuntimeError("synthetic final eval failure")
+
+    output_root = tmp_path / "out"
+    exit_code = signal_funnel.main(
+        [
+            "--symbols",
+            "MU",
+            "--as-of",
+            "2026-05-11",
+            "--data-dir",
+            str(data_dir),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "stage5-failure",
+            "--sleep-seconds",
+            "0",
+            "--device",
+            "cpu",
+            "--screen-max-windows",
+            "16",
+            "--final-max-windows",
+            "12",
+        ],
+        raw_predictor=_halfway_positive_raw_predictor,
+        adapter_smoke_runner=_exact_adapter_smoke_runner,
+        survivor_hpo_runner=_baseline_lift_hpo_runner,
+        final_eval_runner=failing_final_eval_runner,
+    )
+
+    assert exit_code == 1
+    records = json.loads((output_root / "leaderboard.json").read_text(encoding="utf-8"))["rows"]
+    final_row = next(row for row in records if row["stage"] == "final_eval")
+    assert final_row["status"] == "failed"
+    assert final_row["decision"] == "stop"
+    assert final_row["kill_reason"] == "synthetic final eval failure"
 
 
 @pytest.mark.unit
@@ -1057,6 +1318,48 @@ def _baseline_lift_hpo_runner(
             point_forecasts=tuple(tuple(window.future_values) for window in windows),
             runtime_metadata={"backend": "fake_hpo_runner"},
         ),
+    )
+
+
+def _exact_final_eval_runner(
+    _dataset: Any,
+    windows: Any,
+    selected_hpo_row: signal_funnel.SignalFunnelLeaderboardRow,
+    _output_dir: Path,
+    args: Any,
+) -> signal_funnel._FinalEvalPredictionBatch:
+    assert {window.split for window in windows} == {"test"}
+    return signal_funnel._FinalEvalPredictionBatch(
+        source_trial_id=selected_hpo_row.method,
+        model_id=selected_hpo_row.model_id,
+        model_revision=selected_hpo_row.model_revision,
+        adapter_sha256=selected_hpo_row.adapter_sha256,
+        training_metadata_path=selected_hpo_row.training_metadata,
+        validation_mean_loss=selected_hpo_row.validation_mean_loss,
+        point_forecasts=tuple(tuple(window.future_values) for window in windows),
+        runtime_metadata={"backend": "fake_final_eval_runner", "device": args.device},
+    )
+
+
+def _bad_final_eval_runner(
+    _dataset: Any,
+    windows: Any,
+    selected_hpo_row: signal_funnel.SignalFunnelLeaderboardRow,
+    _output_dir: Path,
+    _args: Any,
+) -> signal_funnel._FinalEvalPredictionBatch:
+    assert {window.split for window in windows} == {"test"}
+    return signal_funnel._FinalEvalPredictionBatch(
+        source_trial_id=selected_hpo_row.method,
+        model_id=selected_hpo_row.model_id,
+        adapter_sha256=selected_hpo_row.adapter_sha256,
+        training_metadata_path=selected_hpo_row.training_metadata,
+        validation_mean_loss=selected_hpo_row.validation_mean_loss,
+        point_forecasts=tuple(
+            tuple(window.context_values[-1] - 10.0 for _ in window.future_values)
+            for window in windows
+        ),
+        runtime_metadata={"backend": "fake_final_eval_runner"},
     )
 
 

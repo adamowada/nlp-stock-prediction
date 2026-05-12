@@ -253,6 +253,7 @@ Useful options:
 --screen-max-windows
 --smoke-max-steps
 --max-hpo-trials-per-ticker
+--final-max-windows
 --raw-rmse-kill-threshold
 --raw-directional-kill-threshold
 --adapter-rmse-promote-threshold
@@ -266,8 +267,8 @@ Profile defaults:
 | Profile | Intended use | Behavior |
 | --- | --- | --- |
 | quick | minutes | data, baselines, capped raw TimesFM only |
-| walkaway | unattended default | full funnel with ruthless early kills and survivor HPO |
-| full | deep research | fewer early skips, broader HPO, still no final-test leakage |
+| walkaway | unattended default | full funnel with ruthless early kills, survivor HPO, and held-out final eval |
+| full | deep research | same final-test no-leakage boundary with room for broader future HPO settings |
 
 ## Implementation Milestones
 
@@ -424,6 +425,8 @@ Optional CUDA verification:
   `research_only`, but only final `suitable_for_scoring` artifacts can support recommendations.
 - 2026-05-12: Use leaderboard rows as the main research interface so failed experiments become
   cheap, searchable learning rather than lost terminal output.
+- 2026-05-12: Keep final held-out test windows separate from HPO selection; survivor HPO ranks on
+  validation windows, and only the selected trial receives a final scoring-promotion decision.
 
 ## Progress Log
 
@@ -443,3 +446,6 @@ Optional CUDA verification:
 - 2026-05-12: Implemented Stage 4 `survivor_hpo` with bounded LoRA HPO for smoke-stage winners,
   per-trial validation-window artifacts, baseline-lift-first selection, summary output, docs
   updates, and tests proving validation RMSE lift beats validation loss as the selection key.
+- 2026-05-12: Implemented Stage 5 `final_eval` with held-out test-window evaluation for the
+  selected HPO survivor, final baseline-aware suitability gates, scoring-promotion flags, docs
+  updates, and tests covering suitable promotion, weak audit-only results, skips, and failures.
