@@ -112,3 +112,5 @@ mypy .
 - 2026-05-12: Removed generated S&P 500 5-year batch data/artifacts.
 - 2026-05-12: Added `nlp_stock_prediction.ml.timesfm.focused_hpo` with data collection, HPO
   orchestration, best-run promotion, and focused ticker policy metadata.
+- 2026-05-12: Removed obsolete generated TimesFM smoke artifacts and local TSLA example data so
+  the next overnight run starts with only the focused six-ticker workflow outputs.
