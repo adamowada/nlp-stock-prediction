@@ -218,6 +218,37 @@ proxy, uncertainty, warnings, and usage limitations. Status values are `usable`,
 artifacts instead of uncaught report-pipeline errors. The artifact is a local technical-analysis
 prediction sidecar, not live trading instructions or financial advice.
 
+### TimesFM LoRA Training
+
+Stage 4 adds a local PEFT/LoRA training command for TimesFM 2.5. The command records all local input
+identity and run metadata needed to audit a training run while keeping generated adapter weights
+under ignored artifact directories.
+
+Synthetic Windows CUDA smoke:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --synthetic --ticker TSLA --device cuda --output-dir artifacts/ml/timesfm-train-smoke --epochs 1 --max-steps 1 --batch-size 1 --validation-batches 1
+```
+
+CSV-backed local training:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --csv data/ml/TSLA.csv --ticker TSLA --device cuda --output-dir artifacts/ml/TSLA/timesfm --epochs 1 --max-steps 20 --as-of 2026-05-11 --max-latest-bar-age-days 5
+```
+
+Training writes:
+
+- `adapter/` with PEFT adapter files such as `adapter_config.json` and adapter weights.
+- `training-metadata.json` with model ID/revision, source hash, CSV hash for CSV runs, dataset hash,
+  context/horizon settings, split metadata, LoRA config, seed, device/CUDA metadata, package
+  versions, artifact hashes, and usage limitations.
+- `training-metrics.json` with train and validation loss summaries.
+
+Expected bad CSVs, insufficient history, stale data, future-dated bars, missing optional
+dependencies, CUDA unavailability, and Hugging Face model-load failures produce actionable CLI
+errors. TimesFM training output remains a local technical-analysis research artifact; it is not
+financial advice, a standalone recommendation, or live trading instructions.
+
 Default tests use a pure-Python CPU logistic baseline and do not require CUDA, PyTorch, network
 access, or local training data. CUDA/RTX metadata is detected only when available and when the local
 training command is configured with `--device auto` or `--device cuda`.

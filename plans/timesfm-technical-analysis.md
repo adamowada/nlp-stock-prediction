@@ -129,6 +129,8 @@ Status: implemented.
 
 ### Stage 4: LoRA Fine-Tuning CLI
 
+Status: implemented.
+
 - Changes:
   - Add a TimesFM LoRA training command using PEFT with a conservative default configuration.
   - Record all training inputs: ticker, CSV hash, dataset hash, model ID, adapter config, seed,
@@ -261,7 +263,7 @@ Status: implemented.
 - [x] Windows RTX 3090 is the primary local training path, with Ubuntu retained only as fallback.
 - [x] TimesFM dependencies are optional and do not affect the default deterministic test suite.
 - [x] Local OHLCV input is validated for freshness, ordering, sufficient history, and leakage risks.
-- [ ] Training writes adapter, metadata, metrics, hashes, package versions, and hardware metadata.
+- [x] Training writes adapter, metadata, metrics, hashes, package versions, and hardware metadata.
 - [ ] Evaluation compares TimesFM to simple baselines and records suitability flags.
 - [ ] Report integration preserves model provenance, dataset provenance, confidence inputs, warnings,
       and limitations.
@@ -283,7 +285,7 @@ mypy .
 Focused TimesFM deterministic checks:
 
 ```sh
-python -m pytest tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py
+python -m pytest tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py
 ```
 
 Opt-in local Windows CUDA checks:
@@ -291,6 +293,7 @@ Opt-in local Windows CUDA checks:
 ```sh
 python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2 --output artifacts/ml/timesfm-smoke/smoke-result.json
 python -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json
+python -m nlp_stock_prediction.ml.timesfm.train --synthetic --ticker TSLA --device cuda --output-dir artifacts/ml/timesfm-train-smoke --epochs 1 --max-steps 1 --batch-size 1 --validation-batches 1
 python -m nlp_stock_prediction.ml.timesfm.train --ticker TSLA --csv data/ml/TSLA.csv --output-dir artifacts/ml/TSLA/timesfm --device cuda --epochs 1 --max-steps 20
 python -m nlp_stock_prediction.ml.timesfm.evaluate --ticker TSLA --csv data/ml/TSLA.csv --model-dir artifacts/ml/TSLA/timesfm --output artifacts/ml/TSLA/timesfm/evaluation.json
 ```
@@ -351,4 +354,17 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
   quantile paths degrade to a structured unavailable artifact. Final verification passed:
   full pytest reported 345 passed and 7 opt-in live skips; non-live pytest reported 345 passed
   and 7 deselected; `ruff check . --no-cache`, `ruff format --check .`, `mypy .`, and
+  `git diff --check` passed.
+- 2026-05-12-00-00: Implemented Stage 4 with a dependency-gated
+  `nlp_stock_prediction.ml.timesfm.train` command, PEFT/LoRA training artifact contracts, adapter
+  directory hashing, `training-metadata.json`, `training-metrics.json`, deterministic fake-trainer
+  tests, source/data hashes, split metadata, package/runtime metadata, and actionable CLI failures.
+- 2026-05-12-00-00: Stage 4 Windows CUDA LoRA smoke passed:
+  `python -m nlp_stock_prediction.ml.timesfm.train --synthetic --ticker TSLA --device cuda --output-dir artifacts/ml/timesfm-train-smoke --epochs 1 --max-steps 1 --batch-size 1 --validation-batches 1`
+  loaded `google/timesfm-2.5-200m-transformers` on the RTX 3090, captured model revision
+  `5a9806b9b291fad9233b5249d88263f1846304d3`, wrote ignored adapter artifacts, and recorded train
+  and validation loss summaries plus adapter, metrics, and metadata hashes.
+- 2026-05-12-00-00: Stage 4 deterministic verification passed: focused TimesFM tests reported
+  22 passed; full pytest reported 349 passed and 7 opt-in live skips; non-live pytest reported
+  349 passed and 7 deselected; `ruff check . --no-cache`, `ruff format --check .`, `mypy .`, and
   `git diff --check` passed.

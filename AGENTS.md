@@ -24,6 +24,7 @@ python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
 python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
 python -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json
+python -m nlp_stock_prediction.ml.timesfm.train --synthetic --ticker TSLA --device cuda --output-dir artifacts/ml/timesfm-train-smoke --epochs 1 --max-steps 1 --batch-size 1 --validation-batches 1
 ```
 
 Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is introduced.
