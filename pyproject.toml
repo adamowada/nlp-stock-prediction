@@ -19,6 +19,27 @@ dev = [
   "pytest>=8.3,<9",
   "ruff>=0.6,<1",
 ]
+timesfm-raw = [
+  "accelerate>=1.13,<2",
+  "huggingface_hub>=1.14,<2",
+  "pandas>=3.0,<4",
+  "pyarrow>=24,<25",
+  "safetensors>=0.7,<1",
+  "torch>=2.11,<3",
+  "transformers>=5.8,<6",
+]
+timesfm-legacy-training = [
+  "accelerate>=1.13,<2",
+  "huggingface_hub>=1.14,<2",
+  "pandas>=3.0,<4",
+  "peft>=0.19,<1",
+  "pyarrow>=24,<25",
+  "safetensors>=0.7,<1",
+  "scikit-learn>=1.8,<2",
+  "torch>=2.11,<3",
+  "transformers>=5.8,<6",
+]
+# Legacy compatibility extra. New product work should prefer timesfm-raw.
 timesfm = [
   "accelerate>=1.13,<2",
   "huggingface_hub>=1.14,<2",

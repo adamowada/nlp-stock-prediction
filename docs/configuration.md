@@ -15,6 +15,10 @@ python -m nlp_stock_prediction --help
 Optional provider, model, and GPU dependencies must remain opt-in. The default test suite must not
 require network access, live credentials, CUDA, or TimesFM packages.
 
+TimesFM is an optional technical-signal adapter only. Raw inference artifacts may support technical
+context; LoRA training, HPO, and promotion funnels are legacy experiment surfaces and are not part of
+the preferred workflow.
+
 ## Current Commands
 
 The legacy CLI remains available while the rebuild proceeds:
@@ -52,6 +56,11 @@ cache/
 
 SQLite should store metadata, relationships, hashes, statuses, and planning state. Large payloads and
 reports should stay as files with paths recorded in SQLite.
+
+Generated payloads are local working state by default. Keep `artifacts/`, `reports/`, provider
+`cache/`, and `data/ml/` out of git unless a small, scrubbed file is deliberately promoted into
+`tests/fixtures/` with a clear fixture purpose. Legacy TimesFM LoRA/HPO weights and report bundles
+should be deleted or archived outside the repository rather than treated as source artifacts.
 
 The SQLite foundation is implemented in `nlp_stock_prediction.storage`. The planning database is
 `plans/planning.sqlite3` and is tracked in git. The research database is

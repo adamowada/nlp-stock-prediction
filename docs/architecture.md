@@ -4,7 +4,7 @@ This document describes the target architecture for the Codex-led prediction res
 
 ## Product Boundary
 
-The app is an agentic stock prediction app.
+The app is an agentic market and instrument prediction research assistant.
 
 It does:
 

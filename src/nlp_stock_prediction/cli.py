@@ -24,6 +24,7 @@ _CLI_EPILOG = """Examples:
     --capital 1000 --risk-profile exploratory --offline
 
 Configuration:
+  The run command is legacy rebuild scaffolding. Prefer future research workflows once implemented.
   Offline runs are deterministic and do not use network providers.
   Scrape source mode uses public-provider adapters with deterministic fixtures by default.
   Add --live-providers with --source-mode scrape to call configured live providers.
@@ -59,7 +60,7 @@ def _parse_decimal(value: str) -> Decimal:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m nlp_stock_prediction",
-        description="Generate an evidence-grounded daily stock opportunity report.",
+        description="Generate an evidence-grounded legacy prediction research report.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_CLI_EPILOG,
     )
@@ -69,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         help="Generate a daily report.",
         description=(
-            "Generate one Markdown report, one JSON report, and audit artifacts under "
+            "Generate one legacy Markdown report, one JSON report, and audit artifacts under "
             "<output>/<YYYY-MM-DD>/."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

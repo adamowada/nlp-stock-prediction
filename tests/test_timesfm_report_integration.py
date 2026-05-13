@@ -214,7 +214,7 @@ def test_weak_timesfm_artifact_rescores_existing_candidate_to_no_trade(
     report = DailyReport.model_validate_json(bundle.json_path.read_text(encoding="utf-8"))
     assert report.trade_candidates == ()
     assert report.no_trade_summary is not None
-    assert "No qualified trade candidates" in report.no_trade_summary
+    assert "No prediction candidates" in report.no_trade_summary
     audit_manifest = cast(AuditManifest, report.audit_manifest)
     assert audit_manifest.recommendation_trace_ids == ()
     tsla_section = next(section for section in report.ticker_sections if section.ticker == "TSLA")

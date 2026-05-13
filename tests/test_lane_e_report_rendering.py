@@ -29,7 +29,7 @@ def _ticker_markdown_block(rendered: str, tickers: tuple[str, ...], ticker: str)
     if index + 1 < len(tickers):
         end = rendered.index(f"### {tickers[index + 1]}", start + 1)
     else:
-        end = rendered.index("## Qualified Trading Strategies Or No-Trade Summary", start + 1)
+        end = rendered.index("## Prediction Candidates Or Insufficient-Evidence Summary", start + 1)
     return rendered[start:end]
 
 
@@ -47,17 +47,18 @@ def test_markdown_report_includes_required_lane_e_sections() -> None:
 
     rendered = render_markdown_report(report)
 
-    assert "# Daily Stock Opportunity Report" in rendered
+    assert "# Daily Prediction Research Report" in rendered
     assert "Report date: 2026-05-11" in rendered
     assert "Data freshness:" in rendered
     assert "Provider Warnings" in rendered
-    assert "Qualified Trading Strategies" in rendered
+    assert "Prediction Candidates" in rendered
     assert "candidate-tsla-shares-swing" in rendered
     assert "#### App Analysis" in rendered
     assert "separate from the observed discussion above" in rendered
     assert "Confidence inputs:" in rendered
     risk_controls_line = (
-        "Risk controls: profile exploratory; defined risk yes; margin required no; passed yes"
+        "Legacy risk controls: profile exploratory; defined risk yes; margin required no; "
+        "passed yes"
     )
     assert risk_controls_line in rendered
     assert "Score components:" in rendered
@@ -86,7 +87,7 @@ def test_markdown_report_includes_required_lane_e_sections() -> None:
             block.index(f"#### {subsection}") for subsection in expected_ticker_subsections
         ]
         assert positions == sorted(positions)
-        assert "Action: qualified" not in block
+        assert "Legacy action label: qualified" not in block
         assert "candidate-tsla-shares-swing" not in block
 
 
@@ -230,7 +231,7 @@ def test_offline_fixture_report_with_zero_capital_has_no_qualified_candidate() -
     scoring_input = records[0]
 
     assert report.trade_candidates == ()
-    assert report.no_trade_summary == "No qualified trades passed the offline fixture risk gates."
+    assert report.no_trade_summary == "No prediction candidates passed the offline fixture gates."
     assert report.ticker_sections[0].recommendation_ids == ()
     assert isinstance(report.audit_manifest, AuditManifest)
     assert report.audit_manifest.recommendation_trace_ids == ()
@@ -238,6 +239,6 @@ def test_offline_fixture_report_with_zero_capital_has_no_qualified_candidate() -
     assert scoring_input["risk_plan"]["failed_gates"] == ["account-capital-must-be-positive"]
 
     rendered = render_markdown_report(report)
-    assert "### No-Trade Summary" in rendered
-    assert "### Qualified Trading Strategies" not in rendered
-    assert "No qualified trades passed the offline fixture risk gates." in rendered
+    assert "### Insufficient-Evidence Summary" in rendered
+    assert "### Prediction Candidates" not in rendered
+    assert "No prediction candidates passed the offline fixture gates." in rendered

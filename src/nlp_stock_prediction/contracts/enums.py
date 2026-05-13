@@ -27,6 +27,33 @@ class SourceKind(StrEnum):
     INTERNAL_ANALYSIS = "internal_analysis"
 
 
+class AssetClass(StrEnum):
+    STOCK = "stock"
+    ETF = "etf"
+    CRYPTO = "crypto"
+    CURRENCY = "currency"
+    COMMODITY = "commodity"
+    FUTURES = "futures"
+    FUND = "fund"
+    INDEX = "index"
+    PROXY = "proxy"
+    UNKNOWN = "unknown"
+
+
+class InstrumentResolutionStatus(StrEnum):
+    RESOLVED = "resolved"
+    AMBIGUOUS = "ambiguous"
+    UNSUPPORTED = "unsupported"
+    UNAVAILABLE = "unavailable"
+
+
+class TradabilityStatus(StrEnum):
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
+    RESTRICTED = "restricted"
+    UNKNOWN = "unknown"
+
+
 class FreshnessStatus(StrEnum):
     FRESH = "fresh"
     STALE = "stale"
@@ -143,9 +170,11 @@ class AnalysisSignal(StrEnum):
 
 __all__ = [
     "AnalysisSignal",
+    "AssetClass",
     "CredentialState",
     "Direction",
     "FreshnessStatus",
+    "InstrumentResolutionStatus",
     "InstrumentType",
     "PositionType",
     "ProviderStatus",
@@ -155,6 +184,7 @@ __all__ = [
     "SourceKind",
     "TickerDiscoveryStatus",
     "TimeHorizon",
+    "TradabilityStatus",
     "WarningCode",
     "WarningSeverity",
 ]

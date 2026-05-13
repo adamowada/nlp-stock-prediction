@@ -27,9 +27,11 @@ from nlp_stock_prediction.contracts.base import (
 from nlp_stock_prediction.contracts.discovery import TickerCandidate, TickerDiscoveryResult
 from nlp_stock_prediction.contracts.enums import (
     AnalysisSignal,
+    AssetClass,
     CredentialState,
     Direction,
     FreshnessStatus,
+    InstrumentResolutionStatus,
     InstrumentType,
     PositionType,
     ProviderStatus,
@@ -39,6 +41,7 @@ from nlp_stock_prediction.contracts.enums import (
     SourceKind,
     TickerDiscoveryStatus,
     TimeHorizon,
+    TradabilityStatus,
     WarningCode,
     WarningSeverity,
 )
@@ -48,6 +51,15 @@ from nlp_stock_prediction.contracts.fixtures import (
     FixtureManifest,
     NormalizedFixture,
     RawProviderFixture,
+)
+from nlp_stock_prediction.contracts.instruments import (
+    Instrument,
+    InstrumentDataAvailability,
+    InstrumentResolution,
+    InstrumentSymbol,
+    ProviderInstrumentId,
+    RelatedInstrument,
+    TradabilityEvidence,
 )
 from nlp_stock_prediction.contracts.provenance import (
     DataReference,
@@ -82,6 +94,8 @@ from nlp_stock_prediction.contracts.providers import (
     XProvider,
 )
 from nlp_stock_prediction.contracts.recommendation import (
+    LEGACY_TRADE_INTERFACE_NOTE,
+    LEGACY_TRADE_INTERFACE_STATUS,
     RiskAssessment,
     ScoreBreakdown,
     ScoreComponent,
@@ -99,9 +113,12 @@ from nlp_stock_prediction.contracts.report import (
 
 __all__ = [
     "DEFAULT_MARKDOWN_REPORT_OUTLINE",
+    "LEGACY_TRADE_INTERFACE_NOTE",
+    "LEGACY_TRADE_INTERFACE_STATUS",
     "AnalysisBundle",
     "AnalysisComponent",
     "AnalysisSignal",
+    "AssetClass",
     "AuditArtifact",
     "AuditManifest",
     "Confidence",
@@ -124,6 +141,11 @@ __all__ = [
     "FundamentalsProvider",
     "FundamentalsRequest",
     "FundamentalsSnapshot",
+    "Instrument",
+    "InstrumentDataAvailability",
+    "InstrumentResolution",
+    "InstrumentResolutionStatus",
+    "InstrumentSymbol",
     "InstrumentType",
     "JsonObject",
     "JsonValue",
@@ -146,6 +168,7 @@ __all__ = [
     "PositiveInt",
     "PriceBar",
     "ProviderHealth",
+    "ProviderInstrumentId",
     "ProviderMetric",
     "ProviderRequest",
     "ProviderResult",
@@ -154,6 +177,7 @@ __all__ = [
     "RawProviderFixture",
     "RecommendationAction",
     "RedditProvider",
+    "RelatedInstrument",
     "RetrievalMethod",
     "RiskAssessment",
     "RiskProfile",
@@ -177,6 +201,8 @@ __all__ = [
     "TickerReportSection",
     "TickerSymbol",
     "TimeHorizon",
+    "TradabilityEvidence",
+    "TradabilityStatus",
     "TradeCandidate",
     "WarningCode",
     "WarningSeverity",

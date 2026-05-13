@@ -614,7 +614,7 @@ def test_timesfm_cannot_be_the_only_reason_a_candidate_qualifies() -> None:
     assert "timesfm-cannot-qualify-standalone" in candidate.score.failed_gates
     assert "timesfm_adjustment=+0.0800" in str(technical.raw_value)
     assert select_qualified_candidates((candidate,)) == ()
-    assert "No qualified trade candidates" in summary
+    assert "No prediction candidates" in summary
 
 
 @pytest.mark.unit
@@ -772,5 +772,5 @@ def test_no_trade_days_are_valid_when_no_candidates_qualify() -> None:
 
     assert qualified == ()
     assert candidate.action == RecommendationAction.AVOID
-    assert "No qualified trade candidates" in summary
+    assert "No prediction candidates" in summary
     assert "risk gates" in summary

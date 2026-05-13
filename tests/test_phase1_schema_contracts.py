@@ -7,6 +7,8 @@ import pytest
 from pydantic import ValidationError
 
 from nlp_stock_prediction.contracts import (
+    LEGACY_TRADE_INTERFACE_NOTE,
+    LEGACY_TRADE_INTERFACE_STATUS,
     AnalysisBundle,
     AnalysisSignal,
     CredentialState,
@@ -43,6 +45,12 @@ from nlp_stock_prediction.contracts import (
 )
 
 RUN_DATE = date(2026, 5, 11)
+
+
+def test_legacy_trade_interface_is_explicitly_quarantined() -> None:
+    assert LEGACY_TRADE_INTERFACE_STATUS == "legacy_compatibility_only"
+    assert "legacy" in LEGACY_TRADE_INTERFACE_NOTE
+    assert "must not frame output as trade recommendations" in LEGACY_TRADE_INTERFACE_NOTE
 
 
 def _now() -> datetime:

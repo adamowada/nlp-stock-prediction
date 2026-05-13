@@ -1,4 +1,8 @@
-"""Focused six-ticker TimesFM data collection and HPO orchestration."""
+"""Legacy focused six-ticker TimesFM data collection and HPO orchestration.
+
+This module is quarantined as experiment-reproduction support. It is not part of the preferred
+Codex-led prediction research assistant workflow.
+"""
 
 from __future__ import annotations
 

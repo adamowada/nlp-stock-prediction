@@ -306,11 +306,11 @@ def test_cli_offline_run_represents_no_trade_day(tmp_path: Path) -> None:
         (report_dir / "report.json").read_text(encoding="utf-8")
     )
 
-    assert "### No-Trade Summary" in markdown
-    assert "### Qualified Trading Strategies" not in markdown
-    assert "No qualified trades passed the offline fixture risk gates." in markdown
+    assert "### Insufficient-Evidence Summary" in markdown
+    assert "### Prediction Candidates" not in markdown
+    assert "No prediction candidates passed the offline fixture gates." in markdown
     assert report.trade_candidates == ()
-    assert report.no_trade_summary == "No qualified trades passed the offline fixture risk gates."
+    assert report.no_trade_summary == "No prediction candidates passed the offline fixture gates."
     assert report.audit_manifest is not None
     scoring_records = _json_records(_read_json_object(audit_dir / "scoring-inputs.json"))
     risk_plan = cast(JsonObject, scoring_records[0]["risk_plan"])
@@ -490,7 +490,7 @@ def test_live_scrape_bundle_suppresses_fixture_recommendations(
     assert provider_results["live_providers"] is True
     assert _json_records(bundle.audit_payloads["scoring-inputs.json"]) == []
     markdown = render_markdown_report(report)
-    assert "### No-Trade Summary" in markdown
+    assert "### Insufficient-Evidence Summary" in markdown
     assert "Live app analysis is not available" in markdown
     assert "fixture/provider inputs" not in markdown
 

@@ -18,7 +18,7 @@ from nlp_stock_prediction.contracts import (
 
 def render_markdown_report(report: DailyReport) -> str:
     lines: list[str] = [
-        "# Daily Stock Opportunity Report",
+        "# Daily Prediction Research Report",
         "",
         f"Report date: {report.report_date.isoformat()}",
         f"Generated at: {report.generated_at.isoformat()}",
@@ -130,17 +130,17 @@ def render_markdown_report(report: DailyReport) -> str:
             lines.append("- No evidence references available.")
         lines.append("")
 
-    lines.extend(["## Qualified Trading Strategies Or No-Trade Summary", ""])
+    lines.extend(["## Prediction Candidates Or Insufficient-Evidence Summary", ""])
     if report.trade_candidates:
-        lines.extend(["### Qualified Trading Strategies", ""])
+        lines.extend(["### Prediction Candidates", ""])
         for candidate in report.trade_candidates:
             lines.extend(_render_candidate(candidate))
     else:
         lines.extend(
             [
-                "### No-Trade Summary",
+                "### Insufficient-Evidence Summary",
                 "",
-                report.no_trade_summary or "No qualified strategies passed the report gates.",
+                report.no_trade_summary or "No prediction candidates passed the report gates.",
                 "",
             ]
         )
@@ -166,12 +166,14 @@ def render_markdown_report(report: DailyReport) -> str:
 def _render_candidate(candidate: TradeCandidate) -> list[str]:
     lines = [
         f"- `{candidate.candidate_id}` ({candidate.ticker}): {candidate.thesis}",
-        f"  - Action: {candidate.action.value}; instrument: {candidate.instrument.value}; "
-        f"horizon: {candidate.time_horizon.value}",
+        (
+            f"  - Legacy action label: {candidate.action.value}; "
+            f"instrument: {candidate.instrument.value}; horizon: {candidate.time_horizon.value}"
+        ),
         f"  - Score: {_format_score(candidate.score.overall_score)} "
         f"(confidence {_format_score(candidate.score.confidence)}, "
         f"threshold {_format_score(candidate.score.threshold)})",
-        f"  - Entry: {candidate.entry_logic}",
+        f"  - Scenario trigger: {candidate.entry_logic}",
         f"  - Invalidation: {candidate.invalidation_criteria}",
         f"  - Catalysts: {_format_list(candidate.catalysts)}",
         f"  - Risks: {_format_list(candidate.risks)}",
@@ -197,7 +199,7 @@ def _render_risk_controls(candidate: TradeCandidate) -> list[str]:
     risk = candidate.risk_plan
     lines = [
         (
-            f"  - Risk controls: profile {risk.risk_profile.value}; "
+            f"  - Legacy risk controls: profile {risk.risk_profile.value}; "
             f"defined risk {_format_bool(risk.defined_risk)}; "
             f"margin required {_format_bool(risk.margin_required)}; "
             f"passed {_format_bool(risk.passed)}"

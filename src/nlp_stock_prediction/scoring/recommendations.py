@@ -1,4 +1,4 @@
-"""Recommendation scoring with auditable components and penalties."""
+"""Legacy recommendation scoring with auditable components and penalties."""
 
 from __future__ import annotations
 
@@ -152,11 +152,11 @@ def select_qualified_candidates(
 
 def build_no_trade_summary(candidates: tuple[TradeCandidate, ...]) -> str:
     if any(candidate.action == RecommendationAction.QUALIFIED for candidate in candidates):
-        return "Qualified trade candidates were produced."
+        return "Prediction candidates were produced."
     risk_failures = sum(1 for candidate in candidates if candidate.risk_plan.failed_gates)
     score_failures = sum(1 for candidate in candidates if candidate.score.failed_gates)
     return (
-        "No qualified trade candidates passed Lane D scoring. "
+        "No prediction candidates passed legacy scoring. "
         f"{risk_failures} candidate(s) failed risk gates and "
         f"{score_failures} candidate(s) failed score gates."
     )

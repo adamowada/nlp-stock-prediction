@@ -1,4 +1,8 @@
-"""Staged TimesFM signal funnel orchestration."""
+"""Legacy staged TimesFM signal funnel orchestration.
+
+This broad orchestration module mixes universe discovery, data fetching, raw TimesFM, adapter smoke,
+HPO, final evaluation, and report promotion. New work should use smaller Phase 3 tools instead.
+"""
 
 from __future__ import annotations
 

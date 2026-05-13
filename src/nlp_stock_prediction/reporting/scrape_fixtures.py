@@ -803,8 +803,8 @@ def _scrape_report(
     )
     trade_candidates = () if live_providers else report.trade_candidates
     no_trade_summary = (
-        "Live scrape mode collected provider evidence and audit metadata only; no qualified "
-        "trades are produced from this run."
+        "Live scrape mode collected provider evidence and audit metadata only; no prediction "
+        "candidates are produced from this run."
         if live_providers
         else report.no_trade_summary
     )

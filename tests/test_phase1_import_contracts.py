@@ -41,9 +41,11 @@ EXPECTED_MODULE_EXPORTS: dict[str, tuple[str, ...]] = {
     "discovery": ("TickerCandidate", "TickerDiscoveryResult"),
     "enums": (
         "AnalysisSignal",
+        "AssetClass",
         "CredentialState",
         "Direction",
         "FreshnessStatus",
+        "InstrumentResolutionStatus",
         "InstrumentType",
         "PositionType",
         "ProviderStatus",
@@ -53,12 +55,22 @@ EXPECTED_MODULE_EXPORTS: dict[str, tuple[str, ...]] = {
         "SourceKind",
         "TickerDiscoveryStatus",
         "TimeHorizon",
+        "TradabilityStatus",
         "WarningCode",
         "WarningSeverity",
     ),
     "evidence": ("SourceEvidence", "TextSpan"),
     "extraction": ("StrategyCluster", "StrategyExtraction"),
     "fixtures": ("FixtureManifest", "NormalizedFixture", "RawProviderFixture"),
+    "instruments": (
+        "Instrument",
+        "InstrumentDataAvailability",
+        "InstrumentResolution",
+        "InstrumentSymbol",
+        "ProviderInstrumentId",
+        "RelatedInstrument",
+        "TradabilityEvidence",
+    ),
     "provenance": (
         "DataReference",
         "EvidenceReference",
@@ -92,6 +104,8 @@ EXPECTED_MODULE_EXPORTS: dict[str, tuple[str, ...]] = {
         "XProvider",
     ),
     "recommendation": (
+        "LEGACY_TRADE_INTERFACE_NOTE",
+        "LEGACY_TRADE_INTERFACE_STATUS",
         "RiskAssessment",
         "ScoreBreakdown",
         "ScoreComponent",
@@ -110,9 +124,12 @@ EXPECTED_MODULE_EXPORTS: dict[str, tuple[str, ...]] = {
 
 EXPECTED_CONTRACT_NAMESPACE_EXPORTS = (
     "DEFAULT_MARKDOWN_REPORT_OUTLINE",
+    "LEGACY_TRADE_INTERFACE_NOTE",
+    "LEGACY_TRADE_INTERFACE_STATUS",
     "AnalysisBundle",
     "AnalysisComponent",
     "AnalysisSignal",
+    "AssetClass",
     "AuditArtifact",
     "AuditManifest",
     "Confidence",
@@ -135,6 +152,11 @@ EXPECTED_CONTRACT_NAMESPACE_EXPORTS = (
     "FundamentalsProvider",
     "FundamentalsRequest",
     "FundamentalsSnapshot",
+    "Instrument",
+    "InstrumentDataAvailability",
+    "InstrumentResolution",
+    "InstrumentResolutionStatus",
+    "InstrumentSymbol",
     "InstrumentType",
     "JsonObject",
     "JsonValue",
@@ -157,6 +179,7 @@ EXPECTED_CONTRACT_NAMESPACE_EXPORTS = (
     "PositiveInt",
     "PriceBar",
     "ProviderHealth",
+    "ProviderInstrumentId",
     "ProviderMetric",
     "ProviderRequest",
     "ProviderResult",
@@ -165,6 +188,7 @@ EXPECTED_CONTRACT_NAMESPACE_EXPORTS = (
     "RawProviderFixture",
     "RecommendationAction",
     "RedditProvider",
+    "RelatedInstrument",
     "RetrievalMethod",
     "RiskAssessment",
     "RiskProfile",
@@ -188,6 +212,8 @@ EXPECTED_CONTRACT_NAMESPACE_EXPORTS = (
     "TickerReportSection",
     "TickerSymbol",
     "TimeHorizon",
+    "TradabilityEvidence",
+    "TradabilityStatus",
     "TradeCandidate",
     "WarningCode",
     "WarningSeverity",
@@ -292,5 +318,5 @@ def test_python_module_entrypoint_exposes_help_without_import_errors() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "Generate an evidence-grounded daily stock opportunity report." in completed.stdout
+    assert "Generate an evidence-grounded legacy prediction research report." in completed.stdout
     assert completed.stderr == ""

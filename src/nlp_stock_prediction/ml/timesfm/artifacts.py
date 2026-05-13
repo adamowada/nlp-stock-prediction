@@ -1,4 +1,4 @@
-"""Artifact contracts and writers for local TimesFM LoRA training."""
+"""Legacy artifact contracts and writers for local TimesFM LoRA training."""
 
 from __future__ import annotations
 

@@ -1,4 +1,8 @@
-"""Command line entry point for local TimesFM 2.5 LoRA training."""
+"""Legacy command line entry point for local TimesFM 2.5 LoRA training.
+
+Fine-tuning TimesFM is retired for product workflow. Keep this module only for explicit legacy
+experiment reproduction until it can be archived outside the main package.
+"""
 
 from __future__ import annotations
 

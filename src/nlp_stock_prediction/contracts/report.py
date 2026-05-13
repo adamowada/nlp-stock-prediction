@@ -127,11 +127,11 @@ class MarkdownReportOutline(ContractModel):
 DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
     schema_version="markdown-report.v1",
     heading_order=(
-        "Daily Stock Opportunity Report",
+        "Daily Prediction Research Report",
         "Data Freshness",
         "Provider Warnings",
         "Ticker Sections",
-        "Qualified Trading Strategies Or No-Trade Summary",
+        "Prediction Candidates Or Insufficient-Evidence Summary",
         "Audit Artifacts",
     ),
     ticker_section_heading_template="{ticker}",
@@ -147,8 +147,8 @@ DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
         "Evidence References",
     ),
     final_section_headings=(
-        "Qualified Trading Strategies",
-        "No-Trade Summary",
+        "Prediction Candidates",
+        "Insufficient-Evidence Summary",
     ),
     required_footer_headings=("Audit Artifacts",),
 )
@@ -185,7 +185,7 @@ class DailyReport(ContractModel):
         if tuple(self.ticker_discovery.tickers) != section_tickers:
             raise ValueError("ticker sections must match discovered tickers in order")
         if not self.trade_candidates and not self.no_trade_summary:
-            raise ValueError("reports without trade candidates must include no_trade_summary")
+            raise ValueError("reports without candidates must include no_trade_summary")
         candidate_ids = tuple(candidate.candidate_id for candidate in self.trade_candidates)
         if len(set(candidate_ids)) != len(candidate_ids):
             raise ValueError("trade candidate ids must be unique")
@@ -214,14 +214,14 @@ class DailyReport(ContractModel):
                     raise ValueError("ticker section recommendation_ids must reference candidates")
                 if recommendation_id in section_references:
                     raise ValueError(
-                        "trade candidates must be referenced by exactly one ticker section"
+                        "candidate ids must be referenced by exactly one ticker section"
                     )
                 section_references[recommendation_id] = section.ticker
         for candidate in self.trade_candidates:
             if candidate.ticker not in self.ticker_discovery.tickers:
-                raise ValueError("trade candidates must use discovered tickers")
+                raise ValueError("candidates must use discovered tickers")
             if candidate.candidate_id not in section_references:
-                raise ValueError("trade candidates must be referenced by a ticker section")
+                raise ValueError("candidates must be referenced by a ticker section")
             if section_references[candidate.candidate_id] != candidate.ticker:
                 raise ValueError("ticker section recommendation_ids must match candidate ticker")
             cited_evidence_ids.update(reference.evidence_id for reference in candidate.evidence)

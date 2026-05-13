@@ -1,4 +1,9 @@
-"""Recommendation scoring and risk contracts."""
+"""Legacy recommendation scoring and risk contracts.
+
+These contracts are retained for the existing `run` compatibility path. New product work should use
+prediction-candidate and instrument-universe contracts instead of treating this module as a public
+planning seam.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +30,12 @@ from nlp_stock_prediction.contracts.enums import (
 )
 from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderWarning
 
+LEGACY_TRADE_INTERFACE_STATUS = "legacy_compatibility_only"
+LEGACY_TRADE_INTERFACE_NOTE = (
+    "TradeCandidate, RecommendationAction, and RiskAssessment are retained only for the legacy "
+    "run command; new workflows must not frame output as trade recommendations or position sizing."
+)
+
 
 class ScoreComponent(ContractModel):
     """One weighted score input used to explain a candidate."""
@@ -41,7 +52,7 @@ class ScoreComponent(ContractModel):
 
 
 class ScoreBreakdown(ContractModel):
-    """Auditable confidence and scoring inputs for a trade candidate."""
+    """Auditable confidence and scoring inputs for a legacy trade candidate."""
 
     score_version: NonEmptyStr
     overall_score: Score
@@ -59,7 +70,7 @@ class ScoreBreakdown(ContractModel):
 
 
 class RiskAssessment(ContractModel):
-    """Risk and sizing constraints independent of recommendation score."""
+    """Legacy trading-risk constraints retained for compatibility only."""
 
     risk_profile: RiskProfile
     defined_risk: bool
@@ -74,7 +85,7 @@ class RiskAssessment(ContractModel):
 
 
 class TradeCandidate(ContractModel):
-    """App-generated opportunity candidate grounded in evidence and risk policy."""
+    """Legacy trade-era candidate grounded in evidence and risk policy."""
 
     candidate_id: NonEmptyStr
     ticker: TickerSymbol
@@ -114,4 +125,11 @@ class TradeCandidate(ContractModel):
         return self
 
 
-__all__ = ["RiskAssessment", "ScoreBreakdown", "ScoreComponent", "TradeCandidate"]
+__all__ = [
+    "LEGACY_TRADE_INTERFACE_NOTE",
+    "LEGACY_TRADE_INTERFACE_STATUS",
+    "RiskAssessment",
+    "ScoreBreakdown",
+    "ScoreComponent",
+    "TradeCandidate",
+]

@@ -1,4 +1,4 @@
-"""Retail risk controls for recommendation candidates."""
+"""Legacy retail risk controls for recommendation candidates."""
 
 from __future__ import annotations
 

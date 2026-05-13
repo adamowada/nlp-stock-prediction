@@ -173,7 +173,7 @@ def build_offline_fixture_bundle(config: RunConfig) -> OfflineFixtureBundle:
         no_trade_summary=(
             None
             if trade_candidates
-            else "No qualified trades passed the offline fixture risk gates."
+            else "No prediction candidates passed the offline fixture gates."
         ),
         audit_manifest=audit_manifest,
     )
@@ -902,7 +902,7 @@ def _opportunity_notes(ticker: str) -> tuple[str, ...]:
             "Wait for confirmation; do not treat Reddit discussion as fact.",
         )
     return (
-        "No standalone qualified candidate from this offline fixture.",
+        "No standalone prediction candidate from this offline fixture.",
         "Use later provider/scoring lanes before upgrading from watchlist status.",
     )
 

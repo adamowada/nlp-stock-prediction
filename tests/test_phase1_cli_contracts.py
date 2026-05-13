@@ -105,7 +105,7 @@ def test_module_help_subprocess_exposes_canonical_cli() -> None:
 
     assert result.returncode == 0
     assert "usage: python -m nlp_stock_prediction" in result.stdout
-    assert "Generate an evidence-grounded daily stock opportunity report." in result.stdout
+    assert "Generate an evidence-grounded legacy prediction research report." in result.stdout
     assert "run" in result.stdout
     assert result.stderr == ""
 

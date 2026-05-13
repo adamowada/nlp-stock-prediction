@@ -1,4 +1,8 @@
-"""Recommendation scoring helpers for Phase 2 Lane D."""
+"""Legacy recommendation scoring helpers.
+
+Retained for the current compatibility `run` command. New scoring work should produce prediction
+candidate confidence, uncertainty, and evidence-status outputs instead of trade recommendations.
+"""
 
 from nlp_stock_prediction.scoring.recommendations import (
     RecommendationSignals,

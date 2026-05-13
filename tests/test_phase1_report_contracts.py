@@ -313,7 +313,7 @@ def _daily_report(
     ticker_sections: tuple[TickerReportSection, ...] | None = None,
     trade_candidates: tuple[TradeCandidate, ...] = (),
     evidence_sources: tuple[SourceEvidence, ...] = (),
-    no_trade_summary: str | None = "No qualified trades passed the fixture evidence gates.",
+    no_trade_summary: str | None = "No prediction candidates passed the fixture evidence gates.",
     audit_manifest: AuditManifest | DataReference | None = None,
 ) -> DailyReport:
     return DailyReport(
@@ -485,18 +485,18 @@ def test_default_markdown_report_outline_freezes_required_section_shape() -> Non
 
     assert dumped["schema_version"] == "markdown-report.v1"
     assert dumped["heading_order"] == [
-        "Daily Stock Opportunity Report",
+        "Daily Prediction Research Report",
         "Data Freshness",
         "Provider Warnings",
         "Ticker Sections",
-        "Qualified Trading Strategies Or No-Trade Summary",
+        "Prediction Candidates Or Insufficient-Evidence Summary",
         "Audit Artifacts",
     ]
     assert outline.ticker_section_heading_template == "{ticker}"
     assert "Evidence References" in outline.required_ticker_subsections
     assert outline.final_section_headings == (
-        "Qualified Trading Strategies",
-        "No-Trade Summary",
+        "Prediction Candidates",
+        "Insufficient-Evidence Summary",
     )
     assert outline.require_evidence_references is True
     assert outline.require_audit_artifacts is True
