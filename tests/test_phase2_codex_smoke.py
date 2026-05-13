@@ -39,7 +39,7 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
     rendered = " ".join(command)
 
     assert command[:4] == ["codex", "--ask-for-approval", "never", "--search"]
-    assert "mcp_servers.nlp-stock-prediction.command" in rendered
+    assert 'mcp_servers."nlp-stock-prediction".command' in rendered
     assert "nlp_stock_prediction.codex_mcp" in rendered
     assert "workspace-write" in command
     assert str(config.final_message_path) in command
@@ -86,6 +86,36 @@ def test_codex_smoke_output_verification_requires_search_evidence(tmp_path: Path
     )
     with pytest.raises(RuntimeError, match="evidence_sources"):
         smoke.verify_smoke_outputs(config, require_sqlite=False)
+
+
+@pytest.mark.unit
+def test_codex_smoke_prepares_clean_ignored_run_dir(tmp_path: Path) -> None:
+    smoke = _load_smoke_module()
+    config = smoke.CodexSmokeConfig(
+        run_date=date(2026, 5, 13),
+        output_dir=tmp_path / "reports" / "phase2-codex-smoke",
+        symbol="TSLA",
+        repo_root=tmp_path,
+        python_executable=Path("python"),
+    )
+    stale = config.run_dir / "report.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"stale": true}\n', encoding="utf-8")
+
+    smoke._prepare_clean_run_dir(config)
+
+    assert config.run_dir.exists()
+    assert not stale.exists()
+
+    unsafe = smoke.CodexSmokeConfig(
+        run_date=date(2026, 5, 13),
+        output_dir=tmp_path / "unsafe",
+        symbol="TSLA",
+        repo_root=tmp_path,
+        python_executable=Path("python"),
+    )
+    with pytest.raises(RuntimeError, match="outside ignored roots"):
+        smoke._prepare_clean_run_dir(unsafe)
 
 
 @pytest.mark.codex_smoke

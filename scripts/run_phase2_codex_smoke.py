@@ -72,9 +72,9 @@ def build_codex_command(config: CodexSmokeConfig) -> list[str]:
         "never",
         "--search",
         "-c",
-        f"mcp_servers.nlp-stock-prediction.command={mcp_command}",
+        f'mcp_servers."nlp-stock-prediction".command={mcp_command}',
         "-c",
-        'mcp_servers.nlp-stock-prediction.args=["-m","nlp_stock_prediction.codex_mcp"]',
+        'mcp_servers."nlp-stock-prediction".args=["-m","nlp_stock_prediction.codex_mcp"]',
         "exec",
         "-s",
         "workspace-write",
@@ -89,10 +89,12 @@ def build_codex_command(config: CodexSmokeConfig) -> list[str]:
 def verify_smoke_outputs(config: CodexSmokeConfig, *, require_sqlite: bool = True) -> None:
     """Validate the files and minimum JSON shape expected from the smoke run."""
 
-    report_path = config.run_dir / "report.md"
-    json_path = config.run_dir / "report.json"
-    audit_manifest_path = config.run_dir / "audit" / "audit-manifest.json"
-    for path in (report_path, json_path, audit_manifest_path, config.final_message_path):
+    run_dir = _resolve_repo_path(config, config.run_dir)
+    final_message_path = _resolve_repo_path(config, config.final_message_path)
+    report_path = run_dir / "report.md"
+    json_path = run_dir / "report.json"
+    audit_manifest_path = run_dir / "audit" / "audit-manifest.json"
+    for path in (report_path, json_path, audit_manifest_path, final_message_path):
         if not path.exists():
             raise RuntimeError(f"Codex smoke did not create expected file: {path}")
 
@@ -140,7 +142,7 @@ def run_codex_smoke(config: CodexSmokeConfig) -> None:
     if shutil.which(config.codex_executable) is None:
         raise RuntimeError("Codex CLI is not available on PATH.")
 
-    config.run_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_clean_run_dir(config)
     baseline_status = require_clean_tracked_status(config.repo_root)
     completed = subprocess.run(
         build_codex_command(config),
@@ -226,6 +228,19 @@ def _verify_sqlite_run(config: CodexSmokeConfig) -> None:
         raise RuntimeError("Codex smoke did not persist prediction candidates.")
 
 
+def _prepare_clean_run_dir(config: CodexSmokeConfig) -> None:
+    run_dir = _resolve_repo_path(config, config.run_dir).resolve()
+    allowed_roots = tuple(
+        (config.repo_root / root).resolve() for root in ("reports", "artifacts", "data", "cache")
+    )
+    if not any(_is_relative_to(run_dir, root) or run_dir == root for root in allowed_roots):
+        roots = ", ".join(root.as_posix() for root in allowed_roots)
+        raise RuntimeError(f"Refusing to clean smoke output outside ignored roots: {roots}")
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+
 def _expected_run_id(config: CodexSmokeConfig) -> str:
     normalized_symbol = config.symbol.lower().replace("/", "-")
     return f"codex-smoke-{config.run_date.isoformat()}-{normalized_symbol}"
@@ -251,6 +266,18 @@ def _git_status(repo_root: Path) -> str:
         text=True,
     )
     return completed.stdout
+
+
+def _resolve_repo_path(config: CodexSmokeConfig, path: Path) -> Path:
+    return path if path.is_absolute() else config.repo_root / path
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _toml_string(value: str) -> str:
