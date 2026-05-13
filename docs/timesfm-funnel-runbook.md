@@ -45,6 +45,16 @@ Use `--refresh-runs` when you want a clean recompute of model/evaluation artifac
 `--refresh-runs` when adding a few tickers later and you want to reuse compatible existing artifacts
 for tickers already processed with the same data/configuration.
 
+## HPO Budget
+
+The walkaway funnel starts survivor HPO with 8 trials per ticker by default. This keeps the first
+expensive pass bounded after a broad raw screen. If a ticker becomes report-ready and deserves a
+deeper overnight pass, rerun only that ticker or a very small contender list with:
+
+```powershell
+--max-hpo-trials-per-ticker 24
+```
+
 ## Fast Checks
 
 Dry-run the orchestration and docs command without model loading:
@@ -75,6 +85,14 @@ Use `quick` for a market-wide scan so the command stops after the raw base Times
 
 The command fetches the current S&P 500 constituents from Wikipedia wikitext and caches them under
 `data/ml/universes/sp500-symbols.csv`. Omit `--refresh-universe` to reuse that cached universe.
+Use `raw_candidates.csv` to pick a short list for walkaway mode; do not send every raw survivor
+straight into HPO unless you intentionally want a very long batch.
+
+After reviewing `raw_candidates.csv`, run the expensive pass on a small candidate file:
+
+```powershell
+.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols-file data/ml/universes/sp500-top20-raw-candidates-2026-05-12.txt --as-of 2026-05-12 --device cuda --profile walkaway --refresh-runs --data-dir data/ml/sp500_10y --output-root artifacts/ml/timesfm-funnel-sp500-top20
+```
 
 For a custom universe, use:
 

@@ -271,7 +271,7 @@ Profile defaults:
 | Profile | Intended use | Behavior |
 | --- | --- | --- |
 | quick | minutes | data, baselines, capped raw TimesFM only |
-| walkaway | unattended default | full funnel with ruthless early kills, survivor HPO, final eval, and report-ready promotion |
+| walkaway | unattended default | full funnel with ruthless early kills, 8-trial survivor HPO, final eval, and report-ready promotion |
 | full | deep research | same final-test no-leakage boundary with room for broader future HPO settings |
 
 ## Implementation Milestones
@@ -467,3 +467,7 @@ Optional CUDA verification:
 - 2026-05-12: Added broad-scan ergonomics with `--universe sp500`, `--symbols-file`, cached S&P 500
   universe loading, and ranked `raw_candidates` outputs so the funnel can start from technical
   signal discovery instead of only WSB ticker discovery.
+- 2026-05-12: Reduced the default survivor HPO budget to 8 trials per ticker after the first broad
+  survivor run showed that sending hundreds of raw survivors directly into 24-trial HPO is too slow.
+  Keep `--max-hpo-trials-per-ticker 24` as an explicit deepening option for small report-ready
+  contender reruns.

@@ -118,6 +118,13 @@ def test_signal_funnel_quick_profile_defaults_to_raw_screen(tmp_path: Path) -> N
 
 
 @pytest.mark.unit
+def test_signal_funnel_defaults_to_small_hpo_budget() -> None:
+    args = signal_funnel.build_parser().parse_args([])
+
+    assert args.max_hpo_trials_per_ticker == 8
+
+
+@pytest.mark.unit
 def test_signal_funnel_can_load_sp500_universe_from_cache(tmp_path: Path) -> None:
     cache_dir = tmp_path / "universes"
     cache_dir.mkdir()

@@ -4453,7 +4453,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--smoke-lora-bias", choices=("none", "all", "lora_only"), default="none")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--gradient-clip-norm", type=float, default=1.0)
-    parser.add_argument("--max-hpo-trials-per-ticker", type=int, default=24)
+    parser.add_argument("--max-hpo-trials-per-ticker", type=int, default=8)
     parser.add_argument("--hpo-max-steps-grid", default="200,500")
     parser.add_argument("--hpo-batch-sizes", default="2,4")
     parser.add_argument("--hpo-learning-rates", default="1e-5,3e-5,1e-4")

@@ -49,7 +49,9 @@ The signal funnel is the canonical TimesFM research workflow. It writes an incre
 runs cheap baselines before raw TimesFM, runs a cheap adapter smoke only for raw TimesFM survivors,
 runs bounded survivor HPO only for smoke winners, and emits a report-ready
 `ml.timesfm.evaluation.v1` artifact only when the selected adapter clears held-out final
-baseline-aware scoring gates.
+baseline-aware scoring gates. The default HPO budget is 8 trials per ticker; rerun only the
+strongest report-ready contenders with `--max-hpo-trials-per-ticker 24` when you want a deeper
+overnight pass.
 
 Use the current report date for `--as-of`. If the market/data provider has not posted that day's
 close yet, the latest usable bar may still be the prior session; the freshness gate allows this by
@@ -65,7 +67,8 @@ Broad S&P 500 raw-screen scan:
 ```
 
 For broad scans, start with `raw_candidates.csv`; it ranks raw TimesFM candidates by baseline lift
-before you spend time on adapter smoke or HPO.
+before you spend time on adapter smoke or HPO. Promote a short list into a separate walkaway run
+rather than sending every raw survivor into HPO.
 
 Single-ticker CSV workflow:
 

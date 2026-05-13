@@ -136,7 +136,9 @@ baselines before raw base TimesFM, and runs one cheap LoRA adapter smoke only fo
 survivors. Smoke winners then enter bounded survivor HPO, where candidates are ranked by
 validation-window baseline lift before validation loss. The walkaway/full default evaluates the
 selected adapter on untouched held-out test windows and emits a report-ready
-`ml.timesfm.evaluation.v1` artifact only when the final baseline-aware gates pass.
+`ml.timesfm.evaluation.v1` artifact only when the final baseline-aware gates pass. Survivor HPO
+starts with 8 trials per ticker by default; use `--max-hpo-trials-per-ticker 24` only for a deeper
+rerun of the strongest report-ready contenders.
 
 Use the current report date for `--as-of`; if that day's close has not posted yet, the latest usable
 bar may still be the prior session and the default freshness gate allows it. To run a different WSB
@@ -154,7 +156,8 @@ Useful variants:
 ```
 
 Broad scans also write `raw_candidates.csv` and `raw_candidates.json`, ranked from the raw TimesFM
-screen before adapter smoke or HPO. Use `--symbols-file` for custom watchlists.
+screen before adapter smoke or HPO. Use `--symbols-file` for custom watchlists and promote a short
+list into walkaway mode rather than sending every raw survivor into HPO.
 
 Train/evaluate/attach single-ticker CSV workflow:
 
