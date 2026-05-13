@@ -45,6 +45,11 @@ Acceptance:
 
 Goal: make Codex the disciplined prediction research assistant.
 
+Status: initial orchestrator implemented. The deterministic offline `research` command runs through
+dummy tools, and an opt-in real Codex smoke path exposes Phase 2 tools through local MCP, records
+live-search evidence, writes ignored artifacts, and renders Markdown/JSON reports. The research tools
+themselves remain dummy/fixture-backed until Phase 4.
+
 Build:
 
 - objective parsing;

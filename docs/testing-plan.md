@@ -118,7 +118,8 @@ End-to-end tests should run fixture-backed research objectives:
 The Phase 2 Codex smoke is opt-in because it launches the real Codex CLI and may use live web
 search. Mark tests with `codex_smoke` and skip unless `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1` and
 the `codex-smoke` extra is installed. The smoke path must write only ignored artifacts and must not
-modify tracked source files.
+modify tracked source files. The runner also fingerprints restricted ignored paths before and after
+the run, and launches the MCP Python process with bytecode writes disabled.
 
 ## Negative Cases
 
