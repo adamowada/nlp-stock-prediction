@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "nlp-stock-prediction"
 version = "0.1.0"
-description = "Contracts-first CLI for evidence-grounded daily stock opportunity reports."
+description = "Codex-led CLI for evidence-backed market prediction research reports."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

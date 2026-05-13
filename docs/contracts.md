@@ -1,164 +1,147 @@
-# Frozen Contract Gate
+# Contracts
 
-Phase 0 settled the public contract surface and Phase 1 added the deterministic test harness for
-later worktree lanes. Phase 2 integrated concrete providers, analysis helpers, scoring, report
-rendering, audit writing, reliability helpers, and opt-in live smoke scaffolding against those
-contracts. Phase 3 owns hardening the integrated CLI and live smoke surface without weakening the
-frozen contract invariants.
+This document defines target contracts and invariants for the prediction research rebuild.
 
-## Python Package And CLI
+## Core Invariants
 
-- Source layout: `src/nlp_stock_prediction/`.
-- Canonical invocation: `python -m nlp_stock_prediction`.
-- `run` accepts `--date`, `--output`, `--capital`, `--risk-profile`, `--fixture-dir`,
-  `--cache-dir`, `--ml-artifact`, `--source-mode`, `--offline`, and `--live-providers`.
-- With `--offline`, `run` writes a deterministic fixture-backed report bundle. With
-  `--source-mode scrape`, it writes an experimental scrape-source report bundle backed by
-  deterministic provider fixtures. Adding `--live-providers` to scrape mode calls configured live
-  providers for evidence collection and provider health; those live-provider runs do not generate
-  live recommendations.
-  Adding `--ml-artifact` attaches an evaluated local TimesFM artifact as a technical-analysis
-  sidecar and adds an `ml_artifact` audit entry. When Lane D scoring receives an analysis bundle
-  with that sidecar, TimesFM may affect only the technical-alignment component and cannot bypass
-  evidence, warning, or risk gates.
-  Without an explicit source mode, it exits with code `3`.
-- No console script is frozen in the contract gate.
-- Environment variables and optional ignored `.env` files are documented in
-  `docs/configuration.md`; the default offline path does not require credentials or network access.
+- The product is a prediction research assistant, not a trading app.
+- Reports may make evidence-backed predictions, not buy/sell instructions.
+- Every material claim must trace to evidence, a tool artifact, a baseline, or a labeled Codex
+  inference.
+- Evidence for and evidence against must both be preserved.
+- Social content is observed discussion, not fact.
+- News and filings are source evidence, but extracted claims still require provenance.
+- Raw TimesFM is a technical signal only; fine-tuned TimesFM is retired.
+- SQLite stores operational state and indexes artifacts; large payloads remain on disk.
 
-## Contract Modules
+## Instrument
 
-- `contracts.base`: common Pydantic base, ticker symbols, confidence, score, and JSON aliases.
-- `contracts.enums`: stable enum taxonomy for providers, warnings, sources, instruments,
-  horizons, risk profiles, and recommendation actions.
-- `contracts.provenance`: `SourceProvenance`, `ProviderHealth`, `ProviderWarning`,
-  `EvidenceReference`, and `DataReference`.
-- `contracts.discovery`: Devvit ticker-card candidates and `TickerDiscoveryResult`.
-- `contracts.evidence`: normalized external evidence records.
-- `contracts.extraction`: evidence-backed strategy extractions and clusters.
-- `contracts.analysis`: technical, ML sidecar, fundamental, sector, macro, and combined analysis
-  contracts.
-- `contracts.recommendation`: score, risk, and `TradeCandidate` contracts.
-- `contracts.report`: Markdown/JSON report spine, report evidence-source map, and audit manifest
-  contracts.
-- `contracts.providers`: provider request/result envelopes and provider protocols only.
-- `contracts.fixtures`: raw and normalized fixture manifests.
+An instrument record should identify what the app is researching.
 
-## Provider Semantics
+Required concepts:
 
-Every provider method returns `ProviderResult[T]`. Expected provider or upstream failures should
-be represented as `ProviderStatus`, `ProviderWarning`, and nullable `data`, not raised exceptions.
-Exceptions are reserved for programmer errors or invalid contract usage.
+- canonical symbol or identifier;
+- display name;
+- asset class;
+- venue or provider namespace;
+- aliases;
+- related instruments;
+- tradability evidence;
+- data availability;
+- sector, category, or theme when applicable.
 
-Provider contracts return normalized facts, evidence, candles, metrics, and series only. They do
-not return `TechnicalAnalysis`, `FundamentalAnalysis`, `SectorContext`, `MacroContext`, or other
-Lane D analysis outputs.
+Ambiguous symbols must not resolve silently.
 
-`ProviderResult[T]` requires the result provider/status to match its `ProviderHealth`, requires data
-for `ok` results, and requires at least one warning for non-`ok` results. Warning provider names
-must be absent or match the result provider. `empty` results must not carry data and must include a
-`no_data` warning.
+## Tool Run
 
-All normalized external data carries `SourceProvenance` with provider name, source kind,
-retrieval method, fetched timestamp, source URL or permalink when available, raw identifier,
-raw snapshot ID, freshness status, cache key, query, and provider metadata.
-Metadata fields must be JSON-serializable.
-External provenance must include a source URL or permalink, raw identifier, raw snapshot ID, explicit
-freshness status, and timezone-aware timestamps. Internal/derived analysis provenance is the explicit
-exception.
+Every tool invocation should produce a run record:
 
-Frozen warning codes are:
+- tool name and version;
+- input parameters;
+- started and completed timestamps;
+- status;
+- warnings and errors;
+- artifact paths;
+- artifact hashes;
+- provider metadata where applicable.
 
-- `missing_credentials`
-- `auth_failed`
-- `rate_limited`
-- `quota_exceeded`
-- `timeout`
-- `upstream_unavailable`
-- `malformed_response`
-- `schema_mismatch`
-- `scraping_drift`
-- `stale_data`
-- `no_data`
-- `partial_data`
-- `llm_schema_invalid`
-- `llm_evidence_mismatch`
-- `unsupported_claim`
+Tool failures should be reportable and should not corrupt prior artifacts.
 
-## Evidence And Recommendation Invariants
+## Evidence Item
 
-- Valid ticker discovery requires exactly six unique tickers in first-seen order.
-- Invalid ticker discovery results must include warnings.
-- Strategy extractions and clusters must cite normalized evidence.
-- High sarcasm/joke risk and conflicting source evidence must be surfaced as extraction/cluster
-  warnings and must not qualify silently as clean trade candidates.
-- Evidence quote spans must be monotonic when both start and end offsets are provided.
-- Score breakdowns must include at least one component.
-- TimesFM ML sidecars may contribute only through the technical-analysis score component. Weak,
-  stale, unavailable, wide-interval, underqualified, or conflicting TimesFM sidecars must be
-  recorded as penalties and failed score gates rather than recommendation support.
-- TimesFM cannot be the sole reason a candidate qualifies; a candidate that only crosses the score
-  threshold because of the TimesFM technical adjustment must remain watch-only.
-- Actionable trade candidates must cite evidence and include score, risk, and invalidation
-  details.
-- Qualified trade candidates must pass risk gates, have no failed risk or score gates, and meet or
-  exceed the configured score threshold.
-- Reports must include exactly six ticker sections matching ticker discovery order.
-- Reports may include `evidence_sources`; when present, every cited evidence ID in ticker sections,
-  strategy clusters, analysis components, trade candidates, and score inputs must resolve to a
-  normalized evidence source with provenance.
-- Reports without trade candidates must include a summary explaining that no qualified opportunity was found.
-- Report trade candidates must use discovered tickers, have unique candidate IDs, and be
-  referenced by exactly one matching ticker section.
-- Valid ticker discovery must include candidate records and a raw snapshot ID.
+Evidence items capture source claims or observations.
 
-## Phase 1 Contract Harness
+Required concepts:
 
-The Phase 1 harness covers:
+- source type;
+- provider;
+- URL or permalink when available;
+- query or request used;
+- retrieved timestamp;
+- published timestamp when available;
+- referenced instruments;
+- extracted claim;
+- confidence in extraction;
+- source reliability notes;
+- freshness status;
+- artifact link.
 
-- Public contract imports and `__all__` re-export stability.
-- Pydantic schema invariants for provenance, evidence, extraction, analysis, scoring,
-  recommendations, reports, and fixture manifests.
-- CLI parser and module-entrypoint behavior for the canonical `python -m nlp_stock_prediction`
-  invocation.
-- Deterministic fake-provider protocol behavior for Reddit, X/social, news, market data,
-  fundamentals, macro, and LLM extraction adapters.
-- Daily report shape, including six ticker sections, summaries for reports where nothing
-  qualifies, provider health, data freshness, audit manifests, and JSON round trips.
-- Minimal Markdown report outline, including required header, freshness, provider warnings,
-  per-ticker subsections, final qualified-strategy section or a section explaining that nothing
-  qualified, and audit artifact sections.
+Evidence must support deduplication across repeated searches and providers.
 
-## Fixture Shape
+## Prediction Candidate
 
-Fixture manifests are modeled in `contracts.fixtures`. Later tests should store fixtures under
-`tests/fixtures/` with raw provider snapshots, normalized provider results, evidence,
-extraction, analysis, scoring, and expected report artifacts separated by scenario.
-Manifest scenarios must match nested raw and normalized fixture scenarios, and raw fixture request
-dates must match the manifest run date.
+`PredictionCandidate` is the central product object.
 
-Core scenario names to use first:
+Required concepts:
 
-- `normal_six_ticker_day`
-- `duplicate_tickers_in_devvit_card`
-- `malformed_reddit_html`
-- `partial_provider_outage`
-- `missing_credentials`
-- `rate_limited_provider`
-- `stale_market_data`
-- `conflicting_signals`
-- `unsupported_llm_claim`
-- `llm_sarcasm_or_joke_risk`
-- `no_qualified_trade`
-- `qualified_stock_idea`
-- `qualified_defined_risk_options_idea`
+- candidate ID;
+- instrument;
+- prediction horizon;
+- prediction type;
+- scenario or outcome;
+- direction or state, if applicable;
+- confidence;
+- evidence for;
+- evidence against;
+- signal artifacts;
+- baseline comparison;
+- uncertainty;
+- freshness;
+- contradictions;
+- report status.
 
-## Phase Boundary
+Report status should distinguish high-confidence, moderate-confidence, watchlist, insufficient
+evidence, and rejected candidates without implying trade execution.
 
-Phase 0 and Phase 1 are complete, Phase 2 implementation lanes have been integrated, Phase 3 local
-V1 acceptance is complete, the follow-on opt-in live scrape orchestration path has been merged, and
-Phase 4 local TimesFM technical-analysis acceptance is recorded in
-`plans/timesfm-technical-analysis.md`. The TimesFM evaluation artifact includes both rolling
-holdout metrics and the latest trained-adapter forward forecast used by the report sidecar. Shared
-public contracts should stay stable unless a single-threaded contract revision is recorded in a new
-active plan.
+## Technical Package
+
+The technical package should combine cheap deterministic indicators with raw model context.
+
+Required concepts:
+
+- OHLCV data provenance;
+- latest usable bar;
+- deterministic indicators;
+- baselines;
+- raw TimesFM metrics when available;
+- uncertainty and interval width when available;
+- agreement or disagreement with the candidate scenario;
+- warnings;
+- artifact hash.
+
+Technical signals can support or weaken a prediction. They must not create reportable predictions by
+themselves.
+
+## Report
+
+Reports should include:
+
+- objective or prompt;
+- universe;
+- run metadata;
+- prediction candidates;
+- evidence for and against;
+- confidence and uncertainty;
+- source links;
+- artifact references;
+- unavailable or stale data warnings;
+- what would change the prediction.
+
+Markdown and JSON reports should carry the same substantive information.
+
+## Planning State
+
+Active plans belong in SQLite once implemented. Planning contracts should include:
+
+- plan;
+- milestone;
+- acceptance criterion;
+- decision;
+- progress event;
+- blocker;
+- open question;
+- linked artifact;
+- linked commit.
+
+`AGENTS.md` and `PLANS.md` are immutable by default and should be changed only on explicit user
+request.
