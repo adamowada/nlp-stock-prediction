@@ -39,7 +39,10 @@ python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 ```
 
-Do not treat TimesFM tuning commands as part of the product workflow.
+Codex shell calls do not inherit a virtual environment activated in the user's separate terminal.
+On Windows, activate the repo venv inside each shell command before using bare `python`, for example
+`. .\.venv\Scripts\Activate.ps1; python -m pytest`, or call the interpreter directly with
+`.\.venv\Scripts\python.exe`.
 
 Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is
 introduced.
