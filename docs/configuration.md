@@ -26,6 +26,17 @@ Generate the deterministic offline report:
 python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 ```
 
+Run the optional Phase 2 real-Codex smoke after installing the MCP extra:
+
+```sh
+python -m pip install -e ".[dev,codex-smoke]"
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py --date 2026-05-13 --output reports/phase2-codex-smoke --symbol TSLA
+```
+
+The smoke command launches `codex --search` against the local
+`python -m nlp_stock_prediction.codex_mcp` server. It may use live web search, but it writes only
+ignored local artifacts.
+
 ## Local Storage
 
 Use these conventions:
@@ -82,6 +93,7 @@ Expected variable families:
 
 ```text
 OPENAI_API_KEY
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE
 X_BEARER_TOKEN
 REDDIT_CLIENT_ID
 REDDIT_CLIENT_SECRET

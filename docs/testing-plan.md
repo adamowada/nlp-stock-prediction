@@ -10,6 +10,7 @@ The default suite must be deterministic and offline.
 ```sh
 python -m pytest
 python -m pytest -m "not live_api and not live_scraping"
+python -m pytest -m "not live_api and not live_scraping and not codex_smoke"
 ruff check .
 ruff format --check .
 mypy .
@@ -111,6 +112,13 @@ End-to-end tests should run fixture-backed research objectives:
 - stale-provider outcome;
 - broad-universe cheap screen;
 - single-instrument deep dive.
+
+### Codex Smoke
+
+The Phase 2 Codex smoke is opt-in because it launches the real Codex CLI and may use live web
+search. Mark tests with `codex_smoke` and skip unless `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1` and
+the `codex-smoke` extra is installed. The smoke path must write only ignored artifacts and must not
+modify tracked source files.
 
 ## Negative Cases
 

@@ -9,6 +9,7 @@ from nlp_stock_prediction.orchestration.dummy import (
     build_dummy_tool_registry,
     generate_dummy_report_bundle,
 )
+from nlp_stock_prediction.orchestration.phase2_service import Phase2McpService
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationState,
     StagedExecutionResult,
@@ -29,6 +30,7 @@ __all__ = [
     "ArtifactWriter",
     "OrchestrationState",
     "OrchestrationTool",
+    "Phase2McpService",
     "ReportBundle",
     "RunContext",
     "StagedExecutionResult",

@@ -95,6 +95,15 @@ Generate the deterministic offline report:
 python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 ```
 
+Phase 2 also includes an opt-in real Codex smoke path. It exposes the dummy research tools through a
+local MCP server, lets Codex use live web search, and writes only ignored artifacts under `reports/`,
+`artifacts/`, `data/`, or `cache/`:
+
+```sh
+python -m pip install -e ".[dev,codex-smoke]"
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py --date 2026-05-13 --output reports/phase2-codex-smoke --symbol TSLA
+```
+
 ## SQLite
 
 The project uses two local SQLite databases:
