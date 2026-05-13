@@ -11,11 +11,13 @@ from typing import Any
 
 import pytest
 
+from nlp_stock_prediction.orchestration import codex_smoke
+
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "run_phase2_codex_smoke.py"
 REPO_ROOT = SCRIPT_PATH.parents[1]
 
 
-def _load_smoke_module() -> Any:
+def _load_script_module() -> Any:
     spec = importlib.util.spec_from_file_location("run_phase2_codex_smoke", SCRIPT_PATH)
     assert spec is not None
     assert spec.loader is not None
@@ -27,7 +29,7 @@ def _load_smoke_module() -> Any:
 
 @pytest.mark.unit
 def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> None:
-    smoke = _load_smoke_module()
+    smoke = codex_smoke
     config = smoke.CodexSmokeConfig(
         run_date=date(2026, 5, 13),
         output_dir=tmp_path / "reports",
@@ -41,6 +43,7 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
 
     assert command[:4] == ["codex", "--ask-for-approval", "never", "--search"]
     assert "mcp_servers.nlp-stock-prediction.command" in rendered
+    assert "-B" in rendered
     assert "nlp_stock_prediction.codex_mcp" in rendered
     assert "--repo-root" in rendered
     assert "--database" in rendered
@@ -55,7 +58,7 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
 
 @pytest.mark.unit
 def test_codex_smoke_output_verification_requires_search_evidence(tmp_path: Path) -> None:
-    smoke = _load_smoke_module()
+    smoke = codex_smoke
     config = smoke.CodexSmokeConfig(
         run_date=date(2026, 5, 13),
         output_dir=tmp_path / "reports",
@@ -118,7 +121,7 @@ def test_codex_smoke_output_verification_requires_search_evidence(tmp_path: Path
 
 @pytest.mark.unit
 def test_codex_smoke_prepares_clean_ignored_run_dir(tmp_path: Path) -> None:
-    smoke = _load_smoke_module()
+    smoke = codex_smoke
     config = smoke.CodexSmokeConfig(
         run_date=date(2026, 5, 13),
         output_dir=tmp_path / "reports" / "phase2-codex-smoke",
@@ -130,7 +133,7 @@ def test_codex_smoke_prepares_clean_ignored_run_dir(tmp_path: Path) -> None:
     stale.parent.mkdir(parents=True)
     stale.write_text('{"stale": true}\n', encoding="utf-8")
 
-    smoke._prepare_clean_run_dir(config)
+    smoke.prepare_clean_run_dir(config)
 
     assert config.run_dir.exists()
     assert not stale.exists()
@@ -143,12 +146,12 @@ def test_codex_smoke_prepares_clean_ignored_run_dir(tmp_path: Path) -> None:
         python_executable=Path("python"),
     )
     with pytest.raises(RuntimeError, match="outside ignored roots"):
-        smoke._prepare_clean_run_dir(unsafe)
+        smoke.prepare_clean_run_dir(unsafe)
 
 
 @pytest.mark.unit
 def test_codex_smoke_prepares_isolated_database(tmp_path: Path) -> None:
-    smoke = _load_smoke_module()
+    smoke = codex_smoke
     config = smoke.CodexSmokeConfig(
         run_date=date(2026, 5, 13),
         output_dir=tmp_path / "reports" / "phase2-codex-smoke",
@@ -161,7 +164,7 @@ def test_codex_smoke_prepares_isolated_database(tmp_path: Path) -> None:
     database_path.write_text("stale\n", encoding="utf-8")
     database_path.with_name(f"{database_path.name}-wal").write_text("stale\n", encoding="utf-8")
 
-    smoke._prepare_clean_database(config)
+    smoke.prepare_clean_database(config)
 
     assert not database_path.exists()
     assert not database_path.with_name(f"{database_path.name}-wal").exists()
@@ -169,7 +172,7 @@ def test_codex_smoke_prepares_isolated_database(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_codex_smoke_uses_safe_symbol_slug_for_database_and_run_id(tmp_path: Path) -> None:
-    smoke = _load_smoke_module()
+    smoke = codex_smoke
     config = smoke.CodexSmokeConfig(
         run_date=date(2026, 5, 13),
         output_dir=tmp_path / "reports" / "phase2-codex-smoke",
@@ -179,12 +182,12 @@ def test_codex_smoke_uses_safe_symbol_slug_for_database_and_run_id(tmp_path: Pat
     )
 
     assert config.database_arg_path == Path("data/phase2-codex-smoke-2026-05-13-btc-usd.sqlite3")
-    assert smoke._expected_run_id(config) == "codex-smoke-2026-05-13-btc-usd"
+    assert smoke.expected_run_id(config) == "codex-smoke-2026-05-13-btc-usd"
 
 
 @pytest.mark.unit
 def test_codex_smoke_detects_restricted_ignored_file_changes(tmp_path: Path) -> None:
-    smoke = _load_smoke_module()
+    smoke = codex_smoke
     (tmp_path / ".env").write_text("before=true\n", encoding="utf-8")
     (tmp_path / "reports").mkdir()
 
@@ -202,7 +205,7 @@ def test_codex_smoke_disables_bytecode_writes_for_subprocess(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    smoke = _load_smoke_module()
+    smoke = codex_smoke
     config = smoke.CodexSmokeConfig(
         run_date=date(2026, 5, 13),
         output_dir=tmp_path / "reports" / "phase2-codex-smoke",
@@ -218,13 +221,22 @@ def test_codex_smoke_disables_bytecode_writes_for_subprocess(
         return subprocess.CompletedProcess(args=["codex"], returncode=0)
 
     monkeypatch.setenv("NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE", "1")
-    monkeypatch.setattr(smoke.shutil, "which", lambda _name: "codex")
-    monkeypatch.setattr(smoke.importlib.util, "find_spec", lambda _name: object())
-    monkeypatch.setattr(smoke, "_prepare_clean_run_dir", lambda _config: None)
-    monkeypatch.setattr(smoke, "_prepare_clean_database", lambda _config: None)
+    monkeypatch.setattr(
+        "nlp_stock_prediction.orchestration.codex_smoke.shutil.which",
+        lambda _name: "codex",
+    )
+    monkeypatch.setattr(
+        "nlp_stock_prediction.orchestration.codex_smoke.importlib.util.find_spec",
+        lambda _name: object(),
+    )
+    monkeypatch.setattr(smoke, "prepare_clean_run_dir", lambda _config: None)
+    monkeypatch.setattr(smoke, "prepare_clean_database", lambda _config: None)
     monkeypatch.setattr(smoke, "require_clean_tracked_status", lambda _repo_root: "")
     monkeypatch.setattr(smoke, "snapshot_restricted_paths", lambda _repo_root: {})
-    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "nlp_stock_prediction.orchestration.codex_smoke.subprocess.run",
+        fake_run,
+    )
     monkeypatch.setattr(smoke, "verify_smoke_outputs", lambda _config: None)
     monkeypatch.setattr(smoke, "ensure_tracked_status_unchanged", lambda *_args: None)
     monkeypatch.setattr(smoke, "ensure_restricted_paths_unchanged", lambda *_args: None)
@@ -243,7 +255,7 @@ def test_phase2_real_codex_smoke_runner_is_opt_in() -> None:
     if importlib.util.find_spec("mcp") is None:
         pytest.skip('Install the optional smoke extra: python -m pip install -e ".[codex-smoke]"')
 
-    smoke = _load_smoke_module()
+    smoke = _load_script_module()
     exit_code = smoke.main(
         [
             "--date",

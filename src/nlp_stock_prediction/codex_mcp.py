@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from nlp_stock_prediction.orchestration.phase2_mcp_registration import register_phase2_mcp_tools
 from nlp_stock_prediction.orchestration.phase2_service import Phase2McpService
 
 
@@ -29,89 +30,7 @@ def build_server(repo_root: Path | None = None, database_path: Path | None = Non
     )
     server = FastMCP("nlp-stock-prediction")
 
-    def start_research_run(
-        run_date: str,
-        output_dir: str,
-        symbol: str,
-        objective: str | None = None,
-    ) -> dict[str, object]:
-        """Start a Phase 2 smoke research run and return run paths."""
-
-        return dict(
-            service.start_research_run(
-                run_date=run_date,
-                output_dir=output_dir,
-                symbol=symbol,
-                objective=objective,
-            )
-        )
-
-    def list_research_tool_plan() -> dict[str, object]:
-        """List the staged dummy tools Codex should call for Phase 2 smoke."""
-
-        return dict(service.list_research_tool_plan())
-
-    def record_codex_search_evidence(
-        run_id: str,
-        symbol: str,
-        title: str,
-        url: str,
-        claim: str,
-        query: str,
-        published_at: str | None = None,
-        stance: str | None = None,
-    ) -> dict[str, object]:
-        """Record one live-search source as normalized evidence.
-
-        stance may be supports, contradicts, or neutral relative to the candidate thesis.
-        """
-
-        return dict(
-            service.record_codex_search_evidence(
-                run_id=run_id,
-                symbol=symbol,
-                title=title,
-                url=url,
-                claim=claim,
-                query=query,
-                published_at=published_at,
-                stance=stance,
-            )
-        )
-
-    def run_dummy_universe_tool(run_id: str, symbol: str) -> dict[str, object]:
-        """Write deterministic dummy instrument-universe artifacts."""
-
-        return dict(service.run_dummy_universe_tool(run_id=run_id, symbol=symbol))
-
-    def run_dummy_analysis_tool(run_id: str, symbol: str) -> dict[str, object]:
-        """Write deterministic dummy analysis artifacts."""
-
-        return dict(service.run_dummy_analysis_tool(run_id=run_id, symbol=symbol))
-
-    def synthesize_prediction_candidates(run_id: str, symbol: str) -> dict[str, object]:
-        """Synthesize conservative prediction candidates from stored evidence."""
-
-        return dict(service.synthesize_prediction_candidates(run_id=run_id, symbol=symbol))
-
-    def render_prediction_report(run_id: str, symbol: str) -> dict[str, object]:
-        """Render Markdown, JSON, and audit manifest files."""
-
-        return dict(service.render_prediction_report(run_id=run_id, symbol=symbol))
-
-    def inspect_research_run(run_id: str) -> dict[str, object]:
-        """Inspect stored run graph counts for smoke verification."""
-
-        return dict(service.inspect_research_run(run_id=run_id))
-
-    server.tool()(start_research_run)
-    server.tool()(list_research_tool_plan)
-    server.tool()(record_codex_search_evidence)
-    server.tool()(run_dummy_universe_tool)
-    server.tool()(run_dummy_analysis_tool)
-    server.tool()(synthesize_prediction_candidates)
-    server.tool()(render_prediction_report)
-    server.tool()(inspect_research_run)
+    register_phase2_mcp_tools(server, service)
     return server
 
 
