@@ -62,7 +62,7 @@ def register_phase2_mcp_tools(server: Any, service: Phase2McpService) -> None:
         )
 
     def run_dummy_universe_tool(run_id: str, symbol: str) -> dict[str, object]:
-        """Write deterministic dummy instrument-universe artifacts."""
+        """Write deterministic Phase 3 fixture instrument-universe artifacts."""
 
         return dict(service.run_dummy_universe_tool(run_id=run_id, symbol=symbol))
 
