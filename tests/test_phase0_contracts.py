@@ -214,22 +214,18 @@ def test_json_contracts_reject_non_serializable_metadata() -> None:
 
 
 @pytest.mark.unit
-def test_cli_run_contract_parses_canonical_options_and_generates_report(
+def test_cli_research_contract_parses_canonical_options_and_generates_report(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     output_dir = tmp_path / "reports"
     parser = build_parser()
     args = parser.parse_args(
         [
-            "run",
+            "research",
             "--date",
             "2026-05-11",
             "--output",
             str(output_dir),
-            "--capital",
-            "1000",
-            "--risk-profile",
-            "exploratory",
             "--offline",
         ]
     )
@@ -237,13 +233,11 @@ def test_cli_run_contract_parses_canonical_options_and_generates_report(
     assert args.run_date == date(2026, 5, 11)
     exit_code = main(
         [
-            "run",
+            "research",
             "--date",
             "2026-05-11",
             "--output",
             str(output_dir),
-            "--capital",
-            "1000",
             "--offline",
         ]
     )

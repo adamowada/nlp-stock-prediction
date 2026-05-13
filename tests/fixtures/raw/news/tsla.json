@@ -8,12 +8,12 @@
         "name": "Example Markets"
       },
       "author": "Fixture Reporter",
-      "title": "Tesla shares rise after robotaxi update",
-      "description": "Tesla shares rose Monday after a robotaxi product update.",
+      "title": "TSLA shares rise after robotaxi update",
+      "description": "TSLA shares rose Monday after a robotaxi product update.",
       "url": "https://news.example.invalid/tesla-robotaxi",
       "urlToImage": "https://news.example.invalid/images/tesla.jpg",
       "publishedAt": "2026-05-11T14:30:00Z",
-      "content": "Tesla shares rose Monday after a robotaxi product update, with traders watching near-term catalysts."
+      "content": "TSLA shares rose Monday after a robotaxi product update, with traders watching near-term catalysts."
     }
   ]
 }

@@ -1,3 +1,3 @@
-"""Concrete provider adapters for Phase 2 implementation lanes."""
+"""Concrete provider adapters for research implementation lanes."""
 
 __all__: list[str] = []

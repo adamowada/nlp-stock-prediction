@@ -1,4 +1,4 @@
-"""Strategy extraction helpers for Lane C."""
+"""Strategy extraction helpers."""
 
 from nlp_stock_prediction.extraction.clustering import cluster_strategies
 from nlp_stock_prediction.extraction.fixture import FixtureLLMExtractor

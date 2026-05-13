@@ -1,10 +1,16 @@
-"""Optional Google TimesFM 2.5 helpers.
+"""Optional raw TimesFM 2.5 inference helpers.
 
-This package must stay importable without Torch, Transformers, PEFT, or Hugging Face dependencies
-installed. Heavy dependencies are imported inside command/runtime functions only.
+This package stays importable without Torch, Transformers, or Hugging Face dependencies installed.
+Heavy dependencies are imported inside command/runtime functions only.
 """
 
+from nlp_stock_prediction.ml.timesfm.contracts import (
+    TimesFmForecastArtifact,
+    TimesFmForecastStatus,
+    TimesFmQuantileForecast,
+)
 from nlp_stock_prediction.ml.timesfm.dataset import (
+    ResolvedTargetField,
     TimesFmDataset,
     TimesFmDatasetConfig,
     TimesFmWindow,
@@ -12,14 +18,12 @@ from nlp_stock_prediction.ml.timesfm.dataset import (
 )
 
 __all__ = [
+    "ResolvedTargetField",
     "TimesFmDataset",
     "TimesFmDatasetConfig",
+    "TimesFmForecastArtifact",
+    "TimesFmForecastStatus",
+    "TimesFmQuantileForecast",
     "TimesFmWindow",
-    "adapter",
-    "artifacts",
     "build_timesfm_dataset",
-    "contracts",
-    "evaluate",
-    "smoke",
-    "train",
 ]

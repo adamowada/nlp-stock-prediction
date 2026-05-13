@@ -45,8 +45,8 @@ type NonEmptyStr = Annotated[
 ]
 type Confidence = Annotated[float, Field(ge=0.0, le=1.0)]
 type Score = Annotated[float, Field(ge=0.0, le=1.0)]
-type PositiveInt = Annotated[int, Field(ge=0)]
-type PositiveDecimal = Annotated[Decimal, Field(ge=Decimal("0"))]
+type PositiveInt = Annotated[int, Field(gt=0)]
+type PositiveDecimal = Annotated[Decimal, Field(gt=Decimal("0"))]
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 type JsonObject = dict[str, JsonValue]
 

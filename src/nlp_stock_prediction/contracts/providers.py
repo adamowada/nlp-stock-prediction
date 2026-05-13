@@ -19,7 +19,6 @@ from nlp_stock_prediction.contracts.base import (
 from nlp_stock_prediction.contracts.discovery import TickerDiscoveryResult
 from nlp_stock_prediction.contracts.enums import (
     ProviderStatus,
-    RiskProfile,
     TimeHorizon,
     WarningCode,
 )
@@ -109,17 +108,14 @@ class ProviderResult[T](ContractModel):
 
 
 class RunConfig(ContractModel):
-    """CLI run configuration contract."""
+    """CLI research report configuration contract."""
 
     run_date: date
     output_dir: Path
-    capital: Decimal | None = Field(default=None, ge=Decimal("0"))
-    risk_profile: RiskProfile = RiskProfile.EXPLORATORY
     fixture_dir: Path | None = None
     cache_dir: Path | None = None
-    ml_artifact: Path | None = None
     offline: bool = False
-    source_mode: Literal["disabled", "offline", "scrape"] = "disabled"
+    source_mode: Literal["disabled", "offline"] = "disabled"
     live_providers: bool = False
 
 

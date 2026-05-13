@@ -1,82 +1,106 @@
 # AGENTS.md
 
-## Project overview
+## Project Overview
 
-This project is a TDD-first Python CLI application for generating a daily, evidence-grounded stock opportunity report for a retail trader with a small account.
+This project is a TDD-first Python CLI application being rebuilt into a Codex-led prediction research
+assistant.
 
-The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI supports deterministic `--offline`, fixture-backed `--source-mode scrape`, and explicit opt-in live provider evidence collection with `--source-mode scrape --live-providers`; live provider runs currently collect evidence and audit metadata only and do not generate live recommendations. Phase 4 local TimesFM 2.5 technical analysis is complete on the Windows RTX 3090 path; use [plans/timesfm-technical-analysis.md](plans/timesfm-technical-analysis.md) as the acceptance record and [docs/configuration.md](docs/configuration.md) for the user workflow. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
+The product is not a trading app. It must not place trades, size positions, or frame output as
+instructions to buy or sell. Its job is to generate evidence-backed prediction reports. Reports may
+describe bullish, bearish, neutral, volatile, uncertain, or insufficient-evidence scenarios, but every
+claim must be grounded in sources, tool artifacts, assumptions, uncertainty, and baseline context.
 
-The project should favor correctness, traceability, and testability over speed of adding features. Any generated recommendation must preserve its source evidence, assumptions, risks, and confidence inputs.
+The redesigned app centers on a Codex agent. The agent's two responsibilities are:
 
-See [docs/multi-milestone-plan.md](docs/multi-milestone-plan.md) for the product milestone plan and [docs/testing-plan.md](docs/testing-plan.md) for the testing strategy.
+- call independent research tools and inspect their artifacts;
+- synthesize the output into Markdown/JSON prediction reports.
 
-## Common commands
+The app should support any retail-accessible instrument class when data is available: stocks, ETFs,
+crypto, currencies, commodities, futures context, and related proxy instruments. Tradability must be
+represented with source provenance and availability constraints, not hardcoded assumptions.
 
-Use the repository's configured commands. Expected commands are:
+TimesFM tuning is not part of the product workflow. Raw TimesFM may remain as one cheap technical signal inside a broader
+technical package, but it must not become the product center of gravity.
+
+See [docs/architecture.md](docs/architecture.md), [docs/contracts.md](docs/contracts.md),
+[docs/roadmap.md](docs/roadmap.md), and [docs/testing-plan.md](docs/testing-plan.md).
+
+## Common Commands
+
+Use the repository's configured commands:
 
 ```sh
 python -m pytest
 python -m pytest -m "not live_api and not live_scraping"
-python -m pytest tests/test_lane_d_scoring.py tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py tests/test_timesfm_evaluation.py tests/test_timesfm_report_integration.py
 ruff check .
 ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
-python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
-python -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json
-python -m nlp_stock_prediction.ml.timesfm.train --synthetic --ticker TSLA --device cuda --output-dir artifacts/ml/timesfm-train-smoke --epochs 1 --max-steps 1 --batch-size 1 --validation-batches 1
-python -m nlp_stock_prediction.ml.timesfm.evaluate --synthetic --ticker TSLA --model-dir artifacts/ml/timesfm-train-smoke --device cuda --output artifacts/ml/timesfm-eval-smoke/evaluation.json --max-windows 1 --min-evaluation-windows 1
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/timesfm-eval-smoke/evaluation.json
+python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 ```
 
-Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is introduced.
+Do not treat TimesFM tuning commands as part of the product workflow.
 
-If the final project uses a task runner, keep this section updated with the canonical commands.
+Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is
+introduced.
 
-## Coding rules
+## Coding Rules
 
-- Prefer simple, typed Python modules with small provider interfaces and Pydantic models at API boundaries.
-- Keep source adapters separate from analysis logic, recommendation scoring, and report rendering.
-- Use structured parsers or typed clients where available; avoid ad hoc string parsing except for tightly scoped extraction rules covered by tests.
-- Preserve source provenance for all external data, including provider name, fetched timestamp, permalink or source URL, raw identifier, and freshness.
-- Do not present Reddit, X/Twitter, or news discussion as fact without attribution.
-- Keep secrets out of the repo. Load API keys from environment variables or local `.env` files that are ignored by git.
-- Make external calls through provider adapters so tests can use fixtures and mocks without network access.
-- Handle rate limits, partial provider failures, and stale data explicitly.
+- Prefer simple, typed Python modules with small interfaces and Pydantic models at API boundaries.
+- Keep source adapters, tool execution, artifact writing, prediction scoring, and report rendering
+  separate.
+- Preserve provenance for all external data: provider, query, URL/permalink, retrieved timestamp,
+  published timestamp when available, raw identifier, freshness, and extraction confidence.
+- Separate observed claims from the app's analysis. Reddit, X/Twitter, forums, news, filings, and web
+  pages are evidence sources, not automatically true statements.
+- Make internet and live-provider calls through explicit adapters or Codex browsing/search paths that
+  write evidence records.
+- Keep secrets out of the repo. Load API keys from environment variables or ignored `.env` files.
+- Handle rate limits, partial failures, stale data, missing providers, and contradictory evidence
+  explicitly.
+- Store large raw payloads and generated artifacts on disk. Store planning records in the tracked
+  planning SQLite database, and store runtime research metadata in the ignored research SQLite
+  database.
+- Avoid data visualizations unless the user explicitly asks to revisit them.
 - Use clear names and concise comments only where the code's intent is not obvious.
+- Perform your own code review on the code you write and fix all issues.
+- ACP (add commit push) to the current branch once coding and the code review is complete.
 
-## Testing rules
+## Testing Rules
 
-- Follow the testing strategy in [docs/testing-plan.md](docs/testing-plan.md).
+- Follow [docs/testing-plan.md](docs/testing-plan.md).
 - Write tests before or alongside behavior changes.
-- Unit test ticker extraction, ticker matching, evidence normalization, strategy extraction schema validation, clustering, scoring, and report rendering.
-- Use recorded fixtures for provider contract tests, plus separately marked live API and live scraping tests for dependency coverage.
-- Keep the default fast suite deterministic; run live dependency tests explicitly or in scheduled CI with the required credentials, network access, and quota controls.
-- End-to-end tests should include fixture-backed report generation plus separate opt-in live provider smoke coverage when the needed external dependencies are configured.
-- Include negative tests for malformed HTML, duplicate or insufficient tickers, missing provider
-  data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
-  recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
-  ticker false positives.
-- Any recommendation logic change must include tests for days with no qualified strategies, conflicting evidence, and at least one qualified strategy.
+- Keep the default fast suite deterministic, offline, and independent of optional GPU/model packages.
+- Use fixtures and mocks for provider/tool contracts.
+- Mark live API and live scraping tests explicitly and require opt-in credentials/network access.
+- Include negative tests for stale evidence, unavailable providers, malformed pages, unsupported
+  instruments, ambiguous symbols, contradictory evidence, insufficient evidence, and source claims that
+  cannot be attributed.
+- Any prediction scoring change must test no-evidence, conflicting-evidence, and evidence-supported
+  outcomes.
+- SQLite schema changes must include migration/idempotency tests and round-trip tests.
 
-## Planning rules
+## Planning Rules
 
-- Use [docs/multi-milestone-plan.md](docs/multi-milestone-plan.md) as the current product roadmap.
-- Use `PLANS.md` for complex tasks involving multiple modules, API/provider changes, risky behavior changes, or work that may span sessions.
-- Store execution plans in `plans/`.
-- Make plans decision-complete before implementation: include goal, non-goals, context, milestones, acceptance criteria, verification commands, decision log, and progress log.
-- Update the progress log as meaningful work is completed or new blockers are discovered.
-- Record notable product, architecture, provider, and risk-policy choices in the decision log with a timestamp.
-- Keep implementation scoped to the active plan unless the user explicitly expands the task.
+- `AGENTS.md` and `PLANS.md` are immutable by default. Edit them only when the user specifically asks.
+- Active planning state belongs in `plans/planning.sqlite3`, which is tracked in git. Use the typed
+  storage interface described in `PLANS.md`.
+- Use in-thread plans and task checklists for short-lived turn coordination, but do not add new
+  Markdown plans unless the user explicitly asks.
+- Source-of-truth docs remain Markdown: README, AGENTS, PLANS, and files under `docs/`.
+- Keep docs aligned with implemented behavior. If a doc describes target behavior, label it clearly as
+  target architecture or roadmap rather than available functionality.
+- Record major product, architecture, provider, and risk-policy decisions in structured planning state
+  once available.
 
-## Definition of done
+## Definition Of Done
 
 - The requested behavior is implemented and covered by focused tests.
-- Existing tests pass, and relevant lint/typecheck/build commands pass where applicable.
-- Generated reports preserve evidence, provider metadata, and confidence inputs.
-- External provider failures degrade gracefully and are visible in the report or logs.
-- Documentation is updated when commands, configuration, behavior, or report structure changes.
-- No secrets, raw credentials, or unrelated generated artifacts are committed.
-- The final response summarizes what changed, how it was verified, and any remaining risks or follow-up work.
+- Existing relevant tests pass, and relevant lint/typecheck/build commands pass where applicable.
+- Generated prediction reports preserve evidence, provider metadata, tool artifacts, confidence
+  inputs, uncertainty, and dissenting context.
+- External provider failures degrade gracefully and are visible in artifacts and reports.
+- SQLite writes are deterministic, idempotent where appropriate, and covered by tests.
+- Documentation is updated when commands, configuration, behavior, contracts, or report structure
+  changes.
+- No secrets, raw credentials, unrelated generated artifacts, or stale planning files are committed.

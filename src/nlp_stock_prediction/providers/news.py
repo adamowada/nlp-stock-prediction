@@ -250,6 +250,8 @@ class PublicNewsProvider:
             )
             combined_text = f"{title or ''} {text}"
             matched_tickers, spans = find_ticker_matches(combined_text, request.tickers)
+            if request.tickers and not matched_tickers:
+                continue
             source = raw_article.get("source")
             source_name = source.get("name") if isinstance(source, dict) else None
             raw_identifier = article_url or f"{self.provider_name}:{index}:{stable_hash(text)}"
@@ -257,7 +259,7 @@ class PublicNewsProvider:
                 SourceEvidence(
                     evidence_id=f"news:{stable_hash(raw_identifier, length=24)}",
                     source_kind=SourceKind.NEWS_ARTICLE,
-                    ticker=matched_tickers[0] if matched_tickers else first_ticker(request),
+                    ticker=matched_tickers[0] if matched_tickers else None,
                     title=title,
                     text=text,
                     author_hash=None,

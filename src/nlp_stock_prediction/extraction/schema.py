@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 STRATEGY_EXTRACTION_SCHEMA_VERSION = "strategy-extraction-v1"
-STRATEGY_EXTRACTION_PROMPT_VERSION = "lane-c-discussed-strategies-v1"
+STRATEGY_EXTRACTION_PROMPT_VERSION = "strategy-discussion-extraction-v1"
 
 STRATEGY_EXTRACTION_REQUIRED_FIELDS = frozenset(
     {

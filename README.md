@@ -1,18 +1,85 @@
 # nlp-stock-prediction
 
-A Python CLI for building evidence-grounded stock opportunity reports.
+This repo is being rebuilt into a local, Codex-led prediction research assistant.
 
-The app discovers the six tickers from the r/wallstreetbets daily Devvit ticker card, gathers public discussion/news/market context, extracts discussed strategies with citations, scores candidate ideas against risk and confidence inputs, and writes Markdown, JSON, and audit artifacts. The current branch also includes a local TimesFM 2.5 technical-analysis path for Windows + RTX 3090.
+The important boundary: this is not a trading app. It should not place trades, size positions, or
+tell anyone what to buy or sell. The output is a prediction report: what the evidence seems to imply,
+how strong that evidence is, what conflicts with it, and what would change the view.
 
-## Status
+The rebuild is centered on small research tools, a local SQLite memory layer, and a Codex agent that
+coordinates the work and writes the final Markdown/JSON report.
 
-- Deterministic offline report generation is implemented.
-- Fixture-backed scrape mode is implemented.
-- Opt-in live provider collection is implemented for public Reddit/AP/Candlecharts/X evidence paths.
-- Local TimesFM 2.5 smoke, training, rolling evaluation, report attachment, and scoring integration are implemented.
-- Live provider runs currently collect evidence and audit metadata; live extraction/scoring is the next report-generation step.
+## Current State
 
-## Commands
+This branch is ready for Phase 2 work on Codex orchestration and agentic report workflows.
+
+What exists now:
+
+- an offline `research` CLI that writes Markdown, JSON, and audit artifacts;
+- provider, evidence, extraction, analysis, reporting, raw TimesFM, and storage modules;
+- SQLite storage under `nlp_stock_prediction.storage`;
+- tests for the clean report contracts, provider attribution, and storage round trips.
+
+What is intentionally not the focus anymore:
+
+- TimesFM tuning;
+- one-off TimesFM tuning workflows;
+- visual dashboards;
+- trading-language output.
+
+Raw TimesFM may still be useful later as a cheap technical signal, but only as one input inside a
+broader technical package.
+
+## Product Shape
+
+The target app has three moving parts:
+
+1. Independent tools gather evidence or produce artifacts.
+2. SQLite stores planning state in git and runtime research state locally.
+3. Codex decides what to investigate next and writes the prediction report.
+
+The core object is `PredictionCandidate`:
+
+```text
+PredictionCandidate
+- instrument and asset class
+- prediction horizon
+- scenario or outcome being predicted
+- evidence for
+- evidence against
+- source and tool artifacts
+- freshness and uncertainty
+- baseline comparison
+- confidence
+- report status
+```
+
+The eventual universe should cover whatever a typical retail investor can reasonably research or
+access through retail platforms: stocks, ETFs, crypto, currencies, commodities, futures context, and
+related proxies. Availability changes, so tradability has to be stored with provenance instead of
+hardcoded.
+
+## Useful Files
+
+- [docs/architecture.md](docs/architecture.md): where the rebuild is headed.
+- [docs/contracts.md](docs/contracts.md): target contracts and invariants.
+- [docs/configuration.md](docs/configuration.md): local setup and storage conventions.
+- [docs/roadmap.md](docs/roadmap.md): phased rebuild plan.
+- [docs/testing-plan.md](docs/testing-plan.md): test strategy.
+- [AGENTS.md](AGENTS.md): operating rules for Codex.
+- [PLANS.md](PLANS.md): SQLite planning schema and usage rules.
+
+`AGENTS.md` and `PLANS.md` are read-only by default. Change them only when the user specifically asks.
+
+## Local Setup
+
+```sh
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+python -m nlp_stock_prediction --help
+```
+
+Run the normal checks:
 
 ```sh
 python -m pytest
@@ -20,76 +87,34 @@ python -m pytest -m "not live_api and not live_scraping"
 ruff check .
 ruff format --check .
 mypy .
-python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
-python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape --live-providers --cache-dir cache/live
 ```
 
-## TimesFM 2.5
+Generate the deterministic offline report:
 
-Windows setup:
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu128
-.\.venv\Scripts\python.exe -m pip install -e ".[timesfm]"
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
+```sh
+python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 ```
 
-Preferred WSB ticker workflow:
+## SQLite
 
-```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda --profile walkaway --refresh-data --refresh-runs
+The project uses two local SQLite databases:
+
+- `plans/planning.sqlite3`: tracked in git so planning records are part of project history.
+- `data/prediction-research.sqlite3`: ignored local runtime state for runs, tools, artifacts,
+  evidence, and prediction candidates.
+
+Create or verify them with:
+
+```python
+from pathlib import Path
+
+from nlp_stock_prediction.storage import (
+    initialize_planning_database,
+    initialize_research_database,
+)
+
+planning_store = initialize_planning_database(Path("plans/planning.sqlite3"))
+research_store = initialize_research_database(Path("data/prediction-research.sqlite3"))
 ```
 
-The signal funnel is the canonical TimesFM research workflow. It writes an incremental leaderboard,
-runs cheap baselines before raw TimesFM, runs a cheap adapter smoke only for raw TimesFM survivors,
-runs bounded survivor HPO only for smoke winners, and emits a report-ready
-`ml.timesfm.evaluation.v1` artifact only when the selected adapter clears held-out final
-baseline-aware scoring gates. The default HPO budget is 8 trials per ticker; rerun only the
-strongest report-ready contenders with `--max-hpo-trials-per-ticker 24` when you want a deeper
-overnight pass.
-
-Use the current report date for `--as-of`. If the market/data provider has not posted that day's
-close yet, the latest usable bar may still be the prior session; the freshness gate allows this by
-default. To add WSB tickers later, change only the comma-separated `--symbols` list. Omit
-`--refresh-runs` when you want to reuse compatible existing artifacts, and include it when you want
-a clean recompute. See [docs/timesfm-funnel-runbook.md](docs/timesfm-funnel-runbook.md) for the
-full walkaway runbook.
-
-Broad S&P 500 raw-screen scan:
-
-```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.signal_funnel --universe sp500 --as-of 2026-05-12 --device cuda --profile quick --refresh-data --refresh-runs --refresh-universe --output-root artifacts/ml/timesfm-funnel-sp500
-```
-
-For broad scans, start with `raw_candidates.csv`; it ranks raw TimesFM candidates by baseline lift
-before you spend time on adapter smoke or HPO. Promote a short list into a separate walkaway run
-rather than sending every raw survivor into HPO.
-
-Single-ticker CSV workflow:
-
-```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.train --csv data/ml/TSLA.csv --ticker TSLA --device cuda --output-dir artifacts/ml/TSLA/timesfm --epochs 1 --max-steps 20 --as-of 2026-05-12 --max-latest-bar-age-days 5
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.evaluate --csv data/ml/TSLA.csv --ticker TSLA --model-dir artifacts/ml/TSLA/timesfm --device cuda --output artifacts/ml/TSLA/timesfm/evaluation.json --as-of 2026-05-12 --suitability-max-latest-bar-age-days 5
-.\.venv\Scripts\python.exe -m nlp_stock_prediction run --date 2026-05-12 --output reports/ --offline --ml-artifact artifacts/ml/TSLA/timesfm/evaluation.json
-```
-
-Legacy focused HPO:
-
-```powershell
-.\.venv\Scripts\python.exe -m nlp_stock_prediction.ml.timesfm.focused_hpo --symbols MU,SPY,ASTS,SNDK,GOOG,NVDA --as-of 2026-05-12 --device cuda
-```
-
-The old broad S&P 500 batch workflow has been retired. Use the signal funnel for WSB ticker-set
-research, focused HPO only for reference/comparison runs, and the single-ticker train/evaluate
-commands for targeted experiments.
-
-CSV files belong under ignored paths such as `data/ml/`. Generated models, adapters, metrics, and reports belong under ignored paths such as `artifacts/` and `reports/`.
-
-## Notes
-
-The canonical CLI entrypoint is `python -m nlp_stock_prediction`. Keep provider credentials in environment variables or ignored `.env` files. See `docs/configuration.md` for provider settings, TimesFM artifact details, and troubleshooting.
+Durable source-of-truth docs still stay in Markdown.

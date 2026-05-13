@@ -1,4 +1,4 @@
-"""Fixture-backed Reddit provider for deterministic Lane A tests."""
+"""Fixture-backed Reddit provider for deterministic tests."""
 
 from __future__ import annotations
 

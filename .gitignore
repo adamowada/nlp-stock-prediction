@@ -9,6 +9,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.codex-tmp/
 .coverage
 htmlcov/
 
@@ -19,7 +20,12 @@ dist/
 reports/
 cache/
 
-# Local ML inputs and generated model artifacts.
+# Local runtime databases, ML inputs, and generated model artifacts.
+data/*.sqlite3
+data/*.sqlite3-*
+plans/*.sqlite3-*
 data/ml/
+data/universes/
+data/market/
 artifacts/
 models/

@@ -1,26 +1,33 @@
-# Fixture Contract
+# Fixtures
 
-Phase 0 freezes fixture shape, not fixture content. Later contract and e2e tests should use this layout:
+Fixtures support deterministic tests for the prediction research assistant.
+
+Fixture data should model source payloads, normalized evidence, tool artifacts, SQLite rows, and
+report outputs without requiring live network access.
+
+Preferred layout:
 
 ```text
 tests/fixtures/
   raw/{provider}/{scenario}.json
-  normalized/provider_results/{provider}/{scenario}.json
   normalized/evidence/{scenario}.json
-  extraction/{scenario}.json
-  analysis/{scenario}.json
-  scoring/{scenario}.json
+  tools/{tool_name}/{scenario}.json
+  sqlite/{scenario}/
+  prediction_candidates/{scenario}.json
   reports/{scenario}/expected_report.json
   reports/{scenario}/expected_report.md
 ```
 
-Raw provider fixtures should include `fixture_version`, `provider_name`, `scenario`,
-`recorded_at`, `request`, `response_path`, `provider_metadata`, and `redactions`.
-Normalized fixtures should use the same public Pydantic contracts as production code.
+Raw provider fixtures should include:
 
-Phase 1 adds contract-harness tests for fixture manifests without requiring real fixture content.
-Those tests validate raw fixture metadata, normalized fixture layers, scenario composition, JSON
-round trips, redaction metadata, and rejection of invalid shapes. Concrete fixture files should keep
-using these contracts as they are introduced in provider and end-to-end lanes.
-Fixture manifests must not mix scenarios: nested raw and normalized fixture scenarios must match the
-manifest scenario, and raw provider request dates must match the manifest run date.
+- fixture version;
+- provider name;
+- scenario;
+- recorded timestamp;
+- request or query;
+- response path;
+- provider metadata;
+- redaction metadata.
+
+Normalized fixtures should use the same public contracts as production code. Scenarios must not mix
+dates or universes unless the test explicitly exercises stale or contradictory evidence.

@@ -1,4 +1,4 @@
-"""Frozen public contracts for the Phase 1 contract gate."""
+"""Public contracts for the prediction research assistant."""
 
 from nlp_stock_prediction.contracts.analysis import (
     AnalysisBundle,
@@ -27,18 +27,20 @@ from nlp_stock_prediction.contracts.base import (
 from nlp_stock_prediction.contracts.discovery import TickerCandidate, TickerDiscoveryResult
 from nlp_stock_prediction.contracts.enums import (
     AnalysisSignal,
+    AssetClass,
     CredentialState,
     Direction,
     FreshnessStatus,
+    InstrumentResolutionStatus,
     InstrumentType,
     PositionType,
+    PredictionStatus,
     ProviderStatus,
-    RecommendationAction,
     RetrievalMethod,
-    RiskProfile,
     SourceKind,
     TickerDiscoveryStatus,
     TimeHorizon,
+    TradabilityStatus,
     WarningCode,
     WarningSeverity,
 )
@@ -48,6 +50,15 @@ from nlp_stock_prediction.contracts.fixtures import (
     FixtureManifest,
     NormalizedFixture,
     RawProviderFixture,
+)
+from nlp_stock_prediction.contracts.instruments import (
+    Instrument,
+    InstrumentDataAvailability,
+    InstrumentResolution,
+    InstrumentSymbol,
+    ProviderInstrumentId,
+    RelatedInstrument,
+    TradabilityEvidence,
 )
 from nlp_stock_prediction.contracts.provenance import (
     DataReference,
@@ -81,20 +92,15 @@ from nlp_stock_prediction.contracts.providers import (
     TickerDiscoveryRequest,
     XProvider,
 )
-from nlp_stock_prediction.contracts.recommendation import (
-    RiskAssessment,
-    ScoreBreakdown,
-    ScoreComponent,
-    TradeCandidate,
-)
 from nlp_stock_prediction.contracts.report import (
     DEFAULT_MARKDOWN_REPORT_OUTLINE,
     AuditArtifact,
     AuditManifest,
     DailyReport,
     DataFreshnessSummary,
+    InstrumentReportSection,
     MarkdownReportOutline,
-    TickerReportSection,
+    PredictionCandidate,
 )
 
 __all__ = [
@@ -102,6 +108,7 @@ __all__ = [
     "AnalysisBundle",
     "AnalysisComponent",
     "AnalysisSignal",
+    "AssetClass",
     "AuditArtifact",
     "AuditManifest",
     "Confidence",
@@ -124,6 +131,12 @@ __all__ = [
     "FundamentalsProvider",
     "FundamentalsRequest",
     "FundamentalsSnapshot",
+    "Instrument",
+    "InstrumentDataAvailability",
+    "InstrumentReportSection",
+    "InstrumentResolution",
+    "InstrumentResolutionStatus",
+    "InstrumentSymbol",
     "InstrumentType",
     "JsonObject",
     "JsonValue",
@@ -144,23 +157,22 @@ __all__ = [
     "PositionType",
     "PositiveDecimal",
     "PositiveInt",
+    "PredictionCandidate",
+    "PredictionStatus",
     "PriceBar",
     "ProviderHealth",
+    "ProviderInstrumentId",
     "ProviderMetric",
     "ProviderRequest",
     "ProviderResult",
     "ProviderStatus",
     "ProviderWarning",
     "RawProviderFixture",
-    "RecommendationAction",
     "RedditProvider",
+    "RelatedInstrument",
     "RetrievalMethod",
-    "RiskAssessment",
-    "RiskProfile",
     "RunConfig",
     "Score",
-    "ScoreBreakdown",
-    "ScoreComponent",
     "SectorContext",
     "SourceEvidence",
     "SourceKind",
@@ -174,10 +186,10 @@ __all__ = [
     "TickerDiscoveryRequest",
     "TickerDiscoveryResult",
     "TickerDiscoveryStatus",
-    "TickerReportSection",
     "TickerSymbol",
     "TimeHorizon",
-    "TradeCandidate",
+    "TradabilityEvidence",
+    "TradabilityStatus",
     "WarningCode",
     "WarningSeverity",
     "XProvider",

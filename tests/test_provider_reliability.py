@@ -30,7 +30,7 @@ pytestmark = pytest.mark.unit
 
 FETCHED_AT = datetime(2026, 5, 11, 12, 0, tzinfo=UTC)
 REQUEST = EvidenceRequest(
-    request_id="lane-f-reliability",
+    request_id="provider-reliability",
     run_date=date(2026, 5, 11),
     tickers=("TSLA",),
     query="TSLA",

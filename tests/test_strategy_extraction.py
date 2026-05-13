@@ -420,7 +420,7 @@ def test_fixture_llm_extractor_returns_partial_when_some_payloads_are_rejected()
         run_date=RUN_DATE,
         tickers=("TSLA",),
         evidence=evidence,
-        prompt_version="lane-c-fixture-v1",
+        prompt_version="strategy-fixture-v1",
         schema_version=STRATEGY_EXTRACTION_SCHEMA_VERSION,
     )
 

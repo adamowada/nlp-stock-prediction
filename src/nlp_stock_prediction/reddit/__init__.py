@@ -1,4 +1,4 @@
-"""Reddit discovery and evidence helpers for Phase 2 Lane A."""
+"""Reddit discovery and evidence helpers."""
 
 from nlp_stock_prediction.reddit.discovery import discover_tickers_from_devvit_html
 from nlp_stock_prediction.reddit.evidence import normalize_reddit_evidence

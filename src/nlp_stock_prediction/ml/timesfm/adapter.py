@@ -28,16 +28,16 @@ from nlp_stock_prediction.ml.timesfm.dataset import (
     TimesFmWindow,
     build_timesfm_dataset,
 )
-from nlp_stock_prediction.ml.timesfm.smoke import DEFAULT_MODEL_ID
 from nlp_stock_prediction.ml.train import load_price_bars_csv
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 
+DEFAULT_MODEL_ID = "google/timesfm-2.5-200m-transformers"
 DEFAULT_FORECAST_OUTPUT_PATH = Path("artifacts/ml/timesfm-forecast-smoke/forecast.json")
 _INSTALL_HINT = (
     "Install the optional TimesFM stack first. On Windows with an NVIDIA GPU, install a CUDA "
     "PyTorch wheel from https://pytorch.org/get-started/locally/ and then run "
-    '`python -m pip install -e ".[timesfm]"`.'
+    '`python -m pip install -e ".[timesfm-raw]"`.'
 )
 
 
@@ -300,7 +300,7 @@ def _load_inference_stack() -> _InferenceStack:
     if model_cls is None:
         raise TimesFmForecastError(
             "Installed Transformers does not expose TimesFm2_5ModelForPrediction. "
-            'Upgrade the optional TimesFM stack with `python -m pip install -e ".[timesfm]"`.'
+            'Upgrade the optional TimesFM stack with `python -m pip install -e ".[timesfm-raw]"`.'
         )
     return _InferenceStack(torch=torch, model_cls=model_cls)
 
@@ -559,6 +559,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "DEFAULT_FORECAST_OUTPUT_PATH",
+    "DEFAULT_MODEL_ID",
     "TimesFmForecastConfig",
     "TimesFmForecastError",
     "forecast_timesfm_dataset",

@@ -1,4 +1,4 @@
-"""CLI surface for daily report generation."""
+"""CLI surface for prediction research reports."""
 
 from __future__ import annotations
 
@@ -7,10 +7,8 @@ import re
 import sys
 from collections.abc import Sequence
 from datetime import date
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from nlp_stock_prediction.contracts.enums import RiskProfile
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.pipeline import generate_daily_report
@@ -18,18 +16,11 @@ from nlp_stock_prediction.pipeline import generate_daily_report
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 PHASE_0_NOT_IMPLEMENTED_EXIT_CODE = CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
 _CLI_EPILOG = """Examples:
-  python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
-  python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
-  python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ \\
-    --capital 1000 --risk-profile exploratory --offline
+  python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 
 Configuration:
   Offline runs are deterministic and do not use network providers.
-  Scrape source mode uses public-provider adapters with deterministic fixtures by default.
-  Add --live-providers with --source-mode scrape to call configured live providers.
-  Add --ml-artifact to attach an evaluated local TimesFM technical-analysis sidecar.
   A local .env file is loaded automatically without overriding exported shell variables.
-  Pass --offline to generate the deterministic fixture-backed report bundle.
   Keep provider credentials in environment variables or ignored local .env files;
   see docs/configuration.md.
 """
@@ -44,30 +35,18 @@ def _parse_date(value: str) -> date:
         raise argparse.ArgumentTypeError("expected YYYY-MM-DD") from exc
 
 
-def _parse_decimal(value: str) -> Decimal:
-    try:
-        parsed = Decimal(value)
-    except InvalidOperation as exc:
-        raise argparse.ArgumentTypeError("expected a decimal number") from exc
-    if not parsed.is_finite():
-        raise argparse.ArgumentTypeError("capital must be a finite decimal number")
-    if parsed < 0:
-        raise argparse.ArgumentTypeError("capital must be non-negative")
-    return parsed
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m nlp_stock_prediction",
-        description="Generate an evidence-grounded daily stock opportunity report.",
+        description="Generate evidence-grounded prediction research artifacts.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_CLI_EPILOG,
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    run_parser = subparsers.add_parser(
-        "run",
-        help="Generate a daily report.",
+    research_parser = subparsers.add_parser(
+        "research",
+        help="Generate a prediction research report.",
         description=(
             "Generate one Markdown report, one JSON report, and audit artifacts under "
             "<output>/<YYYY-MM-DD>/."
@@ -75,102 +54,47 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_CLI_EPILOG,
     )
-    run_parser.add_argument(
+    research_parser.add_argument(
         "--date",
         dest="run_date",
         required=True,
         type=_parse_date,
         help="Report date in YYYY-MM-DD format.",
     )
-    run_parser.add_argument(
+    research_parser.add_argument(
         "--output",
         dest="output_dir",
         required=True,
         type=Path,
         help="Base output directory; files are written under <output>/<YYYY-MM-DD>/.",
     )
-    run_parser.add_argument(
-        "--capital",
-        dest="capital",
-        type=_parse_decimal,
-        help="Optional account capital for risk gates; must be a non-negative decimal.",
-    )
-    run_parser.add_argument(
-        "--risk-profile",
-        choices=tuple(profile.value for profile in RiskProfile),
-        default=RiskProfile.EXPLORATORY.value,
-        help="Risk profile for scoring and report context. Default: exploratory.",
-    )
-    run_parser.add_argument(
+    research_parser.add_argument(
         "--fixture-dir",
         type=Path,
-        help=(
-            "Optional fixture root for future external fixtures; current offline runs record "
-            "this path in command metadata and use built-in deterministic fixtures."
-        ),
+        help="Optional fixture root recorded in command metadata.",
     )
-    run_parser.add_argument(
+    research_parser.add_argument(
         "--cache-dir",
         type=Path,
-        help=(
-            "Optional provider cache directory for live provider runs; deterministic runs record "
-            "this path in command metadata."
-        ),
+        help="Optional provider cache directory recorded in command metadata.",
     )
-    run_parser.add_argument(
-        "--ml-artifact",
-        type=Path,
-        help=(
-            "Optional evaluated local TimesFM artifact to attach as a technical-analysis sidecar; "
-            "scoring still requires evidence/risk gates."
-        ),
-    )
-    run_parser.add_argument(
-        "--source-mode",
-        choices=("offline", "scrape"),
-        default=None,
-        help=(
-            "Explicit source mode. Use 'scrape' for the experimental public-provider "
-            "provider path with deterministic fixtures by default; add --live-providers for "
-            "real provider calls."
-        ),
-    )
-    run_parser.add_argument(
+    research_parser.add_argument(
         "--offline",
         action="store_true",
-        help=(
-            "Use the deterministic offline fixture-backed report path; disallows live network "
-            "providers."
-        ),
-    )
-    run_parser.add_argument(
-        "--live-providers",
-        action="store_true",
-        help=(
-            "Opt into real provider calls for --source-mode scrape. Fixture-backed scrape mode "
-            "remains the default."
-        ),
+        required=True,
+        help="Use deterministic offline fixtures.",
     )
     return parser
 
 
-def build_run_config(args: argparse.Namespace) -> RunConfig:
-    source_mode = "offline" if args.offline else args.source_mode or "disabled"
-    if args.live_providers and (args.offline or source_mode != "scrape"):
-        raise ValueError(
-            "--live-providers requires --source-mode scrape and cannot be used with --offline"
-        )
+def build_research_config(args: argparse.Namespace) -> RunConfig:
     return RunConfig(
         run_date=args.run_date,
         output_dir=args.output_dir,
-        capital=args.capital,
-        risk_profile=RiskProfile(args.risk_profile),
         fixture_dir=args.fixture_dir,
         cache_dir=args.cache_dir,
-        ml_artifact=args.ml_artifact,
         offline=args.offline,
-        source_mode=source_mode,
-        live_providers=args.live_providers,
+        source_mode="offline" if args.offline else "disabled",
     )
 
 
@@ -181,9 +105,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
-    if args.command == "run":
+    if args.command == "research":
         try:
-            bundle = generate_daily_report(build_run_config(args))
+            bundle = generate_daily_report(build_research_config(args))
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
@@ -198,6 +122,6 @@ __all__ = [
     "CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE",
     "PHASE_0_NOT_IMPLEMENTED_EXIT_CODE",
     "build_parser",
-    "build_run_config",
+    "build_research_config",
     "main",
 ]
