@@ -9,7 +9,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BeforeValidator, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BeforeValidator,
+    Field,
+    StringConstraints,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from nlp_stock_prediction.contracts.base import (
     AwareDatetime,
@@ -32,10 +39,23 @@ def _normalize_instrument_symbol(value: object) -> str:
     return value.strip().upper()
 
 
+def _normalize_instrument_query(value: object) -> str:
+    if value is None:
+        raise ValueError("instrument query cannot be null")
+    if not isinstance(value, str):
+        raise ValueError("instrument query must be a string")
+    return value.strip().upper()
+
+
 type InstrumentSymbol = Annotated[
     str,
     BeforeValidator(_normalize_instrument_symbol),
     StringConstraints(pattern=r"^[A-Z0-9][A-Z0-9./:_-]{0,31}$", min_length=1, max_length=32),
+]
+type InstrumentQueryText = Annotated[
+    str,
+    BeforeValidator(_normalize_instrument_query),
+    StringConstraints(min_length=1, max_length=128),
 ]
 
 
@@ -89,6 +109,55 @@ class RelatedInstrument(ContractModel):
     relationship: NonEmptyStr
     rationale: NonEmptyStr
     evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+
+class InstrumentQuery(ContractModel):
+    """User or provider query to resolve into a researchable instrument."""
+
+    query: InstrumentQueryText
+    asset_class: AssetClass | None = None
+    venue: str | None = None
+    provider: str | None = None
+    provider_namespace: str | None = None
+    provider_identifier: str | None = None
+    aliases: tuple[InstrumentQueryText, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @field_validator("aliases")
+    @classmethod
+    def remove_duplicate_aliases(cls, aliases: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(aliases))
+
+
+class WatchlistEntry(ContractModel):
+    """One instrument query and local context from a named watchlist."""
+
+    query: InstrumentQuery
+    requested_instrument_id: str | None = None
+    notes: str | None = None
+    tags: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @field_validator("tags")
+    @classmethod
+    def remove_duplicate_tags(cls, tags: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(tags))
+
+
+class Watchlist(ContractModel):
+    """Named collection of instrument queries supplied to a universe request."""
+
+    watchlist_id: NonEmptyStr
+    name: NonEmptyStr
+    entries: tuple[WatchlistEntry, ...]
+    description: str | None = None
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_entries(self) -> Watchlist:
+        if not self.entries:
+            raise ValueError("watchlists require at least one entry")
+        return self
 
 
 class Instrument(ContractModel):
@@ -158,12 +227,79 @@ class InstrumentResolution(ContractModel):
         return self
 
 
+class InstrumentUniverseRequest(ContractModel):
+    """Request for resolving a mixed-asset instrument universe."""
+
+    request_id: NonEmptyStr
+    as_of: AwareDatetime
+    queries: tuple[InstrumentQuery, ...] = Field(default_factory=tuple)
+    watchlists: tuple[Watchlist, ...] = Field(default_factory=tuple)
+    allowed_asset_classes: tuple[AssetClass, ...] = Field(default_factory=tuple)
+    provider_names: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    include_related_instruments: bool = True
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_request_shape(self) -> InstrumentUniverseRequest:
+        if not self.queries and not self.watchlists:
+            raise ValueError("instrument universe requests require at least one query or watchlist")
+        watchlist_ids = tuple(watchlist.watchlist_id for watchlist in self.watchlists)
+        if len(set(watchlist_ids)) != len(watchlist_ids):
+            raise ValueError("instrument universe request watchlist ids must be unique")
+        return self
+
+
+class InstrumentUniverse(ContractModel):
+    """Resolved instrument universe with request-to-instrument traceability."""
+
+    request_id: NonEmptyStr
+    generated_at: AwareDatetime
+    resolutions: tuple[InstrumentResolution, ...] = Field(default_factory=tuple)
+    instruments: tuple[Instrument, ...]
+    warnings: tuple[str, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @computed_field
+    @property
+    def instrument_ids(self) -> tuple[str, ...]:
+        return tuple(instrument.instrument_id for instrument in self.instruments)
+
+    @model_validator(mode="after")
+    def validate_universe_shape(self) -> InstrumentUniverse:
+        if not self.instruments and not self.resolutions:
+            raise ValueError("instrument universes require at least one instrument or resolution")
+        instrument_ids = self.instrument_ids
+        if len(set(instrument_ids)) != len(instrument_ids):
+            raise ValueError("instrument universe instrument ids must be unique")
+
+        resolution_queries = tuple(resolution.query for resolution in self.resolutions)
+        if len(set(resolution_queries)) != len(resolution_queries):
+            raise ValueError("instrument universe resolution queries must be unique")
+
+        selected_ids = {
+            resolution.selected_instrument_id
+            for resolution in self.resolutions
+            if resolution.selected_instrument_id is not None
+        }
+        missing_selected_ids = selected_ids.difference(instrument_ids)
+        if missing_selected_ids:
+            raise ValueError(
+                "instrument universe selected resolution ids must be materialized as instruments"
+            )
+        return self
+
+
 __all__ = [
     "Instrument",
     "InstrumentDataAvailability",
+    "InstrumentQuery",
     "InstrumentResolution",
     "InstrumentSymbol",
+    "InstrumentUniverse",
+    "InstrumentUniverseRequest",
     "ProviderInstrumentId",
     "RelatedInstrument",
     "TradabilityEvidence",
+    "Watchlist",
+    "WatchlistEntry",
 ]
