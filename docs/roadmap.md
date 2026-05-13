@@ -70,21 +70,32 @@ Acceptance:
 
 Goal: support a broad retail-accessible universe.
 
-Build:
+Status: contract and storage layer implemented. The app can represent broad instrument identities,
+explicit query resolutions, provider IDs, watchlists, tradability/access evidence, related
+instruments, and fixture-backed universe artifacts. The default CLI has not added a separate
+universe command, and live universe-discovery providers are not yet implemented.
 
-- instrument registry;
+Built:
+
+- instrument registry contracts and SQLite tables;
 - aliases and ambiguity handling;
-- asset classes;
+- asset classes: stocks, ETFs, crypto, currencies, commodities, futures context, funds, indexes,
+  proxies, and unknowns;
 - related instruments;
 - watchlists;
 - provider IDs;
-- tradability evidence.
+- tradability/access evidence;
+- instrument universe requests/results;
+- report-level instrument resolution references;
+- small fixture-backed universe discovery scenarios.
 
-Acceptance:
+Acceptance status:
 
-- stocks, ETFs, crypto, currency/commodity proxies, and futures context can be represented;
-- ambiguous symbols require explicit resolution;
-- universe discovery can write instrument records.
+- stocks, ETFs, crypto, currency/commodity exposure, and futures context can be represented in
+  contracts and registry storage;
+- ambiguous symbols require explicit resolution and cannot select an instrument silently;
+- fixture/dummy universe paths can write instrument records and artifacts;
+- first-class live universe discovery remains Phase 4 work.
 
 ## Phase 4: Tool Suite
 
@@ -92,7 +103,7 @@ Goal: convert research capabilities into first-class independent tools.
 
 Build:
 
-- universe discovery tool;
+- universe discovery tool over the Phase 3 contracts and registry;
 - market data tool;
 - technical package tool;
 - social evidence tool;

@@ -130,6 +130,10 @@ regular reports.
 
 ## Instrument Universe
 
+The implemented Phase 3 universe layer is contract and storage infrastructure. It does not introduce
+a new CLI command or a live universe provider. The current command surface remains the offline
+`research` command and the optional Phase 2 Codex smoke runner above.
+
 The target universe is retail-accessible instruments, including:
 
 - stocks;
@@ -141,5 +145,24 @@ The target universe is retail-accessible instruments, including:
 - user watchlists;
 - web/social/news-discovered instruments.
 
+Current contracts support these asset classes directly: `stock`, `etf`, `crypto`, `currency`,
+`commodity`, `futures`, `fund`, `index`, `proxy`, and `unknown`.
+
+Instrument identity should be stored as a canonical instrument ID plus a normalized symbol, display
+name, asset class, optional venue, aliases, provider IDs, related instruments, data availability, and
+tradability/access evidence. Provider IDs should include the provider name, identifier, optional
+namespace, optional URL, and provider metadata. Examples include a market-data symbol, an exchange
+listing ID, a CIK, a FIGI, a crypto pair, or a fixture namespace.
+
 Availability changes over time. Store tradability evidence and provider source instead of assuming a
-symbol is always accessible.
+symbol is always accessible. A tradability/access observation must be traceable to a source URL,
+permalink, or raw identifier and should record the provider, status, retrieved timestamp, and any
+access constraints. This is evidence for research availability, not permission or advice to trade.
+
+Universe requests may include direct instrument queries and watchlists. Resolution results must be
+explicitly marked as `resolved`, `ambiguous`, `unsupported`, or `unavailable`; ambiguous symbols must
+retain their candidate matches until a caller supplies enough context to select one.
+
+Fixture-backed Phase 3 scenarios live in `tests/fixtures/tools/universe_discovery/`. Runtime
+universe artifacts created by local runs should stay under ignored `artifacts/`, `reports/`, or
+`data/` paths unless deliberately promoted as small scrubbed fixtures.

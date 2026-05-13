@@ -33,6 +33,9 @@ Pure logic tests for:
 
 - instrument normalization;
 - alias and ambiguity resolution;
+- provider ID uniqueness;
+- tradability/access evidence source requirements;
+- universe request and watchlist validation;
 - source claim extraction helpers;
 - freshness classification;
 - signal normalization;
@@ -66,6 +69,16 @@ Database tests must cover:
 - separation of tracked planning tables from ignored research tables;
 - query helpers used by Codex orchestration.
 
+Phase 3 SQLite gates must cover:
+
+- normalized instrument child tables for aliases, provider IDs, related instruments, data
+  availability, and tradability evidence;
+- idempotent instrument upsert behavior that replaces stale child rows;
+- symbol/alias lookup and provider ID lookup;
+- asset-class filtering;
+- latest tradability evidence by provider;
+- watchlist, watchlist item, and watchlist instrument round trips.
+
 ### Provider And Tool Contracts
 
 Provider/tool tests should use fixtures and mocks by default. They should verify:
@@ -78,6 +91,10 @@ Provider/tool tests should use fixtures and mocks by default. They should verify
 - missing provider fields;
 - duplicated evidence;
 - source query logging.
+
+Universe-discovery fixtures should be small and contract-shaped. Current Phase 3 fixtures live under
+`tests/fixtures/tools/universe_discovery/` and should cover mixed asset classes, explicit ambiguity,
+and watchlist-driven requests without relying on live provider access.
 
 ### Integration
 
@@ -112,6 +129,20 @@ End-to-end tests should run fixture-backed research objectives:
 - stale-provider outcome;
 - broad-universe cheap screen;
 - single-instrument deep dive.
+
+### Phase 3 Instrument Universe Gates
+
+Focused Phase 3 checks should run when instrument contracts, report contracts, storage schema, or
+fixture shapes change:
+
+```sh
+python -m pytest tests/test_phase3_instrument_contracts.py
+python -m pytest tests/test_storage_sqlite.py -k "instrument or watchlist or tradability"
+python -m pytest tests/test_phase1_schema_contracts.py -k "resolution or report"
+```
+
+These gates are offline. They should not require live market-data providers, live scraping, OpenAI
+credentials, optional GPU packages, or a new CLI command.
 
 ### Codex Smoke
 

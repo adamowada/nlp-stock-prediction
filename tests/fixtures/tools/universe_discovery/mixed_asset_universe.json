@@ -1,0 +1,261 @@
+{
+  "request_id": "fixture-universe-mixed-asset",
+  "generated_at": "2026-05-13T12:00:00+00:00",
+  "resolutions": [
+    {
+      "query": "TSLA",
+      "status": "resolved",
+      "matches": [
+        {
+          "instrument_id": "instrument:equity:us:tsla",
+          "symbol": "TSLA",
+          "display_name": "Tesla Inc.",
+          "asset_class": "stock",
+          "venue": "NASDAQ"
+        }
+      ],
+      "selected_instrument_id": "instrument:equity:us:tsla"
+    },
+    {
+      "query": "BTC/USD",
+      "status": "resolved",
+      "matches": [
+        {
+          "instrument_id": "instrument:crypto:btc-usd",
+          "symbol": "BTC/USD",
+          "display_name": "Bitcoin / U.S. Dollar",
+          "asset_class": "crypto"
+        }
+      ],
+      "selected_instrument_id": "instrument:crypto:btc-usd"
+    },
+    {
+      "query": "ESM6",
+      "status": "resolved",
+      "matches": [
+        {
+          "instrument_id": "instrument:futures:context:esm6",
+          "symbol": "ESM6",
+          "display_name": "E-mini S&P 500 June 2026 Context",
+          "asset_class": "futures"
+        }
+      ],
+      "selected_instrument_id": "instrument:futures:context:esm6",
+      "warnings": [
+        "Futures record is research context only; access depends on provider and account constraints."
+      ]
+    }
+  ],
+  "instruments": [
+    {
+      "instrument_id": "instrument:equity:us:tsla",
+      "symbol": "TSLA",
+      "display_name": "Tesla Inc.",
+      "asset_class": "stock",
+      "venue": "NASDAQ",
+      "aliases": [
+        "TESLA"
+      ],
+      "provider_ids": [
+        {
+          "provider": "fixture-market",
+          "identifier": "TSLA",
+          "namespace": "symbol",
+          "url": "https://example.test/market/TSLA",
+          "metadata": {
+            "region": "US"
+          }
+        },
+        {
+          "provider": "fixture-filing",
+          "identifier": "1318605",
+          "namespace": "cik"
+        }
+      ],
+      "related_instruments": [
+        {
+          "instrument_id": "instrument:etf:us:xly",
+          "relationship": "sector_proxy",
+          "rationale": "Consumer discretionary ETF can provide sector context.",
+          "evidence_ids": [
+            "fixture-evidence-sector-xly"
+          ]
+        }
+      ],
+      "tradability_evidence": [
+        {
+          "provider": "fixture-broker-directory",
+          "status": "available",
+          "retrieved_at": "2026-05-13T12:00:00+00:00",
+          "source_url": "https://example.test/broker/instruments/TSLA",
+          "raw_identifier": "fixture-broker:TSLA",
+          "notes": "Retail-searchable equity listing observed in fixture data."
+        }
+      ],
+      "data_availability": [
+        {
+          "provider": "fixture-market",
+          "data_type": "daily_ohlcv",
+          "status": "available",
+          "checked_at": "2026-05-13T12:00:00+00:00",
+          "provider_identifier": "TSLA"
+        }
+      ],
+      "metadata": {
+        "fixture": true,
+        "sector": "consumer_discretionary"
+      }
+    },
+    {
+      "instrument_id": "instrument:etf:us:spy",
+      "symbol": "SPY",
+      "display_name": "SPDR S&P 500 ETF Trust",
+      "asset_class": "etf",
+      "venue": "NYSEARCA",
+      "provider_ids": [
+        {
+          "provider": "fixture-market",
+          "identifier": "SPY",
+          "namespace": "symbol"
+        }
+      ],
+      "tradability_evidence": [
+        {
+          "provider": "fixture-broker-directory",
+          "status": "available",
+          "retrieved_at": "2026-05-13T12:00:00+00:00",
+          "raw_identifier": "fixture-broker:SPY",
+          "notes": "ETF used as broad-market baseline context."
+        }
+      ],
+      "data_availability": [
+        {
+          "provider": "fixture-market",
+          "data_type": "daily_ohlcv",
+          "status": "available",
+          "checked_at": "2026-05-13T12:00:00+00:00",
+          "provider_identifier": "SPY"
+        }
+      ],
+      "metadata": {
+        "fixture": true,
+        "role": "baseline"
+      }
+    },
+    {
+      "instrument_id": "instrument:crypto:btc-usd",
+      "symbol": "BTC/USD",
+      "display_name": "Bitcoin / U.S. Dollar",
+      "asset_class": "crypto",
+      "aliases": [
+        "BTC-USD"
+      ],
+      "provider_ids": [
+        {
+          "provider": "fixture-crypto",
+          "identifier": "BTC-USD",
+          "namespace": "pair"
+        }
+      ],
+      "tradability_evidence": [
+        {
+          "provider": "fixture-crypto-directory",
+          "status": "restricted",
+          "retrieved_at": "2026-05-13T12:00:00+00:00",
+          "source_url": "https://example.test/crypto/pairs/BTC-USD",
+          "raw_identifier": "fixture-crypto:BTC-USD",
+          "notes": "Availability depends on jurisdiction and exchange access."
+        }
+      ],
+      "data_availability": [
+        {
+          "provider": "fixture-crypto",
+          "data_type": "daily_ohlcv",
+          "status": "available",
+          "checked_at": "2026-05-13T12:00:00+00:00",
+          "provider_identifier": "BTC-USD"
+        }
+      ],
+      "metadata": {
+        "fixture": true
+      }
+    },
+    {
+      "instrument_id": "instrument:currency:eur-usd",
+      "symbol": "EUR/USD",
+      "display_name": "Euro / U.S. Dollar",
+      "asset_class": "currency",
+      "provider_ids": [
+        {
+          "provider": "fixture-fx",
+          "identifier": "EURUSD",
+          "namespace": "pair"
+        }
+      ],
+      "tradability_evidence": [
+        {
+          "provider": "fixture-broker-directory",
+          "status": "unknown",
+          "retrieved_at": "2026-05-13T12:00:00+00:00",
+          "raw_identifier": "fixture-fx:EURUSD",
+          "notes": "Currency exposure may require a broker product or proxy instrument."
+        }
+      ],
+      "data_availability": [
+        {
+          "provider": "fixture-fx",
+          "data_type": "daily_rate",
+          "status": "available",
+          "checked_at": "2026-05-13T12:00:00+00:00",
+          "provider_identifier": "EURUSD"
+        }
+      ],
+      "metadata": {
+        "fixture": true,
+        "role": "macro_context"
+      }
+    },
+    {
+      "instrument_id": "instrument:futures:context:esm6",
+      "symbol": "ESM6",
+      "display_name": "E-mini S&P 500 June 2026 Context",
+      "asset_class": "futures",
+      "provider_ids": [
+        {
+          "provider": "fixture-futures",
+          "identifier": "ESM6",
+          "namespace": "contract"
+        }
+      ],
+      "tradability_evidence": [
+        {
+          "provider": "fixture-broker-directory",
+          "status": "restricted",
+          "retrieved_at": "2026-05-13T12:00:00+00:00",
+          "raw_identifier": "fixture-futures:ESM6",
+          "notes": "Stored as futures context, not as an instruction or assumption of access."
+        }
+      ],
+      "data_availability": [
+        {
+          "provider": "fixture-futures",
+          "data_type": "settlement_context",
+          "status": "available",
+          "checked_at": "2026-05-13T12:00:00+00:00",
+          "provider_identifier": "ESM6"
+        }
+      ],
+      "metadata": {
+        "fixture": true,
+        "role": "futures_context"
+      }
+    }
+  ],
+  "warnings": [
+    "Fixture records model research availability only and do not prove current tradability."
+  ],
+  "metadata": {
+    "fixture_version": 1,
+    "scenario": "mixed_asset_universe"
+  }
+}

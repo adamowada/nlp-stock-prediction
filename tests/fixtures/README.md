@@ -12,6 +12,7 @@ tests/fixtures/
   raw/{provider}/{scenario}.json
   normalized/evidence/{scenario}.json
   tools/{tool_name}/{scenario}.json
+  tools/universe_discovery/{scenario}.json
   sqlite/{scenario}/
   prediction_candidates/{scenario}.json
   reports/{scenario}/expected_report.json
@@ -31,3 +32,20 @@ Raw provider fixtures should include:
 
 Normalized fixtures should use the same public contracts as production code. Scenarios must not mix
 dates or universes unless the test explicitly exercises stale or contradictory evidence.
+
+## Universe Discovery Fixtures
+
+Phase 3 universe fixtures are small contract-shaped JSON files under
+`tests/fixtures/tools/universe_discovery/`.
+
+Use them for deterministic tests of:
+
+- broad asset-class representation;
+- provider ID and namespace preservation;
+- tradability/access evidence provenance;
+- explicit ambiguous, unsupported, and unavailable resolutions;
+- watchlist-driven universe requests.
+
+Universe fixture dates should be fixed, usually `2026-05-13`, and source URLs may use
+`https://example.test/` or raw fixture identifiers. These fixtures are not live provider captures and
+must not imply that an instrument is tradable today.
