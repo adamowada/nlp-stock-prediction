@@ -4,7 +4,7 @@ This document describes local configuration conventions for the agentic predicti
 
 ## Runtime
 
-Use Python 3.12 and the repository's editable install.
+Use Python 3.14.5 and the repository's editable install.
 
 ```sh
 python -m pip install --upgrade pip

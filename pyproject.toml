@@ -7,7 +7,7 @@ name = "nlp-stock-prediction"
 version = "0.1.0"
 description = "Codex-led CLI for evidence-backed market prediction research reports."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
   "pydantic>=2.8,<3",
   "python-dotenv>=1.0,<2",
@@ -53,14 +53,14 @@ markers = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "RUF", "SIM", "UP"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 warn_unused_configs = true
 show_error_codes = true
