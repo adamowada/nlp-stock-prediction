@@ -18,7 +18,6 @@ from nlp_stock_prediction.contracts import (
     DailyReport,
     DataFreshnessSummary,
     Direction,
-    Disclaimer,
     EvidenceReference,
     FreshnessStatus,
     FundamentalAnalysis,
@@ -156,7 +155,6 @@ def build_offline_fixture_bundle(config: RunConfig) -> OfflineFixtureBundle:
         command_args=_command_args(config),
         risk_profile=config.risk_profile,
         account_capital=_format_capital(config.capital),
-        disclaimer=_disclaimer(config.run_date),
         ticker_discovery=discovery,
         data_freshness=DataFreshnessSummary(
             as_of=generated_at,
@@ -194,21 +192,11 @@ def _command_args(config: RunConfig) -> JsonObject:
         "risk_profile": config.risk_profile.value,
         "fixture_dir": _posix(config.fixture_dir) if config.fixture_dir else None,
         "cache_dir": _posix(config.cache_dir) if config.cache_dir else None,
+        "ml_artifact": _posix(config.ml_artifact) if config.ml_artifact else None,
         "offline": config.offline,
         "source_mode": config.source_mode,
         "live_providers": config.live_providers,
     }
-
-
-def _disclaimer(run_date: date) -> Disclaimer:
-    return Disclaimer(
-        disclaimer_id="educational-report-v1",
-        version=run_date.isoformat(),
-        text=(
-            "Educational research only. This is not financial advice. "
-            "No automatic trading or brokerage execution is performed."
-        ),
-    )
 
 
 def _ticker_discovery(run_date: date, fetched_at: datetime) -> TickerDiscoveryResult:
@@ -490,7 +478,6 @@ def _trade_candidate(config: RunConfig, evidence: EvidenceReference) -> TradeCan
         contradictions=("Market fixture freshness warning reduces confidence.",),
         evidence=(evidence,),
         score_input_ids=("scoring-input-tsla",),
-        disclaimer_id="educational-report-v1",
         metadata={
             "recommendation_source": "offline-fixture-scorer",
             "confidence_inputs": {

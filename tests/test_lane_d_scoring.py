@@ -20,11 +20,13 @@ from nlp_stock_prediction.contracts import (
     ProviderWarning,
     RecommendationAction,
     RiskProfile,
+    ScoreComponent,
     SectorContext,
     StrategyCluster,
     TechnicalAnalysis,
     TechnicalMlSignal,
     TimeHorizon,
+    TradeCandidate,
     WarningCode,
     WarningSeverity,
 )
@@ -37,7 +39,6 @@ from nlp_stock_prediction.scoring import (
 from nlp_stock_prediction.scoring.risk import assess_risk
 
 RUN_DATE = date(2026, 5, 11)
-DISCLAIMER_ID = "educational-disclaimer-v1"
 
 
 def _evidence_ref(evidence_id: str = "evidence-nvda-1") -> EvidenceReference:
@@ -97,6 +98,42 @@ def _ml_signal(
         validation_accuracy=0.58,
         validation_brier_score=0.21,
         warning_ids=(f"ml-technical-signal:{status}",) if status != "usable" else (),
+    )
+
+
+def _timesfm_signal(
+    *,
+    signal: AnalysisSignal = AnalysisSignal.SUPPORTS,
+    status: Literal["usable", "weak", "stale", "conflicting", "unavailable"] = "usable",
+    freshness_status: FreshnessStatus = FreshnessStatus.FRESH,
+    calibrated_confidence: float = 0.36,
+    validation_accuracy: float | None = 0.64,
+    forecast_interval_width: float | None = 0.08,
+    expected_return: float | None = 0.06,
+) -> TechnicalMlSignal:
+    base = _ml_signal(
+        signal=signal,
+        status=status,
+        calibrated_confidence=calibrated_confidence,
+    )
+    warning_ids = (f"timesfm-evaluation:{status}",) if status != "usable" else ()
+    return base.model_copy(
+        update={
+            "model_hash": "timesfm-model-hash",
+            "dataset_hash": "timesfm-dataset-hash",
+            "freshness_status": freshness_status,
+            "expected_return": expected_return,
+            "forecast_interval_width": forecast_interval_width,
+            "source_artifact_id": "ml-timesfm-evaluation",
+            "source_artifact_sha256": "a" * 64,
+            "validation_accuracy": validation_accuracy,
+            "warning_ids": warning_ids,
+            "metadata": {
+                "model_kind": "timesfm_2_5_lora_evaluation",
+                "suitable_for_scoring": status == "usable",
+                "suitability_reasons": list(warning_ids),
+            },
+        }
     )
 
 
@@ -181,6 +218,13 @@ def _cluster_warning(risk_type: str, *, risk: float | None = None) -> ProviderWa
     )
 
 
+def _component_by_name(candidate: TradeCandidate, name: str) -> ScoreComponent:
+    for component in candidate.score.components:
+        if component.name == name:
+            return component
+    raise AssertionError(f"Missing score component {name}")
+
+
 @pytest.mark.unit
 def test_default_risk_controls_reject_margin_naked_options_and_oversized_loss() -> None:
     allowed = assess_risk(
@@ -253,7 +297,6 @@ def test_scoring_emits_qualified_defined_risk_candidate_with_auditable_component
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
     component_names = {component.name for component in candidate.score.components}
 
@@ -295,7 +338,6 @@ def test_ml_signal_conflict_penalizes_and_prevents_qualification() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -328,7 +370,6 @@ def test_weak_ml_signal_penalizes_and_prevents_qualification() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -336,6 +377,244 @@ def test_weak_ml_signal_penalizes_and_prevents_qualification() -> None:
     penalty_names = {penalty.name for penalty in candidate.score.penalties}
     assert "ml-signal-quality-penalty" in penalty_names
     assert "ml-signal-weak-penalty" in penalty_names
+
+
+@pytest.mark.unit
+def test_supportive_timesfm_signal_strengthens_existing_evidence_supported_candidate() -> None:
+    cluster = _cluster(direction=Direction.BULLISH)
+    signals = RecommendationSignals(
+        reddit_mentions=9,
+        reddit_unique_sources=5,
+        reddit_relevance=0.90,
+        social_mentions=4,
+        news_mentions=2,
+        catalyst_relevance=0.95,
+        liquidity_score=0.90,
+    )
+    baseline = score_strategy_cluster(
+        cluster=cluster,
+        analysis=_analysis_bundle(),
+        signals=signals,
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+    )
+    candidate = score_strategy_cluster(
+        cluster=cluster,
+        analysis=_analysis_bundle(technical_ml_signal=_timesfm_signal()),
+        signals=signals,
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+    )
+
+    baseline_technical = _component_by_name(baseline, "technical-alignment")
+    timesfm_technical = _component_by_name(candidate, "technical-alignment")
+
+    assert baseline.action == RecommendationAction.QUALIFIED
+    assert candidate.action == RecommendationAction.QUALIFIED
+    assert candidate.score.overall_score > baseline.score.overall_score
+    assert timesfm_technical.normalized_score > baseline_technical.normalized_score
+    assert timesfm_technical.raw_value is not None
+    assert "timesfm_adjustment=+0.0360" in str(timesfm_technical.raw_value)
+    assert timesfm_technical.data_reference_ids == ("ml-timesfm-evaluation", "a" * 64)
+    assert timesfm_technical.warning_ids == ()
+    assert candidate.score.failed_gates == ()
+    assert candidate.score.penalties == ()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("signal", "expected_gate", "expected_penalty"),
+    [
+        (
+            _timesfm_signal(status="weak", calibrated_confidence=0.08),
+            "timesfm-signal-not-actionable",
+            "timesfm-signal-quality-penalty",
+        ),
+        (
+            _timesfm_signal(status="stale", freshness_status=FreshnessStatus.STALE),
+            "timesfm-stale-signal",
+            "timesfm-stale-signal-penalty",
+        ),
+        (
+            _timesfm_signal(
+                signal=AnalysisSignal.UNKNOWN,
+                status="unavailable",
+                calibrated_confidence=0.0,
+                validation_accuracy=None,
+                forecast_interval_width=None,
+                expected_return=None,
+            ),
+            "timesfm-signal-unavailable",
+            "timesfm-signal-unavailable-penalty",
+        ),
+    ],
+)
+def test_non_usable_timesfm_sidecars_penalize_and_prevent_qualification(
+    signal: TechnicalMlSignal,
+    expected_gate: str,
+    expected_penalty: str,
+) -> None:
+    candidate = score_strategy_cluster(
+        cluster=_cluster(direction=Direction.BULLISH),
+        analysis=_analysis_bundle(technical_ml_signal=signal),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+    )
+
+    technical = _component_by_name(candidate, "technical-alignment")
+    penalty_names = {penalty.name for penalty in candidate.score.penalties}
+
+    assert candidate.action == RecommendationAction.WATCH
+    assert expected_gate in candidate.score.failed_gates
+    assert expected_penalty in penalty_names
+    assert technical.raw_value is not None
+    assert "timesfm_adjustment=+0.0000" in str(technical.raw_value)
+
+
+@pytest.mark.unit
+def test_timesfm_conflict_with_deterministic_technical_analysis_blocks_qualification() -> None:
+    candidate = score_strategy_cluster(
+        cluster=_cluster(direction=Direction.BULLISH),
+        analysis=_analysis_bundle(
+            technical_signal=AnalysisSignal.SUPPORTS,
+            technical_ml_signal=_timesfm_signal(signal=AnalysisSignal.CONFLICTS),
+        ),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+    )
+
+    assert candidate.action == RecommendationAction.WATCH
+    assert "timesfm-technical-conflict" in candidate.score.failed_gates
+    assert any(
+        penalty.name == "timesfm-technical-conflict-penalty"
+        for penalty in candidate.score.penalties
+    )
+
+
+@pytest.mark.unit
+def test_timesfm_wide_forecast_interval_blocks_qualification() -> None:
+    candidate = score_strategy_cluster(
+        cluster=_cluster(direction=Direction.BULLISH),
+        analysis=_analysis_bundle(
+            technical_ml_signal=_timesfm_signal(forecast_interval_width=0.31),
+        ),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+    )
+
+    technical = _component_by_name(candidate, "technical-alignment")
+
+    assert candidate.action == RecommendationAction.WATCH
+    assert "timesfm-wide-interval" in candidate.score.failed_gates
+    assert any(
+        penalty.name == "timesfm-wide-interval-penalty" for penalty in candidate.score.penalties
+    )
+    assert "timesfm_adjustment=+0.0000" in str(technical.raw_value)
+
+
+@pytest.mark.unit
+def test_timesfm_cannot_overcome_failed_evidence_or_risk_gates() -> None:
+    evidence_warning = _cluster_warning("conflicting_source_evidence")
+    evidence_failed = score_strategy_cluster(
+        cluster=_cluster(direction=Direction.BULLISH, warnings=(evidence_warning,)),
+        analysis=_analysis_bundle(technical_ml_signal=_timesfm_signal()),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+    )
+    risk_failed = score_strategy_cluster(
+        cluster=_cluster(direction=Direction.BULLISH),
+        analysis=_analysis_bundle(technical_ml_signal=_timesfm_signal()),
+        signals=RecommendationSignals(
+            reddit_mentions=9,
+            reddit_unique_sources=5,
+            reddit_relevance=0.90,
+            social_mentions=4,
+            news_mentions=2,
+            catalyst_relevance=0.95,
+            liquidity_score=0.90,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("11"),
+        risk_profile=RiskProfile.EXPLORATORY,
+    )
+
+    assert evidence_failed.action == RecommendationAction.WATCH
+    assert "conflicting-source-evidence" in evidence_failed.score.failed_gates
+    assert risk_failed.action == RecommendationAction.AVOID
+    assert "max-account-risk-exceeded" in risk_failed.risk_plan.failed_gates
+    assert select_qualified_candidates((evidence_failed, risk_failed)) == ()
+
+
+@pytest.mark.unit
+def test_timesfm_cannot_be_the_only_reason_a_candidate_qualifies() -> None:
+    candidate = score_strategy_cluster(
+        cluster=_cluster(direction=Direction.BULLISH, confidence=0.20),
+        analysis=_analysis_bundle(technical_ml_signal=_timesfm_signal(calibrated_confidence=0.80)),
+        signals=RecommendationSignals(
+            reddit_mentions=1,
+            reddit_unique_sources=1,
+            reddit_relevance=0.40,
+            social_mentions=1,
+            news_mentions=0,
+            catalyst_relevance=0.30,
+            liquidity_score=0.55,
+        ),
+        account_capital=Decimal("1000"),
+        max_loss_estimate=Decimal("8"),
+        risk_profile=RiskProfile.EXPLORATORY,
+    )
+
+    summary = build_no_trade_summary((candidate,))
+    technical = _component_by_name(candidate, "technical-alignment")
+
+    assert candidate.action == RecommendationAction.WATCH
+    assert candidate.score.overall_score >= candidate.score.threshold
+    assert "timesfm-cannot-qualify-standalone" in candidate.score.failed_gates
+    assert "timesfm_adjustment=+0.0800" in str(technical.raw_value)
+    assert select_qualified_candidates((candidate,)) == ()
+    assert "No qualified trade candidates" in summary
 
 
 @pytest.mark.unit
@@ -369,7 +648,6 @@ def test_contradiction_penalties_lower_score_and_prevent_qualification() -> None
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -396,7 +674,6 @@ def test_unsupported_recommendation_instrument_is_avoided_and_not_qualified() ->
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     qualified = select_qualified_candidates((candidate,))
@@ -428,7 +705,6 @@ def test_high_sarcasm_joke_warning_penalizes_and_prevents_qualification() -> Non
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -457,7 +733,6 @@ def test_conflicting_source_evidence_warning_penalizes_and_prevents_qualificatio
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("8"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     assert candidate.action == RecommendationAction.WATCH
@@ -490,7 +765,6 @@ def test_no_trade_days_are_valid_when_no_candidates_qualify() -> None:
         account_capital=Decimal("1000"),
         max_loss_estimate=Decimal("12"),
         risk_profile=RiskProfile.EXPLORATORY,
-        disclaimer_id=DISCLAIMER_ID,
     )
 
     qualified = select_qualified_candidates((candidate,))

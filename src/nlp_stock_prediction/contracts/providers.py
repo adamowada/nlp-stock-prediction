@@ -117,6 +117,7 @@ class RunConfig(ContractModel):
     risk_profile: RiskProfile = RiskProfile.EXPLORATORY
     fixture_dir: Path | None = None
     cache_dir: Path | None = None
+    ml_artifact: Path | None = None
     offline: bool = False
     source_mode: Literal["disabled", "offline", "scrape"] = "disabled"
     live_providers: bool = False

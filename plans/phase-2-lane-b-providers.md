@@ -12,7 +12,7 @@ preserving the frozen Phase 1 contract models.
 
 - Do not modify `src/nlp_stock_prediction/contracts/`.
 - Do not implement analysis, scoring, report rendering, or CLI orchestration owned by other lanes.
-- Do not add real brokerage execution or paid-provider assumptions.
+- Do not add paid-provider assumptions.
 - Do not require network access or credentials for the default test suite.
 - Do not add new third-party runtime dependencies.
 

@@ -14,7 +14,7 @@ from math import exp, isfinite, log, sqrt
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from nlp_stock_prediction.contracts.base import (
     AwareDatetime,
@@ -31,11 +31,6 @@ from nlp_stock_prediction.ml.dataset import (
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 SelectedDevice = Literal["cpu", "cuda"]
-
-USAGE_LIMITATIONS = (
-    "Experimental technical-analysis model output for research only; not investment advice, "
-    "not a recommendation, and not a substitute for evidence, risk gates, or human review."
-)
 
 
 class TrainingConfig(ContractModel):
@@ -76,6 +71,8 @@ class ModelMetrics(ContractModel):
 class TechnicalLogisticModel(ContractModel):
     """Small, inspectable baseline model trained from technical feature rows."""
 
+    model_config = ConfigDict(extra="ignore")
+
     model_kind: NonEmptyStr = "logistic_regression_baseline"
     feature_names: tuple[NonEmptyStr, ...]
     feature_means: tuple[float, ...]
@@ -90,7 +87,6 @@ class TechnicalLogisticModel(ContractModel):
     model_hash: NonEmptyStr
     trained_at: AwareDatetime
     training_metadata: JsonObject = Field(default_factory=dict)
-    usage_limitations: NonEmptyStr = USAGE_LIMITATIONS
 
     @model_validator(mode="after")
     def validate_model_shape(self) -> TechnicalLogisticModel:
@@ -122,14 +118,17 @@ class Prediction(ContractModel):
 class EvaluationResult(ContractModel):
     """Evaluation output with metrics and row-level probabilities."""
 
+    model_config = ConfigDict(extra="ignore")
+
     model_hash: NonEmptyStr
     metrics: ModelMetrics
     predictions: tuple[Prediction, ...]
-    usage_limitations: NonEmptyStr = USAGE_LIMITATIONS
 
 
 class TrainingResult(ContractModel):
     """Full training output for audit and artifact writing."""
+
+    model_config = ConfigDict(extra="ignore")
 
     model: TechnicalLogisticModel
     config: TrainingConfig
@@ -140,7 +139,6 @@ class TrainingResult(ContractModel):
     dataset_hash: NonEmptyStr
     trained_at: AwareDatetime
     runtime_metadata: JsonObject = Field(default_factory=dict)
-    usage_limitations: NonEmptyStr = USAGE_LIMITATIONS
 
 
 class TrainingArtifactPaths(ContractModel):
@@ -252,7 +250,6 @@ def train_technical_model(
             "gpu_name": device.gpu_name,
             "cuda_version": device.cuda_version,
             "dataset_hash": dataset.dataset_hash,
-            "not_advice": True,
         },
     )
     train_evaluation = evaluate_model(model, split.train_rows)
@@ -313,7 +310,6 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
         "model_hash": result.model.model_hash,
         "train": result.train_metrics.model_dump(mode="json"),
         "validation": result.validation_metrics.model_dump(mode="json"),
-        "usage_limitations": result.usage_limitations,
     }
     metrics_path.write_text(
         json.dumps(metrics_payload, indent=2, sort_keys=True),
@@ -337,7 +333,6 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
         "runtime": result.runtime_metadata,
         "split": _split_metadata(result.split),
         "trained_at": result.trained_at.isoformat(),
-        "usage_limitations": result.usage_limitations,
     }
     metadata_path.write_text(
         json.dumps(metadata_payload, indent=2, sort_keys=True),

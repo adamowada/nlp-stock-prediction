@@ -32,28 +32,6 @@ from nlp_stock_prediction.contracts.provenance import (
 from nlp_stock_prediction.contracts.recommendation import TradeCandidate
 
 
-class Disclaimer(ContractModel):
-    """Report disclaimer contract."""
-
-    disclaimer_id: NonEmptyStr
-    version: NonEmptyStr
-    text: NonEmptyStr
-    educational_only: bool = True
-    not_financial_advice: bool = True
-    no_auto_trading: bool = True
-    applies_to: tuple[str, ...] = ("report", "trade_candidates")
-
-    @model_validator(mode="after")
-    def validate_v1_guardrails(self) -> Disclaimer:
-        if not self.educational_only:
-            raise ValueError("v1 disclaimers must be educational_only")
-        if not self.not_financial_advice:
-            raise ValueError("v1 disclaimers must be not_financial_advice")
-        if not self.no_auto_trading:
-            raise ValueError("v1 disclaimers must prohibit auto-trading")
-        return self
-
-
 class DataFreshnessSummary(ContractModel):
     """Freshness summary shown in report headers and JSON."""
 
@@ -96,6 +74,7 @@ class AuditArtifact(ContractModel):
         "markdown_report",
         "json_report",
         "provider_result",
+        "ml_artifact",
     ]
     path: NonEmptyStr
     created_at: AwareDatetime
@@ -129,7 +108,6 @@ class MarkdownReportOutline(ContractModel):
     required_ticker_subsections: tuple[NonEmptyStr, ...]
     final_section_headings: tuple[NonEmptyStr, ...]
     required_footer_headings: tuple[NonEmptyStr, ...]
-    require_disclaimer: bool = True
     require_evidence_references: bool = True
     require_audit_artifacts: bool = True
 
@@ -154,7 +132,6 @@ DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
         "Provider Warnings",
         "Ticker Sections",
         "Qualified Trading Strategies Or No-Trade Summary",
-        "Disclaimer",
         "Audit Artifacts",
     ),
     ticker_section_heading_template="{ticker}",
@@ -173,7 +150,7 @@ DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
         "Qualified Trading Strategies",
         "No-Trade Summary",
     ),
-    required_footer_headings=("Disclaimer", "Audit Artifacts"),
+    required_footer_headings=("Audit Artifacts",),
 )
 
 
@@ -191,7 +168,6 @@ class DailyReport(ContractModel):
     command_args: JsonObject = Field(default_factory=dict)
     risk_profile: RiskProfile
     account_capital: str | None = None
-    disclaimer: Disclaimer
     ticker_discovery: TickerDiscoveryResult
     data_freshness: DataFreshnessSummary
     provider_health: tuple[ProviderHealth, ...] = Field(default_factory=tuple)
@@ -244,8 +220,6 @@ class DailyReport(ContractModel):
         for candidate in self.trade_candidates:
             if candidate.ticker not in self.ticker_discovery.tickers:
                 raise ValueError("trade candidates must use discovered tickers")
-            if candidate.disclaimer_id != self.disclaimer.disclaimer_id:
-                raise ValueError("trade candidate disclaimer_id must match report disclaimer")
             if candidate.candidate_id not in section_references:
                 raise ValueError("trade candidates must be referenced by a ticker section")
             if section_references[candidate.candidate_id] != candidate.ticker:
@@ -268,7 +242,6 @@ __all__ = [
     "AuditManifest",
     "DailyReport",
     "DataFreshnessSummary",
-    "Disclaimer",
     "MarkdownReportOutline",
     "TickerReportSection",
 ]

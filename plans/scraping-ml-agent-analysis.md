@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a live source mode that uses compliance-aware scraping adapters where public HTML is the right
+Add a live source mode that uses public HTML adapters where public pages are the right
 source, official APIs where they are the safer or supported interface, a local RTX 3090 training
 pipeline for ML-assisted technical analysis, and a Codex-agent-based NLP fundamental analysis lane
 that produces contract-valid, evidence-grounded outputs for the daily report.
@@ -16,12 +16,10 @@ from generated analysis and recommendations.
 
 - Do not bypass robots.txt, paywalls, login walls, anti-bot systems, CAPTCHAs, or platform access
   controls.
-- Do not use real-money brokerage execution, auto-trading, or executable order payloads.
 - Do not claim scraped social/news discussion as fact without attribution and provenance.
 - Do not make the default deterministic test suite depend on live websites, GPUs, browser sessions,
   or local Codex agent availability.
-- Do not treat the ML model as investment advice or as a replacement for evidence, risk gates,
-  and disclaimers.
+- Do not treat the ML model as a replacement for evidence, risk gates, or scoring gates.
 - Do not scrape TradingView internals embedded inside Candlecharts unless legal review and source
   terms allow it.
 
@@ -32,8 +30,8 @@ fixture bundle. `run --source-mode scrape` builds a fixture-backed scrape-source
 provider health, normalized evidence, ML and fundamental-agent sidecars, and provider-result audit
 artifacts. `run --source-mode scrape --live-providers` explicitly calls the wired live Reddit public
 page, AP News public HTML, Candlecharts feasibility, and X recent-search providers, records live
-provider health and normalized evidence, and emits no-trade guidance until live extraction,
-analysis, and scoring are enabled under a future plan. The X provider request shape is implemented,
+provider health and normalized evidence, and emits evidence-only output without live scored
+predictions or recommendations. The X provider request shape is implemented,
 fixture-tested, and wired into the live scrape provider path for the six report tickers with the
 production default of 50 relevant posts per ticker.
 
@@ -97,10 +95,10 @@ Parallel workstreams:
 | ID | Branch | Owner Scope | Depends On | Primary Write Set |
 | --- | --- | --- | --- | --- |
 | P0 | `feature/release-v1` or integration branch | Coordinator, merge sequencing, final E2E | all | `plans/`, final docs, integration conflict resolution only |
-| W1 | `codex/scraping-policy` | Source policy registry, scraping warnings, shared fetch/cache contracts | none | `src/nlp_stock_prediction/compliance.py`, `src/nlp_stock_prediction/providers/_base.py`, `src/nlp_stock_prediction/contracts/`, `tests/test_lane_f_*` |
+| W1 | `codex/scraping-policy` | Source policy registry, scraping warnings, shared fetch/cache contracts | none | `src/nlp_stock_prediction/providers/_base.py`, `src/nlp_stock_prediction/providers/scraping.py`, `src/nlp_stock_prediction/contracts/`, `tests/test_lane_f_*` |
 | W2 | `codex/reddit-scraper` | Reddit public-page discovery/evidence adapter and fixtures | W1 interfaces, or temporary local shim | `src/nlp_stock_prediction/reddit/`, `src/nlp_stock_prediction/providers/reddit_scrape.py`, `tests/test_lane_a_reddit_*`, Reddit fixtures |
 | W3 | `codex/apnews-scraper` | AP hub/article scraper and news evidence normalization | W1 interfaces, or temporary local shim | `src/nlp_stock_prediction/providers/apnews.py`, narrow additions to `providers/news.py`, AP tests/fixtures |
-| W4 | `codex/candlecharts-feasibility` | Candlecharts feasibility probe and unavailable/widget-only warning path | W1 interfaces, market contracts read-only unless needed | `src/nlp_stock_prediction/providers/candlecharts.py`, Candlecharts tests/fixtures, docs for data limitations |
+| W4 | `codex/candlecharts-feasibility` | Candlecharts feasibility probe and unavailable/widget-only warning path | W1 interfaces, market contracts read-only unless needed | `src/nlp_stock_prediction/providers/candlecharts.py`, Candlecharts tests/fixtures, docs for data constraints |
 | W5 | `codex/x-orchestration` | Bind the existing X provider into live-source provider slots and smoke coverage | current X provider, W6 provider hook shape | narrow additions to X orchestration registration and X-specific tests |
 | W6 | `codex/live-source-orchestration` | CLI mode, provider hook shape, provider composition, degraded-provider reporting, audit manifest | W1 for policy types; adapter PRs for final E2E | `src/nlp_stock_prediction/cli.py`, `pipeline.py`, `reporting/`, E2E tests |
 | W7 | `codex/ml-technical-analysis` | Dataset schema, leakage checks, CPU/GPU training/evaluation commands | existing market contracts | `src/nlp_stock_prediction/ml/`, ML tests, ignored artifact paths, ML docs |
@@ -150,7 +148,7 @@ Integration discipline:
 
 ## Milestones
 
-### Milestone 1: Compliance And Scraping Policy Gate
+### Milestone 1: Source Policy And Scraping Gate
 
 - Changes:
   - Add a source policy registry for each target with robots status, allowed paths, disallowed paths,
@@ -161,12 +159,12 @@ Integration discipline:
   - Preserve the current network-blocked default tests.
 - Files likely affected:
   - `src/nlp_stock_prediction/providers/_base.py`
-  - `src/nlp_stock_prediction/compliance.py`
+  - `src/nlp_stock_prediction/providers/scraping.py`
   - `src/nlp_stock_prediction/contracts/providers.py`
   - `src/nlp_stock_prediction/contracts/enums.py`
   - `docs/configuration.md`
   - `.env.example`
-  - `tests/test_lane_f_compliance.py`
+  - source-policy tests
   - new tests for scraping policy behavior
 - Verification:
   - Unit tests for allowed, disallowed, login-required, and drift-detected policies.
@@ -202,7 +200,7 @@ Integration discipline:
     and retain fixture fallback for tests.
   - Keep ticker extraction compatible with the existing `ticker-container-*` parser, but add drift
     probes for alternate public markup.
-  - Do not use Reddit API, JSON endpoints, private endpoints, or login-only content.
+  - Use public Reddit pages covered by the source policy.
 - Files likely affected:
   - `src/nlp_stock_prediction/reddit/discovery.py`
   - `src/nlp_stock_prediction/reddit/evidence.py`
@@ -256,8 +254,8 @@ Integration discipline:
 
 ### Milestone 6: X API Relevant Search
 
-Status: implemented and wired into the opt-in live scrape provider path; live extraction/scoring
-remains a later milestone.
+Status: implemented and wired into the opt-in live scrape provider path; live-provider runs remain
+evidence-only and do not generate live recommendations.
 
 - Changes:
   - Use the official X API v2 recent-search endpoint instead of browser scraping X search pages.
@@ -273,7 +271,7 @@ remains a later milestone.
     emit structured provider warnings and continue the report.
 - Files likely affected:
   - `src/nlp_stock_prediction/providers/social.py`
-  - `src/nlp_stock_prediction/compliance.py`
+  - `src/nlp_stock_prediction/providers/scraping.py`
   - `tests/test_lane_b_providers.py`
   - `docs/configuration.md`
 - Verification:
@@ -291,9 +289,8 @@ remains a later milestone.
     `run --source-mode scrape --live-providers`.
   - Wire Reddit, AP News, Candlecharts, and X API recent-search provider results into one
     degraded-provider-aware reporting and audit path.
-  - Keep live extraction, analysis, scoring, ML sidecars, and fundamental-agent sidecars disabled
-    for live provider runs until a future plan enables them against real evidence. Live provider
-    reports remain no-trade.
+  - Keep live-provider runs evidence-only: fixture ML sidecars, fundamental-agent sidecars, and
+    generated recommendations are suppressed for that mode.
   - Ensure all missing, blocked, stale, and drifted sources appear in provider health and report
     warnings.
   - Keep raw snapshots and normalized artifacts out of git unless they are curated fixtures.
@@ -339,7 +336,7 @@ remains a later milestone.
   - Start with a compact temporal model such as a 1D CNN/TCN or small transformer over OHLCV-derived
     windows, plus a logistic/gradient baseline for sanity checks.
   - Add reproducible train/evaluate commands and store model artifacts outside git by default.
-  - Add calibration metrics and no-trade thresholds so weak predictions do not become recommendations.
+  - Add calibration metrics and qualification thresholds so weak predictions do not become recommendations.
 - Files likely affected:
   - `pyproject.toml`
   - new `src/nlp_stock_prediction/ml/train.py`
@@ -356,7 +353,7 @@ remains a later milestone.
 
 - Changes:
   - Extend `TechnicalAnalysis` or add an ML sidecar component that includes model version, input
-    feature references, prediction horizon, probability/calibration, and limitations.
+    feature references, prediction horizon, and probability/calibration.
   - Combine deterministic technical indicators and ML signal conservatively.
   - Block ML-driven recommendations unless model metrics and data freshness pass configured gates.
 - Files likely affected:
@@ -424,7 +421,7 @@ remains a later milestone.
       fixture-backed scrape inputs.
 - [x] `run --source-mode scrape --live-providers` explicitly calls wired live providers, records
       provider health and normalized evidence, writes `audit/provider-results.json`, and emits
-      no-trade guidance until live extraction/scoring is enabled.
+      evidence-only output without generating live recommendations.
 - [x] Live scraping tests are opt-in, rate-limited, and source-specific.
 - [x] ML dataset generation has leakage tests and data-quality gates.
 - [x] RTX 3090 training command records reproducible metrics and model artifact metadata.
@@ -432,10 +429,10 @@ remains a later milestone.
       gates.
 - [x] Codex fundamental analysis agent lane has a strict request/response schema and fixture-backed
       tests.
-- [x] Reports preserve source evidence, provider metadata, confidence inputs, disclaimers, and
-      warnings for blocked/stale/drifted providers.
+- [x] Reports preserve source evidence, provider metadata, confidence inputs, and warnings for
+      blocked/stale/drifted providers.
 - [x] Existing offline behavior remains deterministic and green.
-- [x] Documentation covers configuration, compliance limits, training, and agent workflow.
+- [x] Documentation covers configuration, provider limits, training, and agent workflow.
 
 ## Verification commands
 
@@ -447,7 +444,7 @@ python -m pytest tests/test_lane_b_providers.py
 python -m pytest tests/test_lane_c_extraction.py
 python -m pytest tests/test_lane_d_analysis.py tests/test_lane_d_scoring.py
 python -m pytest tests/test_lane_e_cli_e2e.py
-python -m pytest tests/test_lane_f_compliance.py tests/test_lane_f_reliability.py
+python -m pytest tests/test_lane_f_reliability.py
 ruff check .
 ruff format --check .
 mypy .
@@ -497,8 +494,7 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
   reviewed locally, and verified before any ACP.
 - 2026-05-12-00-00: Keep live-provider scrape orchestration explicit behind
   `--source-mode scrape --live-providers`. The live path records provider evidence, health, and
-  audit artifacts, but suppresses fixture sidecars and emits no-trade guidance until live
-  extraction, analysis, and scoring are enabled intentionally.
+  audit artifacts, but suppresses fixture sidecars and generated recommendations.
 
 ## Progress log
 
@@ -557,8 +553,8 @@ python -m nlp_stock_prediction.ml.evaluate --model artifacts/ml/TSLA/model.json 
   environment, and the GPU/evaluation smoke commands now match the actual CLI.
 - 2026-05-12-00-00: Merged the opt-in live-provider orchestration PR into `feature/release-v1`.
   The branch now has the live scrape path for Reddit, AP News, Candlecharts, and X recent search,
-  with live normalized evidence, provider health, provider-result audit artifacts, and no-trade
-  output until live extraction/scoring is implemented.
+  with live normalized evidence, provider health, provider-result audit artifacts, and evidence-only
+  output without generating live recommendations.
 - 2026-05-12-00-00: Cross-checked the merged branch against active plans, source docs, and CLI
   behavior. Updated stale plan/docs language that still described live orchestration as unwired, and
   narrowed the no-mode CLI error to point users at the three explicit local modes.

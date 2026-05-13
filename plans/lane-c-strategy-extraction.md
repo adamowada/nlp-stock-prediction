@@ -9,7 +9,7 @@ Implement deterministic, evidence-grounded strategy extraction helpers for Phase
 ## Non-goals
 
 - Do not modify `src/nlp_stock_prediction/contracts/`.
-- Do not implement recommendation scoring, risk gates, report rendering, provider fetching, or real brokerage behavior.
+- Do not implement recommendation scoring, risk gates, report rendering, or provider fetching.
 - Do not require network access or LLM credentials for the default test suite.
 - Do not add third-party dependencies.
 

@@ -19,6 +19,17 @@ dev = [
   "pytest>=8.3,<9",
   "ruff>=0.6,<1",
 ]
+timesfm = [
+  "accelerate>=1.13,<2",
+  "huggingface_hub>=1.14,<2",
+  "pandas>=3.0,<4",
+  "peft>=0.19,<1",
+  "pyarrow>=24,<25",
+  "safetensors>=0.7,<1",
+  "scikit-learn>=1.8,<2",
+  "torch>=2.11,<3",
+  "transformers>=5.8,<6",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/nlp_stock_prediction"]

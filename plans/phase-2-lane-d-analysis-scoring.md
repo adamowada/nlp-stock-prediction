@@ -45,10 +45,10 @@ private helpers under `src/nlp_stock_prediction/analysis/` and
 ### Milestone 3: Risk And Scoring
 
 - Changes: score Reddit, social/news catalysts, technicals, fundamentals, sector, macro,
-  liquidity/risk suitability, contradiction penalties, no-trade outcomes, and qualified candidates.
+  liquidity/risk suitability, contradiction penalties, outcomes where nothing qualifies, and qualified candidates.
 - Files likely affected: `src/nlp_stock_prediction/scoring/risk.py`,
   `src/nlp_stock_prediction/scoring/recommendations.py`, `tests/test_lane_d_scoring.py`.
-- Verification: focused unit tests for qualified, conflicting, and no-trade scenarios.
+- Verification: focused unit tests for qualified, conflicting, and nothing-qualifies scenarios.
 
 ## Acceptance criteria
 

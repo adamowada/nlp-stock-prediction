@@ -51,8 +51,6 @@ def test_markdown_report_includes_required_lane_e_sections() -> None:
     assert "Report date: 2026-05-11" in rendered
     assert "Data freshness:" in rendered
     assert "Provider Warnings" in rendered
-    assert "Educational research only" in rendered
-    assert "No automatic trading" in rendered
     assert "Qualified Trading Strategies" in rendered
     assert "candidate-tsla-shares-swing" in rendered
     assert "#### App Analysis" in rendered
@@ -189,7 +187,6 @@ def test_json_report_preserves_stage_4_recommendation_and_quality_inputs() -> No
     evidence = cast(list[JsonObject], candidate["evidence"])
     overall_score = cast(float, score["overall_score"])
     threshold = cast(float, score["threshold"])
-    disclaimer = cast(JsonObject, payload["disclaimer"])
     market_health = provider_health[1]
     market_warnings = cast(list[JsonObject], market_health["warnings"])
     missing_health = provider_health[2]
@@ -211,7 +208,6 @@ def test_json_report_preserves_stage_4_recommendation_and_quality_inputs() -> No
         "analysis-tsla-offline",
     ]
     assert penalties[0]["warning_ids"] == ["fixture-market-data:stale_data"]
-    assert candidate["disclaimer_id"] == disclaimer["disclaimer_id"]
     assert market_warnings[0]["code"] == "stale_data"
     assert missing_health["provider_name"] == "fixture-sec-edgar"
     assert missing_health["status"] == "unconfigured"
@@ -245,4 +241,3 @@ def test_offline_fixture_report_with_zero_capital_has_no_qualified_candidate() -
     assert "### No-Trade Summary" in rendered
     assert "### Qualified Trading Strategies" not in rendered
     assert "No qualified trades passed the offline fixture risk gates." in rendered
-    assert "Educational research only" in rendered

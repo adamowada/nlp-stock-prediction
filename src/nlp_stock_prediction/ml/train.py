@@ -67,7 +67,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "device_notes": list(result.device.notes),
                 "validation_accuracy": result.validation_metrics.accuracy,
                 "validation_brier_score": result.validation_metrics.brier_score,
-                "usage_limitations": result.usage_limitations,
             },
             sort_keys=True,
         )

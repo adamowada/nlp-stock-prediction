@@ -13,7 +13,6 @@ stable, shared Python package contract.
 - Do not implement provider adapters, analysis formulas, recommendation scoring, report rendering,
   live scraping, live API access, or worktree lane branches.
 - Do not complete the Phase 1 comprehensive contract test harness.
-- Do not add real-money brokerage execution.
 
 ## Context
 

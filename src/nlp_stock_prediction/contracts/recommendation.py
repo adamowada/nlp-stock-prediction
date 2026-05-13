@@ -96,7 +96,6 @@ class TradeCandidate(ContractModel):
     evidence: tuple[EvidenceReference, ...]
     score_input_ids: tuple[str, ...] = Field(default_factory=tuple)
     warnings: tuple[ProviderWarning, ...] = Field(default_factory=tuple)
-    disclaimer_id: NonEmptyStr
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")

@@ -15,7 +15,6 @@ from nlp_stock_prediction.contracts import (
     DataFreshnessSummary,
     DataReference,
     Direction,
-    Disclaimer,
     EvidenceReference,
     FreshnessStatus,
     InstrumentType,
@@ -48,14 +47,6 @@ TICKERS = ("TSLA", "NVDA", "AMD", "AAPL", "MU", "SPY")
 
 def _timestamp() -> datetime:
     return datetime(2026, 5, 11, 20, 0, tzinfo=UTC)
-
-
-def _disclaimer() -> Disclaimer:
-    return Disclaimer(
-        disclaimer_id="educational-report-v1",
-        version="2026-05-11",
-        text="Educational research only; not financial advice; no automatic trading.",
-    )
 
 
 def _source_provenance(ticker: str) -> SourceProvenance:
@@ -307,7 +298,6 @@ def _trade_candidate() -> TradeCandidate:
         contradictions=("Market data freshness warning reduces confidence.",),
         evidence=(evidence,),
         score_input_ids=("scoring-input-tsla",),
-        disclaimer_id="educational-report-v1",
         metadata={
             "recommendation_source": "fixture-scorer",
             "confidence_inputs": {
@@ -338,7 +328,6 @@ def _daily_report(
         command_args={"date": "2026-05-11", "output": "reports/", "offline": True},
         risk_profile=RiskProfile.EXPLORATORY,
         account_capital="1000.00",
-        disclaimer=_disclaimer(),
         ticker_discovery=_ticker_discovery(),
         data_freshness=_data_freshness(),
         provider_health=_provider_health(),
@@ -375,7 +364,7 @@ def test_daily_report_without_candidates_requires_no_trade_summary() -> None:
 
 
 @pytest.mark.schema
-def test_daily_report_validates_candidate_section_and_disclaimer_links() -> None:
+def test_daily_report_validates_candidate_section_links() -> None:
     candidate = _trade_candidate()
 
     with pytest.raises(ValidationError, match="referenced by a ticker section"):
@@ -403,20 +392,6 @@ def test_daily_report_validates_candidate_section_and_disclaimer_links() -> None
                 *_ticker_sections(TICKERS[2:]),
             ),
             trade_candidates=(candidate,),
-            no_trade_summary=None,
-        )
-
-    with pytest.raises(ValidationError, match="disclaimer_id must match"):
-        _daily_report(
-            ticker_sections=_ticker_sections(include_candidate_links=True),
-            trade_candidates=(
-                TradeCandidate.model_validate(
-                    {
-                        **candidate.model_dump(),
-                        "disclaimer_id": "other-disclaimer",
-                    }
-                ),
-            ),
             no_trade_summary=None,
         )
 
@@ -487,19 +462,10 @@ def test_daily_report_evidence_sources_resolve_cited_evidence_ids() -> None:
 
 
 @pytest.mark.schema
-def test_report_header_shape_serializes_disclaimer_health_and_freshness() -> None:
+def test_report_header_shape_serializes_health_and_freshness() -> None:
     report = _daily_report()
     dumped = report.model_dump(mode="json")
 
-    assert dumped["disclaimer"] == {
-        "disclaimer_id": "educational-report-v1",
-        "version": "2026-05-11",
-        "text": "Educational research only; not financial advice; no automatic trading.",
-        "educational_only": True,
-        "not_financial_advice": True,
-        "no_auto_trading": True,
-        "applies_to": ["report", "trade_candidates"],
-    }
     assert dumped["data_freshness"] == {
         "as_of": "2026-05-11T20:00:00Z",
         "summary": "Reddit evidence is fresh; market data is stale but still traceable.",
@@ -510,14 +476,6 @@ def test_report_header_shape_serializes_disclaimer_health_and_freshness() -> Non
     assert dumped["provider_health"][0]["status"] == "ok"
     assert dumped["provider_health"][1]["status"] == "stale"
     assert dumped["provider_health"][1]["warnings"][0]["code"] == "stale_data"
-
-    with pytest.raises(ValidationError, match="prohibit auto-trading"):
-        Disclaimer(
-            disclaimer_id="bad-disclaimer",
-            version="2026-05-11",
-            text="Missing the v1 no-auto-trading guardrail.",
-            no_auto_trading=False,
-        )
 
 
 @pytest.mark.schema
@@ -532,7 +490,6 @@ def test_default_markdown_report_outline_freezes_required_section_shape() -> Non
         "Provider Warnings",
         "Ticker Sections",
         "Qualified Trading Strategies Or No-Trade Summary",
-        "Disclaimer",
         "Audit Artifacts",
     ]
     assert outline.ticker_section_heading_template == "{ticker}"
@@ -541,7 +498,6 @@ def test_default_markdown_report_outline_freezes_required_section_shape() -> Non
         "Qualified Trading Strategies",
         "No-Trade Summary",
     )
-    assert outline.require_disclaimer is True
     assert outline.require_evidence_references is True
     assert outline.require_audit_artifacts is True
 
@@ -604,7 +560,6 @@ def test_json_round_trip_preserves_evidence_and_recommendation_inputs() -> None:
 
     candidate = dumped["trade_candidates"][0]
     assert candidate["action"] == "qualified"
-    assert candidate["disclaimer_id"] == dumped["disclaimer"]["disclaimer_id"]
     assert candidate["evidence"][0]["evidence_id"] == "reddit-tsla-comment-1"
     assert candidate["score"]["components"][0]["data_reference_ids"] == [
         "reddit-normalized-tsla",

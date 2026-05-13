@@ -4,7 +4,7 @@
 
 This project is a TDD-first Python CLI application for generating a daily, evidence-grounded stock opportunity report for a retail trader with a small account.
 
-The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI supports deterministic `--offline`, fixture-backed `--source-mode scrape`, and explicit opt-in live provider evidence collection with `--source-mode scrape --live-providers`; live provider runs remain no-trade until live extraction/scoring is enabled. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
+The product goal is an app that discovers the six tickers surfaced by the r/wallstreetbets Devvit daily ticker card, gathers recent public discussion and news, extracts discussed trading strategies with evidence, combines that with technical, fundamental, sector, and macro analysis, then writes a Markdown and JSON report. The current V1 CLI supports deterministic `--offline`, fixture-backed `--source-mode scrape`, and explicit opt-in live provider evidence collection with `--source-mode scrape --live-providers`; live provider runs currently collect evidence and audit metadata only and do not generate live recommendations. Phase 4 local TimesFM 2.5 technical analysis is complete on the Windows RTX 3090 path; use [plans/timesfm-technical-analysis.md](plans/timesfm-technical-analysis.md) as the acceptance record and [docs/configuration.md](docs/configuration.md) for the user workflow. The system should support exploratory stock/options ideas while clearly separating observed discussion from the app's own analysis and recommendations.
 
 The project should favor correctness, traceability, and testability over speed of adding features. Any generated recommendation must preserve its source evidence, assumptions, risks, and confidence inputs.
 
@@ -16,12 +16,19 @@ Use the repository's configured commands. Expected commands are:
 
 ```sh
 python -m pytest
+python -m pytest -m "not live_api and not live_scraping"
+python -m pytest tests/test_lane_d_scoring.py tests/test_timesfm_smoke.py tests/test_timesfm_dataset.py tests/test_timesfm_adapter.py tests/test_timesfm_training.py tests/test_timesfm_evaluation.py tests/test_timesfm_report_integration.py
 ruff check .
 ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline
 python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --source-mode scrape
+python -m nlp_stock_prediction.ml.timesfm.smoke --device cuda --steps 2
+python -m nlp_stock_prediction.ml.timesfm.adapter --synthetic --ticker TSLA --device cuda --output artifacts/ml/timesfm-forecast-smoke/forecast.json
+python -m nlp_stock_prediction.ml.timesfm.train --synthetic --ticker TSLA --device cuda --output-dir artifacts/ml/timesfm-train-smoke --epochs 1 --max-steps 1 --batch-size 1 --validation-batches 1
+python -m nlp_stock_prediction.ml.timesfm.evaluate --synthetic --ticker TSLA --model-dir artifacts/ml/timesfm-train-smoke --device cuda --output artifacts/ml/timesfm-eval-smoke/evaluation.json --max-windows 1 --min-evaluation-windows 1
+python -m nlp_stock_prediction run --date 2026-05-11 --output reports/ --offline --ml-artifact artifacts/ml/timesfm-eval-smoke/evaluation.json
 ```
 
 Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is introduced.
@@ -35,7 +42,6 @@ If the final project uses a task runner, keep this section updated with the cano
 - Use structured parsers or typed clients where available; avoid ad hoc string parsing except for tightly scoped extraction rules covered by tests.
 - Preserve source provenance for all external data, including provider name, fetched timestamp, permalink or source URL, raw identifier, and freshness.
 - Do not present Reddit, X/Twitter, or news discussion as fact without attribution.
-- Do not add real-money brokerage execution in this project unless explicitly planned and approved.
 - Keep secrets out of the repo. Load API keys from environment variables or local `.env` files that are ignored by git.
 - Make external calls through provider adapters so tests can use fixtures and mocks without network access.
 - Handle rate limits, partial provider failures, and stale data explicitly.
@@ -53,7 +59,7 @@ If the final project uses a task runner, keep this section updated with the cano
   data, rate-limit and unavailable-provider results, stale market or macro data, unsupported
   recommendations, conflicting evidence, joke/sarcasm risk, no qualified strategies, and short
   ticker false positives.
-- Any recommendation logic change must include tests for no-trade days, conflicting evidence, and at least one qualified strategy.
+- Any recommendation logic change must include tests for days with no qualified strategies, conflicting evidence, and at least one qualified strategy.
 
 ## Planning rules
 
@@ -69,7 +75,7 @@ If the final project uses a task runner, keep this section updated with the cano
 
 - The requested behavior is implemented and covered by focused tests.
 - Existing tests pass, and relevant lint/typecheck/build commands pass where applicable.
-- Generated reports preserve evidence, provider metadata, confidence inputs, and disclaimers.
+- Generated reports preserve evidence, provider metadata, and confidence inputs.
 - External provider failures degrade gracefully and are visible in the report or logs.
 - Documentation is updated when commands, configuration, behavior, or report structure changes.
 - No secrets, raw credentials, or unrelated generated artifacts are committed.

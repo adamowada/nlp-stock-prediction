@@ -24,7 +24,6 @@ _EVIDENCE_REFERENCE_FIELDS = {"evidence_id", "quote", "start_char", "end_char", 
 _RECOMMENDATION_FIELDS = {
     "action",
     "candidate_id",
-    "disclaimer_id",
     "entry_logic",
     "invalidation_criteria",
     "recommendation_action",

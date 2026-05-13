@@ -93,7 +93,6 @@ def test_cpu_training_smoke_records_reproducible_metadata() -> None:
     assert split_metadata["purged_row_count"] == result.split.purged_row_count
     assert validation_metrics["samples"] == result.validation_metrics.samples
     assert runtime_metadata["selected_device"] == "cpu"
-    assert "not investment advice" in result.usage_limitations.lower()
 
 
 @pytest.mark.unit
@@ -243,8 +242,12 @@ def test_training_command_writes_reproducible_metadata_payload(tmp_path: Path) -
 
     assert payload["selected_device"] == "cpu"
     assert payload["backend"] == "pure-python-logistic-regression"
-    assert payload["cuda_available"] is False
-    assert payload["gpu_name"] is None
+    assert isinstance(payload["cuda_available"], bool)
+    if payload["cuda_available"]:
+        assert isinstance(payload["gpu_name"], str)
+        assert payload["gpu_name"]
+    else:
+        assert payload["gpu_name"] is None
     assert payload["dataset_hash"] == metadata["dataset_hash"]
     assert payload["model_hash"] == metadata["model_hash"]
     assert payload["artifact_sha256"]["model"] == metadata["model_artifact_sha256"]
@@ -258,7 +261,6 @@ def test_training_command_writes_reproducible_metadata_payload(tmp_path: Path) -
     assert metadata["runtime"]["selected_device"] == "cpu"
     assert metadata["split"]["validation_rows"] > 0
     assert metadata["metrics"]["validation"]["samples"] == metadata["split"]["validation_rows"]
-    assert metadata["usage_limitations"] == payload["usage_limitations"]
 
 
 @pytest.mark.unit

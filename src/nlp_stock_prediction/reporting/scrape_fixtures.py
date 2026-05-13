@@ -707,7 +707,11 @@ def _scrape_report(
     command_args["live_providers"] = live_providers
     report = offline_bundle.report
     fundamental_agent_result = _fundamental_agent_result_from_results(provider_results)
-    ml_signal = _fixture_ml_signal(generated_at) if apply_fixture_sidecars else None
+    ml_signal = (
+        _fixture_ml_signal(generated_at)
+        if apply_fixture_sidecars and config.ml_artifact is None
+        else None
+    )
     summary_label = (
         "live Reddit/AP public HTML providers, the Candlecharts feasibility probe, and "
         "the X recent-search API"
@@ -757,7 +761,7 @@ def _scrape_report(
                     "provider_result_artifact": "provider-results",
                     "ml_signal": (
                         "fixture_sidecar"
-                        if apply_fixture_sidecars and section.ticker == "TSLA"
+                        if ml_signal is not None and section.ticker == "TSLA"
                         else None
                     ),
                     "fundamental_agent": (
@@ -799,8 +803,8 @@ def _scrape_report(
     )
     trade_candidates = () if live_providers else report.trade_candidates
     no_trade_summary = (
-        "Live scrape mode collected provider evidence, but live extraction/scoring is not enabled; "
-        "no qualified trades are produced from this run."
+        "Live scrape mode collected provider evidence and audit metadata only; no qualified "
+        "trades are produced from this run."
         if live_providers
         else report.no_trade_summary
     )
@@ -849,9 +853,6 @@ def _fixture_ml_signal(generated_at: datetime) -> TechnicalMlSignal:
         freshness_status=FreshnessStatus.FRESH,
         validation_accuracy=0.58,
         validation_brier_score=0.21,
-        limitations=(
-            "Fixture ML signal is local research metadata and cannot qualify a trade alone.",
-        ),
         metadata={"source_mode": "scrape", "fixture": True},
     )
 

@@ -12,6 +12,7 @@ from nlp_stock_prediction.contracts import (
     AnalysisSignal,
     Direction,
     EvidenceReference,
+    FreshnessStatus,
     InstrumentType,
     PositionType,
     ProviderWarning,
@@ -25,7 +26,24 @@ from nlp_stock_prediction.contracts import (
 )
 from nlp_stock_prediction.scoring.risk import assess_risk
 
-SCORE_VERSION = "lane-d-score-v1"
+SCORE_VERSION = "lane-d-score-v2"
+
+_TIMESFM_MODEL_KIND = "timesfm_2_5_lora_evaluation"
+_TIMESFM_MAX_INTERVAL_WIDTH = 0.20
+_TIMESFM_MIN_VALIDATION_ACCURACY = 0.52
+_TIMESFM_MIN_CONFIDENCE = 0.15
+_TIMESFM_MAX_TECHNICAL_BOOST = 0.08
+_TECHNICAL_ALIGNMENT_WEIGHT = 0.18
+
+
+@dataclass(frozen=True, slots=True)
+class _TechnicalMlScoringEffect:
+    base_score: float
+    final_score: float
+    adjustment: float
+    rationale: str
+    data_reference_ids: tuple[str, ...] = ()
+    warning_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +64,6 @@ def score_strategy_cluster(
     cluster: StrategyCluster,
     analysis: AnalysisBundle,
     signals: RecommendationSignals,
-    disclaimer_id: str,
     risk_profile: RiskProfile = RiskProfile.EXPLORATORY,
     account_capital: Decimal | None = None,
     max_loss_estimate: Decimal | None = None,
@@ -117,7 +134,6 @@ def score_strategy_cluster(
         evidence=cluster.evidence,
         score_input_ids=(analysis.analysis_id, cluster.cluster_id),
         warnings=(*cluster.warnings, *analysis.warnings),
-        disclaimer_id=disclaimer_id,
         metadata={
             "score_version": SCORE_VERSION,
             "confidence_inputs": analysis.confidence_inputs,
@@ -153,6 +169,7 @@ def _score_components(
     signals: RecommendationSignals,
     risk_passed: bool,
 ) -> tuple[ScoreComponent, ...]:
+    technical_effect = _technical_alignment_effect(analysis.technical, cluster.direction)
     return (
         _component(
             name="reddit-strength",
@@ -176,10 +193,13 @@ def _score_components(
         ),
         _component(
             name="technical-alignment",
-            normalized_score=_analysis_alignment(analysis.technical, cluster.direction),
-            weight=0.18,
-            rationale="Technical analysis alignment with the discussed direction.",
+            normalized_score=technical_effect.final_score,
+            weight=_TECHNICAL_ALIGNMENT_WEIGHT,
+            rationale=technical_effect.rationale,
             evidence=analysis.evidence,
+            raw_value=_technical_alignment_raw_value(technical_effect),
+            data_reference_ids=technical_effect.data_reference_ids,
+            warning_ids=technical_effect.warning_ids,
         ),
         _component(
             name="fundamentals",
@@ -220,6 +240,8 @@ def _component(
     weight: float,
     rationale: str,
     evidence: tuple[EvidenceReference, ...] = (),
+    data_reference_ids: tuple[str, ...] = (),
+    warning_ids: tuple[str, ...] = (),
     raw_value: float | int | str | None = None,
 ) -> ScoreComponent:
     bounded_score = round(clamp(normalized_score), 4)
@@ -231,6 +253,8 @@ def _component(
         contribution=round(bounded_score * weight, 6),
         rationale=rationale,
         evidence=evidence,
+        data_reference_ids=data_reference_ids,
+        warning_ids=warning_ids,
     )
 
 
@@ -293,7 +317,7 @@ def _penalties(
 
     ml_signal = analysis.technical.ml_signal if analysis.technical is not None else None
     if ml_signal is not None:
-        penalties.extend(_ml_signal_penalties(ml_signal, cluster.direction))
+        penalties.extend(_ml_signal_penalties(ml_signal, cluster.direction, analysis.technical))
 
     return tuple(penalties)
 
@@ -301,7 +325,11 @@ def _penalties(
 def _ml_signal_penalties(
     ml_signal: TechnicalMlSignal,
     direction: Direction,
+    technical: AnalysisComponent | None = None,
 ) -> tuple[ScoreComponent, ...]:
+    if _is_timesfm_signal(ml_signal):
+        return _timesfm_signal_penalties(ml_signal, direction, technical)
+
     penalties: list[ScoreComponent] = []
     if ml_signal.status != "usable":
         penalties.append(
@@ -345,6 +373,230 @@ def _ml_signal_penalties(
             )
         )
     return tuple(penalties)
+
+
+def _timesfm_signal_penalties(
+    ml_signal: TechnicalMlSignal,
+    direction: Direction,
+    technical: AnalysisComponent | None,
+) -> tuple[ScoreComponent, ...]:
+    penalties: list[ScoreComponent] = []
+    warning_ids = ml_signal.warning_ids
+    if ml_signal.status == "unavailable":
+        penalties.append(
+            ScoreComponent(
+                name="timesfm-signal-unavailable-penalty",
+                raw_value=ml_signal.status,
+                normalized_score=1.0,
+                weight=0.10,
+                contribution=-0.10,
+                rationale="TimesFM output is unavailable and cannot support the technical score.",
+                warning_ids=warning_ids,
+            )
+        )
+    elif ml_signal.status != "usable":
+        penalties.append(
+            ScoreComponent(
+                name="timesfm-signal-quality-penalty",
+                raw_value=ml_signal.status,
+                normalized_score=0.75,
+                weight=0.10,
+                contribution=-0.075,
+                rationale=(
+                    "TimesFM output is present but failed freshness or evaluation guardrails."
+                ),
+                warning_ids=warning_ids,
+            )
+        )
+    if _timesfm_signal_is_stale(ml_signal):
+        penalties.append(
+            ScoreComponent(
+                name="timesfm-stale-signal-penalty",
+                raw_value=ml_signal.freshness_status.value,
+                normalized_score=0.70,
+                weight=0.08,
+                contribution=-0.056,
+                rationale="TimesFM evaluation data is stale for recommendation scoring.",
+                warning_ids=warning_ids,
+            )
+        )
+    if _timesfm_signal_has_poor_evaluation(ml_signal):
+        penalties.append(
+            ScoreComponent(
+                name="timesfm-evaluation-quality-penalty",
+                raw_value=ml_signal.validation_accuracy,
+                normalized_score=0.60,
+                weight=0.08,
+                contribution=-0.048,
+                rationale="TimesFM evaluation quality is below the scoring support threshold.",
+                warning_ids=warning_ids,
+            )
+        )
+    if _timesfm_signal_has_wide_interval(ml_signal):
+        penalties.append(
+            ScoreComponent(
+                name="timesfm-wide-interval-penalty",
+                raw_value=ml_signal.forecast_interval_width,
+                normalized_score=0.50,
+                weight=0.07,
+                contribution=-0.035,
+                rationale="TimesFM forecast interval is too wide to add confidence.",
+                warning_ids=warning_ids,
+            )
+        )
+    if _timesfm_signal_conflicts(ml_signal, direction, technical):
+        penalties.append(
+            ScoreComponent(
+                name="timesfm-technical-conflict-penalty",
+                raw_value=ml_signal.probability_positive,
+                normalized_score=1.0,
+                weight=0.12,
+                contribution=-0.12,
+                rationale=(
+                    "TimesFM output conflicts with the observed strategy direction or "
+                    "deterministic technical analysis."
+                ),
+                warning_ids=warning_ids,
+            )
+        )
+    elif ml_signal.signal == AnalysisSignal.MIXED or (
+        ml_signal.status == "usable" and ml_signal.calibrated_confidence < _TIMESFM_MIN_CONFIDENCE
+    ):
+        penalties.append(
+            ScoreComponent(
+                name="timesfm-signal-weak-penalty",
+                raw_value=ml_signal.calibrated_confidence,
+                normalized_score=0.40,
+                weight=0.06,
+                contribution=-0.024,
+                rationale="TimesFM output is too weak to increase technical confidence.",
+                warning_ids=warning_ids,
+            )
+        )
+    return tuple(penalties)
+
+
+def _technical_alignment_effect(
+    component: AnalysisComponent | None,
+    direction: Direction,
+) -> _TechnicalMlScoringEffect:
+    base_score = round(_analysis_alignment(component, direction), 4)
+    if component is None:
+        return _TechnicalMlScoringEffect(
+            base_score=base_score,
+            final_score=base_score,
+            adjustment=0.0,
+            rationale="Technical analysis alignment with the discussed direction.",
+        )
+    ml_signal = getattr(component, "ml_signal", None)
+    if not isinstance(ml_signal, TechnicalMlSignal) or not _is_timesfm_signal(ml_signal):
+        return _TechnicalMlScoringEffect(
+            base_score=base_score,
+            final_score=base_score,
+            adjustment=0.0,
+            rationale="Technical analysis alignment with the discussed direction.",
+        )
+    data_reference_ids = tuple(
+        reference_id
+        for reference_id in (
+            ml_signal.source_artifact_id,
+            ml_signal.source_artifact_sha256,
+        )
+        if reference_id
+    )
+    if not _timesfm_signal_can_boost(ml_signal, direction, component):
+        return _TechnicalMlScoringEffect(
+            base_score=base_score,
+            final_score=base_score,
+            adjustment=0.0,
+            rationale=(
+                "Technical analysis alignment with the discussed direction. TimesFM sidecar "
+                "made no positive adjustment after freshness, evaluation, uncertainty, and "
+                "conflict guardrails."
+            ),
+            data_reference_ids=data_reference_ids,
+            warning_ids=ml_signal.warning_ids,
+        )
+    requested_adjustment = min(
+        _TIMESFM_MAX_TECHNICAL_BOOST,
+        ml_signal.calibrated_confidence * 0.10,
+    )
+    final_score = round(clamp(base_score + requested_adjustment), 4)
+    adjustment = round(final_score - base_score, 4)
+    return _TechnicalMlScoringEffect(
+        base_score=base_score,
+        final_score=final_score,
+        adjustment=adjustment,
+        rationale=(
+            "Technical analysis alignment with the discussed direction. TimesFM sidecar "
+            f"adjusted only this technical component by {adjustment:+.4f} after guardrails."
+        ),
+        data_reference_ids=data_reference_ids,
+        warning_ids=ml_signal.warning_ids,
+    )
+
+
+def _technical_alignment_raw_value(effect: _TechnicalMlScoringEffect) -> str | None:
+    if effect.adjustment == 0.0 and not effect.data_reference_ids and not effect.warning_ids:
+        return None
+    return (
+        f"deterministic_score={effect.base_score:.4f}; "
+        f"timesfm_adjustment={effect.adjustment:+.4f}; "
+        f"final_score={effect.final_score:.4f}"
+    )
+
+
+def _is_timesfm_signal(ml_signal: TechnicalMlSignal) -> bool:
+    return ml_signal.metadata.get("model_kind") == _TIMESFM_MODEL_KIND
+
+
+def _timesfm_signal_can_boost(
+    ml_signal: TechnicalMlSignal,
+    direction: Direction,
+    technical: AnalysisComponent | None,
+) -> bool:
+    return (
+        ml_signal.status == "usable"
+        and not _timesfm_signal_is_stale(ml_signal)
+        and not _timesfm_signal_has_poor_evaluation(ml_signal)
+        and not _timesfm_signal_has_wide_interval(ml_signal)
+        and not _timesfm_signal_conflicts(ml_signal, direction, technical)
+        and ml_signal.signal != AnalysisSignal.MIXED
+        and ml_signal.calibrated_confidence >= _TIMESFM_MIN_CONFIDENCE
+    )
+
+
+def _timesfm_signal_is_stale(ml_signal: TechnicalMlSignal) -> bool:
+    return ml_signal.status == "stale" or ml_signal.freshness_status == FreshnessStatus.STALE
+
+
+def _timesfm_signal_has_poor_evaluation(ml_signal: TechnicalMlSignal) -> bool:
+    if ml_signal.status == "weak":
+        return True
+    if ml_signal.validation_accuracy is None:
+        return ml_signal.status == "usable"
+    return ml_signal.validation_accuracy < _TIMESFM_MIN_VALIDATION_ACCURACY
+
+
+def _timesfm_signal_has_wide_interval(ml_signal: TechnicalMlSignal) -> bool:
+    width = ml_signal.forecast_interval_width
+    return width is not None and width > _TIMESFM_MAX_INTERVAL_WIDTH
+
+
+def _timesfm_signal_conflicts(
+    ml_signal: TechnicalMlSignal,
+    direction: Direction,
+    technical: AnalysisComponent | None,
+) -> bool:
+    if _ml_signal_conflicts_direction(ml_signal, direction):
+        return True
+    if technical is None or technical.signal in {AnalysisSignal.MIXED, AnalysisSignal.NEUTRAL}:
+        return False
+    return technical.signal != AnalysisSignal.UNKNOWN and ml_signal.signal not in {
+        AnalysisSignal.UNKNOWN,
+        AnalysisSignal.MIXED,
+        technical.signal,
+    }
 
 
 def _reddit_strength(cluster: StrategyCluster, signals: RecommendationSignals) -> float:
@@ -417,13 +669,51 @@ def _failed_score_gates(
         failed_gates.append("high-sarcasm-joke-risk")
     ml_signal = analysis.technical.ml_signal if analysis.technical is not None else None
     if ml_signal is not None:
-        if ml_signal.status != "usable":
-            failed_gates.append("ml-signal-not-actionable")
-        if _ml_signal_conflicts_direction(ml_signal, cluster.direction):
-            failed_gates.append("ml-technical-conflict")
+        if _is_timesfm_signal(ml_signal):
+            failed_gates.extend(_timesfm_failed_gates(ml_signal, cluster.direction, analysis))
+        else:
+            if ml_signal.status != "usable":
+                failed_gates.append("ml-signal-not-actionable")
+            if _ml_signal_conflicts_direction(ml_signal, cluster.direction):
+                failed_gates.append("ml-technical-conflict")
+    timesfm_effect = _technical_alignment_effect(analysis.technical, cluster.direction)
+    if timesfm_effect.adjustment > 0:
+        score_without_timesfm = round(
+            clamp(overall_score - (timesfm_effect.adjustment * _TECHNICAL_ALIGNMENT_WEIGHT)),
+            4,
+        )
+        if score_without_timesfm < threshold <= overall_score:
+            failed_gates.append("timesfm-cannot-qualify-standalone")
     if overall_score < threshold:
         failed_gates.append("score-below-threshold")
     return tuple(failed_gates)
+
+
+def _timesfm_failed_gates(
+    ml_signal: TechnicalMlSignal,
+    direction: Direction,
+    analysis: AnalysisBundle,
+) -> tuple[str, ...]:
+    technical = analysis.technical
+    failed_gates: list[str] = []
+    if ml_signal.status != "usable":
+        failed_gates.append("timesfm-signal-not-actionable")
+    if ml_signal.status == "unavailable":
+        failed_gates.append("timesfm-signal-unavailable")
+    if _timesfm_signal_is_stale(ml_signal):
+        failed_gates.append("timesfm-stale-signal")
+    if _timesfm_signal_has_poor_evaluation(ml_signal):
+        failed_gates.append("timesfm-evaluation-underqualified")
+    if _timesfm_signal_has_wide_interval(ml_signal):
+        failed_gates.append("timesfm-wide-interval")
+    if _timesfm_signal_conflicts(ml_signal, direction, technical):
+        failed_gates.append("timesfm-technical-conflict")
+    elif (
+        ml_signal.signal == AnalysisSignal.MIXED
+        or ml_signal.calibrated_confidence < _TIMESFM_MIN_CONFIDENCE
+    ):
+        failed_gates.append("timesfm-signal-weak")
+    return tuple(dict.fromkeys(failed_gates))
 
 
 def _ml_signal_conflicts_direction(

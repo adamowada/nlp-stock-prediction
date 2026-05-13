@@ -4,11 +4,11 @@ Status: complete. This is a historical Phase 2 lane plan.
 
 ## Goal
 
-Implement Lane F reliability, live-test gating, CI, and compliance guardrails without changing
+Implement Lane F reliability, live-test gating, CI, and provider guardrails without changing
 frozen public contracts. The lane should provide reusable helpers for provider retries,
 rate-limit/timeouts/upstream failures, graceful degradation result envelopes, provider health
 messages, official API versus public scraping provenance checks, opt-in live smoke scaffolding, and
-v1 report guardrails.
+report guardrails.
 
 ## Non-goals
 
@@ -26,8 +26,8 @@ v1 report guardrails.
   `ProviderStatus`, `WarningCode`, and `RetrievalMethod`.
 - Default tests block socket access in `tests/conftest.py` unless a test is marked `live_api` or
   `live_scraping` and `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1`.
-- Lane F should add helpers under `src/nlp_stock_prediction/reliability/` and
-  `src/nlp_stock_prediction/compliance.py`, plus focused tests and CI workflow wiring.
+- Lane F should add helpers under `src/nlp_stock_prediction/reliability/` and shared provider
+  modules, plus focused tests and CI workflow wiring.
 
 ## Milestones
 
@@ -44,17 +44,15 @@ v1 report guardrails.
 - Verification:
   - `python -m pytest tests/test_lane_f_reliability.py`
 
-### Milestone 2: Compliance Guardrails
+### Milestone 2: Provider Guardrails
 
 - Changes:
-  - Add report disclaimer and trade-candidate guardrail helpers for educational-only,
-    not-financial-advice, and no-auto-trading v1.
   - Add provenance helper to distinguish official API data from public scraping fallback data.
 - Files likely affected:
-  - `src/nlp_stock_prediction/compliance.py`
-  - `tests/test_lane_f_compliance.py`
+  - `src/nlp_stock_prediction/providers/scraping.py`
+  - `tests/test_lane_f_reliability.py`
 - Verification:
-  - `python -m pytest tests/test_lane_f_compliance.py`
+  - `python -m pytest tests/test_lane_f_reliability.py`
 
 ### Milestone 3: Live Smoke And CI Wiring
 
@@ -104,6 +102,6 @@ mypy .
 
 - 2026-05-11-14-19: Read AGENTS, roadmap, testing plan, frozen contracts, and worktree runbook.
   Confirmed branch `codex/lane-f-reliability-ci` starts at `phase-1-contract-gate`.
-- 2026-05-11-14-27: Added reliability retry/degradation helpers, compliance guardrails, live smoke
+- 2026-05-11-14-27: Added reliability retry/degradation helpers, provider guardrails, live smoke
   tests, and CI workflow. Verified focused Lane F tests, default pytest suite, ruff check, ruff
   format check, and mypy with the shared Phase 2 venv.

@@ -1,4 +1,4 @@
-"""Shared helpers for compliance-aware public HTML adapters."""
+"""Shared helpers for public HTML provider adapters."""
 
 from __future__ import annotations
 
@@ -15,19 +15,19 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
-from nlp_stock_prediction.compliance import scraping_drift_warning
-from nlp_stock_prediction.contracts import ProviderWarning
+from nlp_stock_prediction.contracts import ProviderWarning, WarningCode, WarningSeverity
 from nlp_stock_prediction.providers._base import (
     MalformedProviderResponse,
     ProviderTransportError,
     ensure_aware_utc,
+    provider_warning,
     safe_path_component,
     stable_hash,
 )
 
 SCRAPE_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT"
 SCRAPE_MIN_DELAY_SECONDS_ENV = "NLP_STOCK_PREDICTION_SCRAPE_MIN_DELAY_SECONDS"
-DEFAULT_SCRAPE_USER_AGENT = "nlp-stock-prediction/0.1 compliance-aware-scraper"
+DEFAULT_SCRAPE_USER_AGENT = "nlp-stock-prediction/0.1 public-html-adapter"
 DEFAULT_SCRAPE_MIN_DELAY_SECONDS = 1.0
 DEFAULT_HTML_MAX_BYTES = 2_000_000
 
@@ -292,6 +292,42 @@ def configured_scrape_min_delay_seconds(
     except ValueError:
         return default
     return parsed if parsed >= 0 else default
+
+
+def scraping_drift_warning(
+    *,
+    provider_name: str,
+    source_url: str,
+    selector: str,
+    occurred_at: datetime,
+    raw_snapshot_id: str | None = None,
+    required: bool = True,
+    metadata: Mapping[str, object] | None = None,
+) -> ProviderWarning:
+    """Build a provider warning when a public HTML probe stops matching."""
+
+    warning_message = (
+        f"Required public HTML selector missing or changed: {selector}"
+        if required
+        else f"Optional public HTML selector missing or changed: {selector}"
+    )
+    warning_metadata = {
+        "selector": selector,
+        "required": required,
+        "drift_type": "missing_selector",
+    }
+    warning_metadata.update(dict(metadata or {}))
+    return provider_warning(
+        provider_name=provider_name,
+        code=WarningCode.SCRAPING_DRIFT,
+        severity=WarningSeverity.ERROR if required else WarningSeverity.WARNING,
+        message=warning_message,
+        occurred_at=occurred_at,
+        provider_error_type="scraping_drift",
+        raw_snapshot_id=raw_snapshot_id,
+        source_url=source_url,
+        metadata=warning_metadata,
+    )
 
 
 def build_scraping_headers(
@@ -571,4 +607,5 @@ __all__ = [
     "fetch_html",
     "parse_html_document",
     "raw_snapshot_id_for_html",
+    "scraping_drift_warning",
 ]

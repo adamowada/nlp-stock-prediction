@@ -11,6 +11,7 @@ from nlp_stock_prediction.contracts import (
     DailyReport,
     EvidenceReference,
     ScoreComponent,
+    TechnicalMlSignal,
     TradeCandidate,
 )
 
@@ -29,7 +30,6 @@ def render_markdown_report(report: DailyReport) -> str:
     lines.extend(
         [
             f"Data freshness: {report.data_freshness.summary}",
-            f"Disclaimer: {report.disclaimer.text}",
             "",
             "## Data Freshness",
             "",
@@ -145,16 +145,7 @@ def render_markdown_report(report: DailyReport) -> str:
             ]
         )
 
-    lines.extend(
-        [
-            "## Disclaimer",
-            "",
-            report.disclaimer.text,
-            "",
-            "## Audit Artifacts",
-            "",
-        ]
-    )
+    lines.extend(["## Audit Artifacts", ""])
     manifest = report.audit_manifest
     if isinstance(manifest, AuditManifest) and manifest.artifacts:
         for artifact in manifest.artifacts:
@@ -263,11 +254,7 @@ def _render_analysis(component: AnalysisComponent | None) -> list[str]:
         lines.append(f"- Sector: {sector}")
     ml_signal = getattr(component, "ml_signal", None)
     if ml_signal is not None:
-        lines.append(
-            "- ML signal: "
-            f"{ml_signal.signal.value}; probability {ml_signal.probability_positive:.2f}; "
-            f"confidence {ml_signal.calibrated_confidence:.2f}; status {ml_signal.status}."
-        )
+        lines.extend(_render_ml_signal(ml_signal))
     agent_signal = getattr(component, "agent_signal", None)
     if agent_signal is not None:
         lines.append(
@@ -294,6 +281,32 @@ def _render_evidence_refs(evidence: tuple[EvidenceReference, ...]) -> list[str]:
     return lines
 
 
+def _render_ml_signal(ml_signal: TechnicalMlSignal) -> list[str]:
+    model_kind = ml_signal.metadata.get("model_kind")
+    if model_kind == "timesfm_2_5_lora_evaluation":
+        expected_return = ml_signal.expected_return
+        interval_width = ml_signal.forecast_interval_width
+        line = (
+            "- TimesFM signal: "
+            f"{ml_signal.signal.value}; "
+            f"horizon {ml_signal.prediction_horizon_sessions} sessions; "
+            f"probability proxy {ml_signal.probability_positive:.2f}; "
+            f"confidence {ml_signal.calibrated_confidence:.2f}; "
+            f"status {ml_signal.status}; "
+            f"model hash `{ml_signal.model_hash}`"
+            f"{_format_optional_percent('; expected return ', expected_return)}"
+            f"{_format_optional_percent('; interval width ', interval_width)}."
+        )
+        return [line]
+    return [
+        "- ML signal: "
+        f"{ml_signal.signal.value}; "
+        f"probability {ml_signal.probability_positive:.2f}; "
+        f"confidence {ml_signal.calibrated_confidence:.2f}; "
+        f"status {ml_signal.status}."
+    ]
+
+
 def _format_evidence_ids(evidence: tuple[EvidenceReference, ...]) -> str:
     if not evidence:
         return "none"
@@ -306,6 +319,12 @@ def _format_list(values: tuple[str, ...]) -> str:
 
 def _format_score(value: float | Decimal) -> str:
     return f"{float(value):.2f}"
+
+
+def _format_optional_percent(prefix: str, value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{prefix}{value:.2%}"
 
 
 def _format_decimal(value: Decimal) -> str:
