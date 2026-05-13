@@ -1473,6 +1473,11 @@ def _replace_instrument_children(
         )
 
     for evidence in record.tradability_evidence:
+        url = (
+            _json_optional_text(evidence, "url")
+            or _json_optional_text(evidence, "source_url")
+            or _json_optional_text(evidence, "permalink")
+        )
         _insert_tradability_evidence(
             connection,
             InstrumentTradabilityEvidenceRecord(
@@ -1481,7 +1486,7 @@ def _replace_instrument_children(
                 status=_json_required_text(evidence, "status"),
                 retrieved_at=_json_optional_datetime(evidence, "retrieved_at") or now,
                 source_query_id=_json_optional_text(evidence, "source_query_id"),
-                url=_json_optional_text(evidence, "url"),
+                url=url,
                 raw_identifier=_json_optional_text(evidence, "raw_identifier"),
                 extraction_confidence=_json_optional_float(evidence, "extraction_confidence"),
                 metadata=_json_metadata_without(
@@ -1492,6 +1497,8 @@ def _replace_instrument_children(
                         "retrieved_at",
                         "source_query_id",
                         "url",
+                        "source_url",
+                        "permalink",
                         "raw_identifier",
                         "extraction_confidence",
                     },
@@ -1503,7 +1510,11 @@ def _replace_instrument_children(
         provider = _json_required_text(availability, "provider")
         data_type = _json_required_text(availability, "data_type")
         status = _json_required_text(availability, "status")
-        as_of = _json_optional_datetime(availability, "as_of") or now
+        as_of = (
+            _json_optional_datetime(availability, "checked_at")
+            or _json_optional_datetime(availability, "as_of")
+            or now
+        )
         connection.execute(
             """
             INSERT INTO instrument_data_availability (
@@ -1524,9 +1535,12 @@ def _replace_instrument_children(
                 data_type,
                 status,
                 _format_datetime(as_of),
-                _dump_json(_json_metadata_without(
-                    availability, {"provider", "data_type", "status", "as_of"}
-                )),
+                _dump_json(
+                    _json_metadata_without(
+                        availability,
+                        {"provider", "data_type", "status", "checked_at", "as_of"},
+                    )
+                ),
             ),
         )
 
