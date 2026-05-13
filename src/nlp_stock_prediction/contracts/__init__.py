@@ -60,6 +60,14 @@ from nlp_stock_prediction.contracts.instruments import (
     RelatedInstrument,
     TradabilityEvidence,
 )
+from nlp_stock_prediction.contracts.orchestration import (
+    CodexEvidenceImport,
+    OrchestratorRunSummary,
+    ResearchObjective,
+    ResearchToolSpec,
+    ToolExecutionResult,
+    ToolInvocation,
+)
 from nlp_stock_prediction.contracts.provenance import (
     DataReference,
     EvidenceReference,
@@ -111,6 +119,7 @@ __all__ = [
     "AssetClass",
     "AuditArtifact",
     "AuditManifest",
+    "CodexEvidenceImport",
     "Confidence",
     "ContractModel",
     "CredentialState",
@@ -154,6 +163,7 @@ __all__ = [
     "NewsProvider",
     "NonEmptyStr",
     "NormalizedFixture",
+    "OrchestratorRunSummary",
     "PositionType",
     "PositiveDecimal",
     "PositiveInt",
@@ -170,6 +180,8 @@ __all__ = [
     "RawProviderFixture",
     "RedditProvider",
     "RelatedInstrument",
+    "ResearchObjective",
+    "ResearchToolSpec",
     "RetrievalMethod",
     "RunConfig",
     "Score",
@@ -188,6 +200,8 @@ __all__ = [
     "TickerDiscoveryStatus",
     "TickerSymbol",
     "TimeHorizon",
+    "ToolExecutionResult",
+    "ToolInvocation",
     "TradabilityEvidence",
     "TradabilityStatus",
     "WarningCode",
