@@ -50,7 +50,13 @@ retired.
 
 ## SQLite Role
 
-SQLite is the local operational memory:
+SQLite is split into two local databases:
+
+- `plans/planning.sqlite3`: tracked planning state for plans, decisions, progress, and links.
+- `data/prediction-research.sqlite3`: ignored runtime research state for runs, artifacts, evidence,
+  and prediction candidates.
+
+Together they provide local operational memory:
 
 - instrument index;
 - evidence ledger;

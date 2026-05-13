@@ -12,7 +12,8 @@ This document defines target contracts and invariants for the prediction researc
 - Social content is observed discussion, not fact.
 - News and filings are source evidence, but extracted claims still require provenance.
 - Raw TimesFM is a technical signal only; fine-tuned TimesFM is retired.
-- SQLite stores operational state and indexes artifacts; large payloads remain on disk.
+- SQLite is split into a tracked planning database and an ignored research database; large payloads
+  remain on disk.
 
 ## Instrument
 
@@ -131,7 +132,7 @@ Markdown and JSON reports should carry the same substantive information.
 
 ## Planning State
 
-Active plans belong in SQLite once implemented. Planning contracts should include:
+Active plans belong in the tracked planning SQLite database. Planning contracts include:
 
 - plan;
 - milestone;

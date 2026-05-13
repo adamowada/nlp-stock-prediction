@@ -59,8 +59,9 @@ introduced.
 - Keep secrets out of the repo. Load API keys from environment variables or ignored `.env` files.
 - Handle rate limits, partial failures, stale data, missing providers, and contradictory evidence
   explicitly.
-- Store large raw payloads and generated artifacts on disk; store metadata, relationships, hashes, and
-  operational state in SQLite.
+- Store large raw payloads and generated artifacts on disk. Store planning records in the tracked
+  planning SQLite database, and store runtime research metadata in the ignored research SQLite
+  database.
 - Avoid data visualizations unless the user explicitly asks to revisit them.
 - Use clear names and concise comments only where the code's intent is not obvious.
 - Perform your own code review on the code you write and fix all issues.
@@ -83,9 +84,10 @@ introduced.
 ## Planning Rules
 
 - `AGENTS.md` and `PLANS.md` are immutable by default. Edit them only when the user specifically asks.
-- Active planning state belongs in SQLite once the planning database is implemented.
-- Until SQLite planning exists, use in-thread plans and task checklists; do not add new Markdown plans
-  unless the user explicitly asks.
+- Active planning state belongs in `plans/planning.sqlite3`, which is tracked in git. Use the typed
+  storage interface described in `PLANS.md`.
+- Use in-thread plans and task checklists for short-lived turn coordination, but do not add new
+  Markdown plans unless the user explicitly asks.
 - Source-of-truth docs remain Markdown: README, AGENTS, PLANS, and files under `docs/`.
 - Keep docs aligned with implemented behavior. If a doc describes target behavior, label it clearly as
   target architecture or roadmap rather than available functionality.

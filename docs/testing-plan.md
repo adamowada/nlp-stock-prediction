@@ -55,13 +55,14 @@ Round-trip tests for Pydantic contracts and SQLite rows:
 
 Database tests must cover:
 
-- idempotent initialization;
+- idempotent initialization for planning and research databases;
 - migration ordering;
 - uniqueness constraints;
 - foreign-key relationships;
 - artifact path/hash indexing;
 - evidence deduplication by stable ID;
 - append-only planning progress records;
+- separation of tracked planning tables from ignored research tables;
 - query helpers used by Codex orchestration.
 
 ### Provider And Tool Contracts

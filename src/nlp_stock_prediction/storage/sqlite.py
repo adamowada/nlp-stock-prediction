@@ -12,8 +12,12 @@ from typing import cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
 
-CURRENT_SCHEMA_VERSION = 1
-DEFAULT_DATABASE_PATH = Path("data/prediction-research.sqlite3")
+CURRENT_RESEARCH_SCHEMA_VERSION = 1
+CURRENT_PLANNING_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = CURRENT_RESEARCH_SCHEMA_VERSION
+DEFAULT_RESEARCH_DATABASE_PATH = Path("data/prediction-research.sqlite3")
+DEFAULT_PLANNING_DATABASE_PATH = Path("plans/planning.sqlite3")
+DEFAULT_DATABASE_PATH = DEFAULT_RESEARCH_DATABASE_PATH
 
 
 @dataclass(frozen=True)
@@ -150,7 +154,7 @@ class PlanProgressRecord:
 
 
 class SQLiteStore:
-    """Small repository wrapper around the local SQLite research database."""
+    """Repository wrapper around the local ignored research SQLite database."""
 
     def __init__(self, path: Path = DEFAULT_DATABASE_PATH) -> None:
         self.path = path
@@ -542,6 +546,37 @@ class SQLiteStore:
             return None
         return _prediction_candidate_from_row(row)
 
+
+ResearchSQLiteStore = SQLiteStore
+
+
+class PlanningSQLiteStore:
+    """Repository wrapper around the tracked planning SQLite database."""
+
+    def __init__(self, path: Path = DEFAULT_PLANNING_DATABASE_PATH) -> None:
+        self.path = path
+
+    def connect(self) -> sqlite3.Connection:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(str(self.path))
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        return connection
+
+    def initialize(self) -> None:
+        with self.connect() as connection:
+            _initialize_planning_connection(connection)
+
+    def schema_version(self) -> int:
+        with self.connect() as connection:
+            _ensure_planning_initialized(connection)
+            row = connection.execute(
+                "SELECT MAX(version) AS version FROM schema_migrations"
+            ).fetchone()
+            if row is None or row["version"] is None:
+                return 0
+            return int(row["version"])
+
     def upsert_plan(self, record: PlanRecord) -> None:
         _validate_required(record.plan_id, "plan_id")
         _validate_required(record.slug, "slug")
@@ -550,7 +585,7 @@ class SQLiteStore:
         _validate_required(record.status, "status")
         now = _utc_now()
         with self.connect() as connection:
-            _ensure_initialized(connection)
+            _ensure_planning_initialized(connection)
             connection.execute(
                 """
                 INSERT INTO plans (
@@ -589,7 +624,7 @@ class SQLiteStore:
     def get_plan_by_slug(self, slug: str) -> PlanRecord | None:
         _validate_required(slug, "slug")
         with self.connect() as connection:
-            _ensure_initialized(connection)
+            _ensure_planning_initialized(connection)
             row = connection.execute("SELECT * FROM plans WHERE slug = ?", (slug,)).fetchone()
         if row is None:
             return None
@@ -602,7 +637,7 @@ class SQLiteStore:
         _validate_required(record.rationale, "rationale")
         decided_at = record.decided_at or _utc_now()
         with self.connect() as connection:
-            _ensure_initialized(connection)
+            _ensure_planning_initialized(connection)
             connection.execute(
                 """
                 INSERT INTO plan_decisions (
@@ -625,7 +660,7 @@ class SQLiteStore:
     def list_plan_decisions(self, plan_id: str) -> tuple[PlanDecisionRecord, ...]:
         _validate_required(plan_id, "plan_id")
         with self.connect() as connection:
-            _ensure_initialized(connection)
+            _ensure_planning_initialized(connection)
             rows = connection.execute(
                 """
                 SELECT * FROM plan_decisions
@@ -643,7 +678,7 @@ class SQLiteStore:
         _validate_required(record.summary, "summary")
         occurred_at = record.occurred_at or _utc_now()
         with self.connect() as connection:
-            _ensure_initialized(connection)
+            _ensure_planning_initialized(connection)
             connection.execute(
                 """
                 INSERT INTO plan_progress_events (
@@ -666,7 +701,7 @@ class SQLiteStore:
     def list_plan_progress(self, plan_id: str) -> tuple[PlanProgressRecord, ...]:
         _validate_required(plan_id, "plan_id")
         with self.connect() as connection:
-            _ensure_initialized(connection)
+            _ensure_planning_initialized(connection)
             rows = connection.execute(
                 """
                 SELECT * FROM plan_progress_events
@@ -678,23 +713,51 @@ class SQLiteStore:
         return tuple(_plan_progress_from_row(row) for row in rows)
 
 
-def initialize_database(path: Path = DEFAULT_DATABASE_PATH) -> SQLiteStore:
+def initialize_database(path: Path = DEFAULT_RESEARCH_DATABASE_PATH) -> SQLiteStore:
+    return initialize_research_database(path)
+
+
+def initialize_research_database(path: Path = DEFAULT_RESEARCH_DATABASE_PATH) -> SQLiteStore:
     store = SQLiteStore(path)
+    store.initialize()
+    return store
+
+
+def initialize_planning_database(
+    path: Path = DEFAULT_PLANNING_DATABASE_PATH,
+) -> PlanningSQLiteStore:
+    store = PlanningSQLiteStore(path)
     store.initialize()
     return store
 
 
 def _initialize_connection(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.executescript(_SCHEMA_SQL)
+    connection.executescript(_RESEARCH_SCHEMA_SQL)
     connection.execute(
         """
         INSERT OR IGNORE INTO schema_migrations(version, name, applied_at)
         VALUES (?, ?, ?)
         """,
         (
-            CURRENT_SCHEMA_VERSION,
+            CURRENT_RESEARCH_SCHEMA_VERSION,
             "initial_prediction_research_schema",
+            _format_datetime(_utc_now()),
+        ),
+    )
+
+
+def _initialize_planning_connection(connection: sqlite3.Connection) -> None:
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.executescript(_PLANNING_SCHEMA_SQL)
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO schema_migrations(version, name, applied_at)
+        VALUES (?, ?, ?)
+        """,
+        (
+            CURRENT_PLANNING_SCHEMA_VERSION,
+            "initial_prediction_planning_schema",
             _format_datetime(_utc_now()),
         ),
     )
@@ -705,8 +768,17 @@ def _ensure_initialized(connection: sqlite3.Connection) -> None:
         row = connection.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
     except sqlite3.OperationalError as exc:
         raise RuntimeError("SQLite prediction research database is not initialized") from exc
-    if row is None or row["version"] != CURRENT_SCHEMA_VERSION:
+    if row is None or row["version"] != CURRENT_RESEARCH_SCHEMA_VERSION:
         raise RuntimeError("SQLite prediction research database schema is not current")
+
+
+def _ensure_planning_initialized(connection: sqlite3.Connection) -> None:
+    try:
+        row = connection.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
+    except sqlite3.OperationalError as exc:
+        raise RuntimeError("SQLite prediction planning database is not initialized") from exc
+    if row is None or row["version"] != CURRENT_PLANNING_SCHEMA_VERSION:
+        raise RuntimeError("SQLite prediction planning database schema is not current")
 
 
 def _validate_required(value: str, field_name: str) -> None:
@@ -926,7 +998,7 @@ def _plan_progress_from_row(row: sqlite3.Row) -> PlanProgressRecord:
     )
 
 
-_SCHEMA_SQL = """
+_RESEARCH_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     name TEXT NOT NULL CHECK(length(name) > 0),
@@ -1059,6 +1131,14 @@ CREATE INDEX IF NOT EXISTS idx_prediction_candidates_instrument
 ON prediction_candidates(instrument_id);
 CREATE INDEX IF NOT EXISTS idx_prediction_candidates_status
 ON prediction_candidates(status);
+"""
+
+_PLANNING_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL CHECK(length(name) > 0),
+    applied_at TEXT NOT NULL CHECK(length(applied_at) > 0)
+);
 
 CREATE TABLE IF NOT EXISTS plans (
     plan_id TEXT PRIMARY KEY CHECK(length(plan_id) > 0),
@@ -1118,7 +1198,7 @@ CREATE TABLE IF NOT EXISTS plan_progress_events (
     event_type TEXT NOT NULL CHECK(length(event_type) > 0),
     summary TEXT NOT NULL CHECK(length(summary) > 0),
     details TEXT,
-    linked_artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+    linked_artifact_id TEXT,
     occurred_at TEXT NOT NULL
 );
 
@@ -1127,7 +1207,7 @@ CREATE INDEX IF NOT EXISTS idx_plan_progress_occurred_at ON plan_progress_events
 
 CREATE TABLE IF NOT EXISTS plan_artifact_links (
     plan_id TEXT NOT NULL REFERENCES plans(plan_id) ON DELETE CASCADE,
-    artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+    artifact_id TEXT NOT NULL CHECK(length(artifact_id) > 0),
     relationship TEXT NOT NULL CHECK(length(relationship) > 0),
     PRIMARY KEY(plan_id, artifact_id, relationship)
 );
@@ -1142,18 +1222,26 @@ CREATE TABLE IF NOT EXISTS plan_commit_links (
 
 
 __all__ = [
+    "CURRENT_PLANNING_SCHEMA_VERSION",
+    "CURRENT_RESEARCH_SCHEMA_VERSION",
     "CURRENT_SCHEMA_VERSION",
     "DEFAULT_DATABASE_PATH",
+    "DEFAULT_PLANNING_DATABASE_PATH",
+    "DEFAULT_RESEARCH_DATABASE_PATH",
     "ArtifactRecord",
     "EvidenceRecord",
     "InstrumentRecord",
     "PlanDecisionRecord",
     "PlanProgressRecord",
     "PlanRecord",
+    "PlanningSQLiteStore",
     "PredictionCandidateRecord",
     "ResearchRunRecord",
+    "ResearchSQLiteStore",
     "SQLiteStore",
     "SourceQueryRecord",
     "ToolRunRecord",
     "initialize_database",
+    "initialize_planning_database",
+    "initialize_research_database",
 ]

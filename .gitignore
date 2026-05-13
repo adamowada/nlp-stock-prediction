@@ -19,7 +19,10 @@ dist/
 reports/
 cache/
 
-# Local ML inputs and generated model artifacts.
+# Local runtime databases, ML inputs, and generated model artifacts.
+data/*.sqlite3
+data/*.sqlite3-*
+plans/*.sqlite3-*
 data/ml/
 artifacts/
 models/

@@ -11,6 +11,7 @@ from nlp_stock_prediction.storage import (
     EvidenceRecord,
     InstrumentRecord,
     PlanDecisionRecord,
+    PlanningSQLiteStore,
     PlanProgressRecord,
     PlanRecord,
     PredictionCandidateRecord,
@@ -19,45 +20,59 @@ from nlp_stock_prediction.storage import (
     SQLiteStore,
     ToolRunRecord,
 )
-from nlp_stock_prediction.storage.sqlite import CURRENT_SCHEMA_VERSION
+from nlp_stock_prediction.storage.sqlite import (
+    CURRENT_PLANNING_SCHEMA_VERSION,
+    CURRENT_RESEARCH_SCHEMA_VERSION,
+    DEFAULT_PLANNING_DATABASE_PATH,
+)
 
 
-def _store(tmp_path: Path) -> SQLiteStore:
+def _research_store(tmp_path: Path) -> SQLiteStore:
     return SQLiteStore(tmp_path / "prediction-research.sqlite3")
+
+
+def _planning_store(tmp_path: Path) -> PlanningSQLiteStore:
+    return PlanningSQLiteStore(tmp_path / "plans" / "planning.sqlite3")
 
 
 def _timestamp() -> datetime:
     return datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
 
 
-@pytest.mark.unit
-def test_sqlite_initialization_is_idempotent_and_enforces_foreign_keys(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-
-    store.initialize()
-    store.initialize()
-
-    assert store.schema_version() == CURRENT_SCHEMA_VERSION
-
+def _table_names(store: SQLiteStore | PlanningSQLiteStore) -> set[str]:
     with store.connect() as connection:
-        migration_count = connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
-        table_names = {
+        return {
             row[0]
             for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
 
+
+@pytest.mark.unit
+def test_research_database_initialization_is_idempotent_and_excludes_planning(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+
+    store.initialize()
+    store.initialize()
+
+    assert store.schema_version() == CURRENT_RESEARCH_SCHEMA_VERSION
+
+    with store.connect() as connection:
+        migration_count = connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
     assert migration_count == 1
     assert {
         "artifacts",
         "evidence_items",
         "instruments",
-        "plans",
         "prediction_candidates",
+        "research_runs",
         "source_queries",
         "tool_runs",
-    }.issubset(table_names)
+    }.issubset(_table_names(store))
+    assert "plans" not in _table_names(store)
 
     with pytest.raises(sqlite3.IntegrityError):
         store.upsert_prediction_candidate(
@@ -73,8 +88,38 @@ def test_sqlite_initialization_is_idempotent_and_enforces_foreign_keys(tmp_path:
 
 
 @pytest.mark.unit
-def test_sqlite_records_artifact_evidence_and_prediction_candidate(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_planning_database_initialization_is_idempotent_and_excludes_research(
+    tmp_path: Path,
+) -> None:
+    store = _planning_store(tmp_path)
+
+    store.initialize()
+    store.initialize()
+
+    assert Path("plans/planning.sqlite3") == DEFAULT_PLANNING_DATABASE_PATH
+    assert store.schema_version() == CURRENT_PLANNING_SCHEMA_VERSION
+
+    with store.connect() as connection:
+        migration_count = connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
+    assert migration_count == 1
+    assert {
+        "plan_acceptance_criteria",
+        "plan_artifact_links",
+        "plan_commit_links",
+        "plan_decisions",
+        "plan_milestones",
+        "plan_progress_events",
+        "plans",
+    }.issubset(_table_names(store))
+    assert "artifacts" not in _table_names(store)
+    assert "evidence_items" not in _table_names(store)
+
+
+@pytest.mark.unit
+def test_research_database_records_artifact_evidence_and_prediction_candidate(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
     store.initialize()
 
     store.upsert_instrument(
@@ -203,8 +248,8 @@ def test_sqlite_records_artifact_evidence_and_prediction_candidate(tmp_path: Pat
 
 
 @pytest.mark.unit
-def test_sqlite_persists_structured_planning_state(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_planning_database_persists_structured_planning_state(tmp_path: Path) -> None:
+    store = _planning_store(tmp_path)
     store.initialize()
 
     store.upsert_plan(
@@ -238,6 +283,7 @@ def test_sqlite_persists_structured_planning_state(tmp_path: Path) -> None:
             event_type="completed",
             summary="Schema initialized.",
             details="Added core operational tables.",
+            linked_artifact_id="artifact-in-research-db",
             occurred_at=_timestamp(),
         )
     )
@@ -267,18 +313,15 @@ def test_sqlite_persists_structured_planning_state(tmp_path: Path) -> None:
             event_type="completed",
             summary="Schema initialized.",
             details="Added core operational tables.",
+            linked_artifact_id="artifact-in-research-db",
             occurred_at=_timestamp(),
         ),
     )
 
-    with store.connect() as connection:
-        decision = connection.execute("SELECT decision FROM plan_decisions").fetchone()[0]
-    assert decision == "Store active plans in SQLite."
-
 
 @pytest.mark.unit
-def test_sqlite_layer_rejects_bad_confidence_and_naive_datetimes(tmp_path: Path) -> None:
-    store = _store(tmp_path)
+def test_research_database_rejects_bad_confidence_and_naive_datetimes(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
     store.initialize()
 
     store.upsert_instrument(

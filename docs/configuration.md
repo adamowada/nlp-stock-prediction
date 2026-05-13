@@ -36,6 +36,8 @@ Do not rely on the target command until it is implemented and tested.
 Use these conventions:
 
 ```text
+plans/
+  planning.sqlite3
 data/
   prediction-research.sqlite3
   universes/
@@ -51,19 +53,26 @@ cache/
 SQLite should store metadata, relationships, hashes, statuses, and planning state. Large payloads and
 reports should stay as files with paths recorded in SQLite.
 
-The SQLite foundation is implemented in `nlp_stock_prediction.storage`. Initialize a local database
+The SQLite foundation is implemented in `nlp_stock_prediction.storage`. The planning database is
+`plans/planning.sqlite3` and is tracked in git. The research database is
+`data/prediction-research.sqlite3` and is generated local state ignored by git. Create or verify both
 with:
 
 ```python
 from pathlib import Path
 
-from nlp_stock_prediction.storage import initialize_database
+from nlp_stock_prediction.storage import (
+    initialize_planning_database,
+    initialize_research_database,
+)
 
-store = initialize_database(Path("data/prediction-research.sqlite3"))
+planning_store = initialize_planning_database(Path("plans/planning.sqlite3"))
+research_store = initialize_research_database(Path("data/prediction-research.sqlite3"))
 ```
 
-The initial schema covers instruments, research runs, tool runs, artifacts, source queries, evidence
-items, prediction candidates, and structured planning state.
+The planning schema covers plans, milestones, acceptance criteria, decisions, progress events, and
+links. The research schema covers instruments, research runs, tool runs, artifacts, source queries,
+evidence items, and prediction candidates.
 
 ## Environment Variables
 

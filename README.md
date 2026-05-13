@@ -37,7 +37,7 @@ broader technical package.
 The target app has three moving parts:
 
 1. Independent tools gather evidence or produce artifacts.
-2. SQLite indexes runs, artifacts, evidence, prediction candidates, and active planning state.
+2. SQLite stores planning state in git and runtime research state locally.
 3. Codex decides what to investigate next and writes the prediction report.
 
 The core object is `PredictionCandidate`:
@@ -107,15 +107,24 @@ Do not treat that target command as available until it has code and tests behind
 
 ## SQLite
 
-Initialize the local research database with:
+The project uses two local SQLite databases:
+
+- `plans/planning.sqlite3`: tracked in git so planning records are part of project history.
+- `data/prediction-research.sqlite3`: ignored local runtime state for runs, tools, artifacts,
+  evidence, and prediction candidates.
+
+Create or verify them with:
 
 ```python
 from pathlib import Path
 
-from nlp_stock_prediction.storage import initialize_database
+from nlp_stock_prediction.storage import (
+    initialize_planning_database,
+    initialize_research_database,
+)
 
-store = initialize_database(Path("data/prediction-research.sqlite3"))
+planning_store = initialize_planning_database(Path("plans/planning.sqlite3"))
+research_store = initialize_research_database(Path("data/prediction-research.sqlite3"))
 ```
 
-SQLite is for operational state: runs, tools, artifacts, evidence, prediction candidates, and active
-plans. Durable source-of-truth docs stay in Markdown.
+Durable source-of-truth docs still stay in Markdown.

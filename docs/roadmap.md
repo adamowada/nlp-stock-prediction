@@ -18,8 +18,8 @@ Acceptance:
 
 Goal: add local SQLite as the operational memory.
 
-Status: initial foundation implemented. The schema and repository wrapper exist under
-`nlp_stock_prediction.storage`; future phases will connect orchestration and tools to it.
+Status: initial foundation implemented. The schema, repository wrappers, tracked planning database,
+and ignored research database exist; future phases will connect orchestration and tools to them.
 
 Build:
 
@@ -34,7 +34,7 @@ Build:
 
 Acceptance:
 
-- database initialization is idempotent;
+- database initialization is idempotent for both databases;
 - schema is tested;
 - artifacts remain file-backed with hashes and paths in SQLite;
 - planning state can be created, updated, queried, and closed.

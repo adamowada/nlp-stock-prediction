@@ -3,11 +3,12 @@
 This file defines how planning state works in this repo.
 
 `PLANS.md` is immutable by default. Edit it only when the user specifically asks. Active execution
-plans belong in the local SQLite database, not in Markdown files.
+plans belong in `plans/planning.sqlite3`, not in Markdown files.
 
 ## Planning Model
 
-The planning database is operational state for Codex. It answers:
+The planning database is operational state for Codex and is tracked in git so planning records are
+part of project history. It answers:
 
 - what are we trying to do;
 - why are we doing it this way;
@@ -20,7 +21,8 @@ tables as a private replacement for README, AGENTS, contracts, architecture, or 
 
 ## Planning Tables
 
-The initial planning schema is created by `nlp_stock_prediction.storage.SQLiteStore.initialize()`.
+The initial planning schema is created by
+`nlp_stock_prediction.storage.initialize_planning_database()`.
 
 ### `plans`
 
@@ -91,17 +93,19 @@ Append-only progress log.
 | `event_type` | yes | `started`, `completed`, `blocked`, `unblocked`, `verified`, `note`, or similar. |
 | `summary` | yes | Short human-readable event summary. |
 | `details` | no | Extra context. |
-| `linked_artifact_id` | no | Related artifact row. |
+| `linked_artifact_id` | no | Stable artifact ID, usually stored in the ignored research database. |
 | `occurred_at` | yes | UTC event timestamp. |
 
 ### `plan_artifact_links`
 
-Many-to-many link between plans and artifacts.
+Many-to-many link between plans and artifact IDs. The planning database does not foreign-key into
+the ignored research database; it stores stable artifact IDs so the record remains meaningful in git
+history.
 
 | Column | Required | Meaning |
 | --- | --- | --- |
 | `plan_id` | yes | Parent plan. |
-| `artifact_id` | yes | Artifact row. |
+| `artifact_id` | yes | Stable artifact ID. |
 | `relationship` | yes | Link type, for example `output`, `evidence`, `verification`, or `audit`. |
 
 ### `plan_commit_links`
@@ -125,10 +129,10 @@ from nlp_stock_prediction.storage import (
     PlanDecisionRecord,
     PlanProgressRecord,
     PlanRecord,
-    initialize_database,
+    initialize_planning_database,
 )
 
-store = initialize_database(Path("data/prediction-research.sqlite3"))
+store = initialize_planning_database(Path("plans/planning.sqlite3"))
 
 store.upsert_plan(
     PlanRecord(
