@@ -46,7 +46,13 @@ def test_phase2_mcp_service_records_search_evidence_and_renders_report(tmp_path:
         "render_prediction_report",
     ]
     assert str(evidence["evidence_id"]).startswith("evidence-codex-search-")
-    assert universe["instrument_ids"] == ["instrument:codex:TSLA"]
+    assert str(universe["tool_run_id"]) == f"tool-dummy-universe-{run_id}"
+    assert str(universe["universe_id"]).startswith("phase3-fixture-universe-")
+    assert "instrument:codex:TSLA" in universe["instrument_ids"]
+    assert "instrument:etf:us:spy" in universe["instrument_ids"]
+    assert "instrument:crypto:btc-usd" in universe["instrument_ids"]
+    assert "instrument:futures:cme:esm6" in universe["instrument_ids"]
+    assert universe["warnings"]
     assert str(analysis["artifact_id"]).startswith("artifact-dummy-analysis-")
     assert str(candidate["candidate_id"]).startswith("candidate-tsla-")
     assert inspected["has_codex_search_evidence"] is True
@@ -61,12 +67,25 @@ def test_phase2_mcp_service_records_search_evidence_and_renders_report(tmp_path:
     assert audit_manifest_path.exists()
 
     payload = json.loads(json_path.read_text(encoding="utf-8"))
+    audit_payload = json.loads(audit_manifest_path.read_text(encoding="utf-8"))
     assert payload["run_id"] == run_id
     assert payload["evidence_sources"][0]["metadata"]["codex_search"] is True
     assert (
         payload["prediction_candidates"][0]["evidence_for"][0]["evidence_id"]
         == evidence["evidence_id"]
     )
+    assert any(
+        artifact["artifact_type"] == "instrument_universe"
+        for artifact in audit_payload["artifacts"]
+    )
+
+    universe_artifact = service.store.get_artifact(str(universe["artifact_id"]))
+    assert universe_artifact is not None
+    universe_payload = json.loads((tmp_path / universe_artifact.path).read_text(encoding="utf-8"))
+    assert universe_payload["universe"]["request_id"] == universe["universe_id"]
+    assert universe_payload["universe"]["warnings"] == universe["warnings"]
+    assert service.store.get_instrument("instrument:codex:TSLA") is not None
+    assert service.store.get_instrument("instrument:futures:cme:esm6") is not None
 
 
 @pytest.mark.unit

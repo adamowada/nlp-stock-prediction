@@ -16,6 +16,7 @@ from nlp_stock_prediction.contracts import (
     EvidenceReference,
     Instrument,
     InstrumentReportSection,
+    InstrumentResolution,
     JsonObject,
     PredictionCandidate,
     PredictionStatus,
@@ -29,8 +30,9 @@ from nlp_stock_prediction.orchestration.context import RunContext
 from nlp_stock_prediction.orchestration.dummy_fixtures import (
     dummy_evidence_references,
     dummy_evidence_sources,
-    dummy_instruments,
+    dummy_instrument_universe,
 )
+from nlp_stock_prediction.orchestration.phase3_universe import phase3_universe_artifact_payload
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationState,
     StagedExecutor,
@@ -70,27 +72,40 @@ class DummyInstrumentTool:
             tool_id="dummy.instrument-discovery",
             stage="discover",
             description="Return a deterministic mixed-instrument research universe.",
-            output_keys=("instruments",),
+            output_keys=(
+                "instrument_universe",
+                "instrument_universe_metadata",
+                "instrument_resolutions",
+                "instruments",
+            ),
         )
 
     def run(self, context: RunContext, _state: OrchestrationState) -> ToolRunResult:
-        instruments = dummy_instruments(context)
-        payload: JsonObject = {
-            "schema_version": "orchestration.dummy-instruments.v1",
-            "run_id": context.run_id,
-            "records": [instrument.model_dump(mode="json") for instrument in instruments],
-        }
+        universe = dummy_instrument_universe(context)
+        instruments = universe.instruments
+        payload = phase3_universe_artifact_payload(run_id=context.run_id, universe=universe)
         artifact = context.artifact_writer.write_json(
-            artifact_id="dummy-instruments",
-            artifact_type="provider_result",
-            filename="dummy-instruments.json",
+            artifact_id="instrument-universe",
+            artifact_type="instrument_universe",
+            filename="instrument-universe.json",
             payload=payload,
             record_count=len(instruments),
+            metadata={
+                "universe_id": universe.request_id,
+                "instrument_ids": list(universe.instrument_ids),
+                "warning_count": len(universe.warnings),
+            },
         )
         return ToolRunResult(
             tool_id=self.spec.tool_id,
-            updates={"instruments": instruments},
+            updates={
+                "instrument_universe": universe,
+                "instrument_universe_metadata": universe.metadata,
+                "instrument_resolutions": universe.resolutions,
+                "instruments": instruments,
+            },
             artifacts=(artifact,),
+            metadata={"warnings": list(universe.warnings)},
         )
 
 
@@ -245,6 +260,8 @@ class DummyReportAssemblyTool:
             description="Assemble public report contracts from prior tool outputs.",
             input_keys=(
                 "instruments",
+                "instrument_resolutions",
+                "instrument_universe_metadata",
                 "evidence_sources",
                 "provider_health",
                 "instrument_sections",
@@ -256,6 +273,14 @@ class DummyReportAssemblyTool:
 
     def run(self, context: RunContext, state: OrchestrationState) -> ToolRunResult:
         instruments = cast(tuple[Instrument, ...], state.require("instruments", tuple))
+        resolutions = cast(
+            tuple[InstrumentResolution, ...],
+            state.require("instrument_resolutions", tuple),
+        )
+        universe_metadata = cast(
+            JsonObject,
+            state.require("instrument_universe_metadata", dict),
+        )
         evidence = cast(tuple[SourceEvidence, ...], state.require("evidence_sources", tuple))
         provider_health = cast(tuple[ProviderHealth, ...], state.require("provider_health", tuple))
         sections = cast(
@@ -275,6 +300,7 @@ class DummyReportAssemblyTool:
             command_args=context.command_args,
             prediction_trace_ids=tuple(candidate.candidate_id for candidate in predictions),
         )
+        universe_summary = universe_metadata.get("summary")
         report = DailyReport(
             schema_version="daily-report.v2",
             run_id=context.run_id,
@@ -282,12 +308,17 @@ class DummyReportAssemblyTool:
             generated_at=context.generated_at,
             timezone=context.timezone,
             objective="Generate an evidence-backed prediction research report.",
-            universe="Deterministic dummy-tool universe: one stock, one ETF, one crypto pair.",
+            universe=(
+                universe_summary
+                if isinstance(universe_summary, str)
+                else "Deterministic dummy-tool Phase 3 fixture universe."
+            ),
             command_args=context.command_args,
             instruments=instruments,
             data_freshness=data_freshness,
             provider_health=provider_health,
             evidence_sources=evidence,
+            instrument_resolutions=resolutions,
             instrument_sections=sections,
             prediction_candidates=predictions,
             audit_manifest=manifest,

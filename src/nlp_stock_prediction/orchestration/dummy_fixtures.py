@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from nlp_stock_prediction.contracts import (
-    AssetClass,
     EvidenceReference,
     FreshnessStatus,
     Instrument,
@@ -11,43 +10,22 @@ from nlp_stock_prediction.contracts import (
     SourceEvidence,
     SourceKind,
     SourceProvenance,
-    TradabilityStatus,
 )
-from nlp_stock_prediction.contracts.instruments import (
-    InstrumentDataAvailability,
-    ProviderInstrumentId,
-    TradabilityEvidence,
-)
+from nlp_stock_prediction.contracts.instruments import InstrumentUniverse
 from nlp_stock_prediction.orchestration.context import RunContext
+from nlp_stock_prediction.orchestration.phase3_universe import build_phase3_fixture_universe
+
+
+def dummy_instrument_universe(context: RunContext) -> InstrumentUniverse:
+    return build_phase3_fixture_universe(
+        request_id=f"phase3-fixture-universe-{context.run_id}",
+        generated_at=context.generated_at,
+        primary_symbol="TSLA",
+    )
 
 
 def dummy_instruments(context: RunContext) -> tuple[Instrument, ...]:
-    return (
-        _instrument(
-            context=context,
-            instrument_id="instrument:equity:us:tsla",
-            symbol="TSLA",
-            display_name="Tesla Inc.",
-            asset_class=AssetClass.STOCK,
-            provider_identifier="TSLA",
-        ),
-        _instrument(
-            context=context,
-            instrument_id="instrument:etf:us:spy",
-            symbol="SPY",
-            display_name="SPDR S&P 500 ETF Trust",
-            asset_class=AssetClass.ETF,
-            provider_identifier="SPY",
-        ),
-        _instrument(
-            context=context,
-            instrument_id="instrument:crypto:btc-usd",
-            symbol="BTC/USD",
-            display_name="Bitcoin versus U.S. dollar",
-            asset_class=AssetClass.CRYPTO,
-            provider_identifier="BTC/USD",
-        ),
-    )
+    return dummy_instrument_universe(context).instruments
 
 
 def dummy_evidence_sources(context: RunContext) -> tuple[SourceEvidence, ...]:
@@ -88,6 +66,18 @@ def dummy_evidence_sources(context: RunContext) -> tuple[SourceEvidence, ...]:
             ),
             source_url="https://example.com/dummy/btc-usd-availability",
         ),
+        _evidence(
+            context=context,
+            evidence_id="dummy-futures-esm6-001",
+            source_kind=SourceKind.MARKET_DATA,
+            ticker="ESM6",
+            title="Dummy ESM6 futures context availability",
+            text=(
+                "Dummy source records E-mini S&P 500 futures as restricted context for "
+                "macro and proxy analysis, not as a tradeable recommendation."
+            ),
+            source_url="https://example.com/dummy/esm6-context",
+        ),
     )
 
 
@@ -105,54 +95,15 @@ def dummy_evidence_references() -> dict[str, EvidenceReference]:
             "Dummy source records BTC/USD as a researchable crypto pair when provider data is "
             "available."
         ),
+        "dummy-futures-esm6-001": (
+            "Dummy source records E-mini S&P 500 futures as restricted context for macro and "
+            "proxy analysis, not as a tradeable recommendation."
+        ),
     }
     return {
         evidence_id: EvidenceReference(evidence_id=evidence_id, quote=quote, relevance=0.8)
         for evidence_id, quote in quotes.items()
     }
-
-
-def _instrument(
-    *,
-    context: RunContext,
-    instrument_id: str,
-    symbol: str,
-    display_name: str,
-    asset_class: AssetClass,
-    provider_identifier: str,
-) -> Instrument:
-    return Instrument(
-        instrument_id=instrument_id,
-        symbol=symbol,
-        display_name=display_name,
-        asset_class=asset_class,
-        provider_ids=(
-            ProviderInstrumentId(
-                provider="dummy-provider",
-                identifier=provider_identifier,
-                namespace="dummy-symbol",
-            ),
-        ),
-        tradability_evidence=(
-            TradabilityEvidence(
-                provider="dummy-provider",
-                status=TradabilityStatus.UNKNOWN,
-                retrieved_at=context.generated_at,
-                raw_identifier=f"{provider_identifier}:dummy-tradability",
-                notes="Dummy records availability context only.",
-            ),
-        ),
-        data_availability=(
-            InstrumentDataAvailability(
-                provider="dummy-provider",
-                data_type="dummy-research",
-                status=TradabilityStatus.AVAILABLE,
-                checked_at=context.generated_at,
-                provider_identifier=provider_identifier,
-            ),
-        ),
-        metadata={"dummy": True},
-    )
 
 
 def _evidence(
@@ -192,4 +143,9 @@ def _evidence(
     )
 
 
-__all__ = ["dummy_evidence_references", "dummy_evidence_sources", "dummy_instruments"]
+__all__ = [
+    "dummy_evidence_references",
+    "dummy_evidence_sources",
+    "dummy_instrument_universe",
+    "dummy_instruments",
+]

@@ -7,7 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from nlp_stock_prediction.contracts import AuditManifest, DailyReport, JsonObject, RunConfig
+from nlp_stock_prediction.contracts import (
+    AssetClass,
+    AuditManifest,
+    DailyReport,
+    InstrumentUniverse,
+    JsonObject,
+    RunConfig,
+)
 from nlp_stock_prediction.orchestration import (
     DEFAULT_STAGE_ORDER,
     ArtifactWriter,
@@ -102,13 +109,29 @@ def test_staged_executor_runs_dummy_tools_and_records_artifacts(tmp_path: Path) 
         "dummy.report-assembly",
     ]
     assert [artifact.artifact_id for artifact in result.artifacts] == [
-        "dummy-instruments",
+        "instrument-universe",
         "normalized-evidence",
         "analysis-contexts",
         "prediction-inputs",
     ]
     assert all(Path(artifact.path).exists() for artifact in result.artifacts)
+    universe = result.state.require("instrument_universe", InstrumentUniverse)
+    assert set(universe.instrument_ids) >= {
+        "instrument:equity:us:tsla",
+        "instrument:etf:us:spy",
+        "instrument:crypto:btc-usd",
+        "instrument:futures:cme:esm6",
+    }
+    assert [instrument.asset_class for instrument in universe.instruments] == [
+        AssetClass.STOCK,
+        AssetClass.ETF,
+        AssetClass.CRYPTO,
+        AssetClass.FUTURES,
+    ]
+    assert result.state.require("instrument_resolutions", tuple) == universe.resolutions
+    assert universe.warnings
     assert isinstance(report.audit_manifest, AuditManifest)
+    assert report.instrument_resolutions == universe.resolutions
     assert report.audit_manifest.prediction_trace_ids == ("prediction-tsla-dummy-volatility",)
 
 
@@ -155,8 +178,18 @@ def test_generate_dummy_report_bundle_writes_markdown_json_and_manifest(tmp_path
 
     assert report_payload["run_id"] == "research-2026-05-12"
     assert report_payload["prediction_candidates"][0]["status"] == "evidence_supported"
+    assert [instrument["asset_class"] for instrument in report_payload["instruments"]] == [
+        "stock",
+        "etf",
+        "crypto",
+        "futures",
+    ]
+    assert any(
+        resolution["status"] == "ambiguous"
+        for resolution in report_payload["instrument_resolutions"]
+    )
     assert [artifact["artifact_id"] for artifact in manifest_payload["artifacts"]] == [
-        "dummy-instruments",
+        "instrument-universe",
         "normalized-evidence",
         "analysis-contexts",
         "prediction-inputs",

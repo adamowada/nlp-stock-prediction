@@ -13,6 +13,11 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     stable_digest,
     utc_now,
 )
+from nlp_stock_prediction.orchestration.phase3_universe import (
+    build_phase3_fixture_universe,
+    instrument_record_from_contract,
+    phase3_universe_artifact_payload,
+)
 from nlp_stock_prediction.reporting.audit import write_json_artifact
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
@@ -31,14 +36,16 @@ def run_phase2_dummy_universe_tool(
     symbol: str,
 ) -> JsonObject:
     now = utc_now()
-    instruments = (phase2_instrument(symbol.strip().upper(), now),)
-    payload: JsonObject = {
-        "schema_version": "dummy-universe.v1",
-        "run_id": run_id,
-        "records": [instrument.model_dump(mode="json") for instrument in instruments],
-    }
-    artifact_id = f"artifact-dummy-universe-{stable_digest(run_id)}"
-    path = paths.audit_dir / "dummy-universe.json"
+    normalized_symbol = symbol.strip().upper()
+    universe = build_phase3_fixture_universe(
+        request_id=f"phase3-fixture-universe-{stable_digest(f'{run_id}:{normalized_symbol}')}",
+        generated_at=now,
+        primary_symbol=normalized_symbol,
+        primary_instrument_id=f"instrument:codex:{normalized_symbol}",
+    )
+    payload = phase3_universe_artifact_payload(run_id=run_id, universe=universe)
+    artifact_id = f"artifact-instrument-universe-{stable_digest(run_id)}"
+    path = paths.audit_dir / "instrument-universe.json"
     sha256 = write_json_artifact(path, payload)
     tool_run_id = f"tool-dummy-universe-{run_id}"
     store.record_tool_run(
@@ -46,31 +53,43 @@ def run_phase2_dummy_universe_tool(
             tool_run_id=tool_run_id,
             run_id=run_id,
             tool_name="run_dummy_universe_tool",
-            tool_version="phase2.v1",
+            tool_version="phase3.fixture.v1",
             status="ok",
             started_at=now,
             completed_at=now,
-            inputs={"symbol": symbol},
+            inputs={"symbol": symbol, "universe_id": universe.request_id},
+            warnings=universe.warnings,
         )
     )
-    for instrument in instruments:
-        upsert_phase2_instrument(store, symbol=instrument.symbol, retrieved_at=now)
+    for instrument in universe.instruments:
+        store.upsert_instrument(instrument_record_from_contract(instrument))
     store.record_artifact(
         ArtifactRecord(
             artifact_id=artifact_id,
             tool_run_id=tool_run_id,
-            artifact_type="provider_result",
+            artifact_type="instrument_universe",
             path=path.relative_to(repo_root),
             sha256=sha256,
-            schema_version="dummy-universe.v1",
-            metadata={"instrument_ids": [item.instrument_id for item in instruments]},
+            schema_version="phase3.instrument-universe.v1",
+            metadata={
+                "universe_id": universe.request_id,
+                "instrument_ids": list(universe.instrument_ids),
+                "resolution_status_counts": universe.metadata.get(
+                    "resolution_status_counts",
+                    {},
+                ),
+                "warnings": list(universe.warnings),
+            },
             created_at=now,
         )
     )
     return {
         "run_id": run_id,
-        "instrument_ids": [instrument.instrument_id for instrument in instruments],
+        "tool_run_id": tool_run_id,
+        "universe_id": universe.request_id,
+        "instrument_ids": list(universe.instrument_ids),
         "artifact_id": artifact_id,
+        "warnings": list(universe.warnings),
     }
 
 

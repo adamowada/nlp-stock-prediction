@@ -269,6 +269,7 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
         "json_report",
         "provider_result",
         "ml_forecast",
+        "instrument_universe",
     }:
         artifact_type = "provider_result"
     return AuditArtifact(
