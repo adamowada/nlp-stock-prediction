@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
+from typing import TypeVar
 
 from nlp_stock_prediction.contracts import (
     CredentialState,
@@ -45,6 +46,11 @@ from nlp_stock_prediction.providers._base import (
 )
 
 ALPHA_VANTAGE_ENDPOINT = "https://www.alphavantage.co/query"
+TProviderPayload = TypeVar("TProviderPayload")
+
+
+class AlphaVantageRateLimitNotice(Exception):
+    """Raised when Alpha Vantage returns a quota/rate-limit notice payload."""
 
 
 class AlphaVantageMarketDataProvider:
@@ -127,6 +133,15 @@ class AlphaVantageMarketDataProvider:
                 fetched_at=fetched_at,
                 error=exc,
                 credential_state=CredentialState.CONFIGURED,
+            )
+        except AlphaVantageRateLimitNotice as exc:
+            return _alpha_vantage_rate_limited_result(
+                provider_name=self.provider_name,
+                request=request,
+                fetched_at=fetched_at,
+                message=str(exc),
+                raw_snapshot_id=fetched.raw_snapshot_id,
+                cache_key=fetched.cache_key,
             )
         except MalformedProviderResponse as exc:
             return malformed_result(
@@ -316,6 +331,15 @@ class AlphaVantageFundamentalsProvider:
                 error=exc,
                 credential_state=CredentialState.CONFIGURED,
             )
+        except AlphaVantageRateLimitNotice as exc:
+            return _alpha_vantage_rate_limited_result(
+                provider_name=self.provider_name,
+                request=request,
+                fetched_at=fetched_at,
+                message=str(exc),
+                raw_snapshot_id=fetched.raw_snapshot_id,
+                cache_key=fetched.cache_key,
+            )
         except MalformedProviderResponse as exc:
             return malformed_result(
                 provider_name=self.provider_name,
@@ -408,9 +432,39 @@ class AlphaVantageFundamentalsProvider:
 
 def _raise_for_alpha_vantage_message(payload: dict[str, object]) -> None:
     if "Note" in payload or "Information" in payload:
-        raise MalformedProviderResponse("Alpha Vantage response indicates rate limit or notice")
+        raise AlphaVantageRateLimitNotice("Alpha Vantage response indicates rate limit or notice")
     if "Error Message" in payload:
         raise MalformedProviderResponse("Alpha Vantage response contains an error message")
+
+
+def _alpha_vantage_rate_limited_result(
+    *,
+    provider_name: str,
+    request: MarketDataRequest | FundamentalsRequest,
+    fetched_at: datetime,
+    message: str,
+    raw_snapshot_id: str,
+    cache_key: str,
+) -> ProviderResult[TProviderPayload]:
+    warning = provider_warning(
+        provider_name=provider_name,
+        code=WarningCode.RATE_LIMITED,
+        severity=WarningSeverity.ERROR,
+        message=message,
+        occurred_at=fetched_at,
+        raw_snapshot_id=raw_snapshot_id,
+        provider_error_type="rate_limit",
+    )
+    return provider_result(
+        provider_name=provider_name,
+        status=ProviderStatus.RATE_LIMITED,
+        request=request,
+        fetched_at=fetched_at,
+        credential_state=CredentialState.CONFIGURED,
+        warnings=(warning,),
+        raw_snapshot_id=raw_snapshot_id,
+        cache_key=cache_key,
+    )
 
 
 def _liquidity_metrics(bars: list[PriceBar]) -> tuple[ProviderMetric, ...]:

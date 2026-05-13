@@ -15,9 +15,9 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from nlp_stock_prediction.contracts import PriceBar
+from nlp_stock_prediction.contracts import JsonObject, PriceBar
 from nlp_stock_prediction.ml.timesfm.contracts import (
     TimesFmForecastArtifact,
     TimesFmQuantileForecast,
@@ -29,6 +29,7 @@ from nlp_stock_prediction.ml.timesfm.dataset import (
     build_timesfm_dataset,
 )
 from nlp_stock_prediction.ml.train import load_price_bars_csv
+from nlp_stock_prediction.reporting.audit import write_json_artifact
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 
@@ -88,7 +89,7 @@ def forecast_timesfm_dataset(
             stack=stack,
             model=model,
         )
-    except Exception as exc:
+    except (TimesFmForecastError, ImportError, OSError, RuntimeError) as exc:
         return _unavailable_artifact(
             dataset,
             window,
@@ -103,11 +104,7 @@ def forecast_timesfm_dataset(
 def write_forecast_artifact(artifact: TimesFmForecastArtifact, path: Path) -> None:
     """Write a TimesFM forecast artifact as stable JSON."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(artifact.model_dump(mode="json"), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json_artifact(path, cast(JsonObject, artifact.model_dump(mode="json")))
 
 
 def main(

@@ -129,7 +129,7 @@ def test_resolve_returns_ambiguity_and_uses_hints_to_disambiguate(tmp_path: Path
         symbol="AI",
         display_name="AI Token",
         asset_class=AssetClass.CRYPTO,
-        provider_ids=(_provider("fixture-market", "symbol", "AI"),),
+        provider_ids=(_provider("fixture-market", "crypto_symbol", "AI"),),
     )
     registry.upsert(stock)
     registry.upsert(token)
@@ -152,7 +152,6 @@ def test_resolve_returns_ambiguity_and_uses_hints_to_disambiguate(tmp_path: Path
         InstrumentQuery(
             query="AI",
             provider="fixture-market",
-            provider_namespace="symbol",
             provider_identifier="AI",
         )
     )

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
-import os
 import subprocess
 import sys
 from datetime import date, datetime, timedelta
@@ -26,6 +25,7 @@ from nlp_stock_prediction.ml.training import (
     train_technical_model,
     write_training_artifacts,
 )
+from subprocess_helpers import module_subprocess_env
 
 RUN_DATE = date(2026, 5, 11)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -371,20 +371,4 @@ def _install_fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _module_env() -> dict[str, str]:
-    env: dict[str, str] = {}
-    for key in (
-        "COMSPEC",
-        "PATH",
-        "PATHEXT",
-        "SYSTEMROOT",
-        "TEMP",
-        "TMP",
-        "WINDIR",
-    ):
-        value = os.environ.get(key)
-        if value is not None:
-            env[key] = value
-    src_path = str(PROJECT_ROOT / "src")
-    env["PYTHONPATH"] = src_path
-    env["NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS"] = "0"
-    return env
+    return module_subprocess_env(PROJECT_ROOT)

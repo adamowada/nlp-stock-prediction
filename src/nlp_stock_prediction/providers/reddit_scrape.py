@@ -199,15 +199,6 @@ class RedditPublicPageProvider:
                 error=exc,
                 credential_state=CredentialState.NOT_REQUIRED,
             )
-        login_warning = self._login_wall_warning(response.html, source_url, fetched_at)
-        if login_warning is not None:
-            return self._blocked_result(
-                request=request,
-                fetched_at=fetched_at,
-                warning=login_warning,
-                cache_key=cache_key,
-            )
-
         raw_snapshot_id = _raw_snapshot_id("reddit-ticker-card", response.html)
         observed_at = extract_snapshot_observed_at(response.html) or fetched_at
         effective_request = request.model_copy(update={"source_url": source_url})
@@ -222,6 +213,19 @@ class RedditPublicPageProvider:
             freshness_window_seconds=self._stale_after_seconds,
         )
         warnings = tuple(discovery.warnings)
+        login_warning = self._login_wall_warning(
+            response.html,
+            source_url,
+            fetched_at,
+            has_public_content=bool(discovery.candidates),
+        )
+        if login_warning is not None:
+            return self._blocked_result(
+                request=request,
+                fetched_at=fetched_at,
+                warning=login_warning,
+                cache_key=cache_key,
+            )
         if _is_stale_observation(discovery):
             warnings += (
                 provider_warning(
@@ -297,16 +301,21 @@ class RedditPublicPageProvider:
                     )
                 )
                 continue
-            login_warning = self._login_wall_warning(response.html, source_url, fetched_at)
-            if login_warning is not None:
-                warnings.append(login_warning)
-                continue
             discussion_raw_snapshot_id = _raw_snapshot_id("reddit-discussion-page", response.html)
             raw_snapshot_ids.append(discussion_raw_snapshot_id)
             records = extract_reddit_discussion_records_from_public_html(
                 response.html,
                 source_url=source_url,
             )
+            login_warning = self._login_wall_warning(
+                response.html,
+                source_url,
+                fetched_at,
+                has_public_content=bool(records),
+            )
+            if login_warning is not None:
+                warnings.append(login_warning)
+                continue
             evidence.extend(
                 normalize_reddit_evidence(
                     records,
@@ -321,22 +330,22 @@ class RedditPublicPageProvider:
 
         combined_raw_snapshot_id = "|".join(raw_snapshot_ids) or None
         if not evidence:
-            only_hard_failures = _only_hard_failures(warnings)
-            warnings.append(
-                provider_warning(
-                    provider_name=self.provider_name,
-                    code=WarningCode.NO_DATA,
-                    severity=WarningSeverity.INFO,
-                    message="Reddit public pages produced no high-confidence ticker evidence.",
-                    occurred_at=fetched_at,
-                    raw_snapshot_id=combined_raw_snapshot_id,
-                    metadata={
-                        "validation": "no_public_discussion_evidence",
-                        "source_urls": list(source_urls),
-                    },
+            status = _empty_discussion_status(warnings)
+            if status != ProviderStatus.RATE_LIMITED:
+                warnings.append(
+                    provider_warning(
+                        provider_name=self.provider_name,
+                        code=WarningCode.NO_DATA,
+                        severity=WarningSeverity.INFO,
+                        message="Reddit public pages produced no high-confidence ticker evidence.",
+                        occurred_at=fetched_at,
+                        raw_snapshot_id=combined_raw_snapshot_id,
+                        metadata={
+                            "validation": "no_public_discussion_evidence",
+                            "source_urls": list(source_urls),
+                        },
+                    )
                 )
-            )
-            status = ProviderStatus.FAILED if only_hard_failures else ProviderStatus.EMPTY
             return provider_result(
                 provider_name=self.provider_name,
                 status=status,
@@ -440,11 +449,22 @@ class RedditPublicPageProvider:
         html: str,
         source_url: str,
         fetched_at: datetime,
+        *,
+        has_public_content: bool = False,
     ) -> ProviderWarning | None:
+        if has_public_content:
+            return None
         lowered = html.lower()
         if "login" not in lowered or "reddit" not in lowered:
             return None
-        if 'data-testid="login"' not in lowered and "/login" not in lowered:
+        login_wall_markers = (
+            'data-testid="login"',
+            "log in to reddit",
+            "log in to view",
+            "login required",
+            "sign up to continue",
+        )
+        if not any(marker in lowered for marker in login_wall_markers):
             return None
         return provider_warning(
             provider_name=self.provider_name,
@@ -549,6 +569,12 @@ def _only_hard_failures(warnings: Sequence[ProviderWarning]) -> bool:
         }
         for warning in warnings
     )
+
+
+def _empty_discussion_status(warnings: Sequence[ProviderWarning]) -> ProviderStatus:
+    if warnings and all(warning.code == WarningCode.RATE_LIMITED for warning in warnings):
+        return ProviderStatus.RATE_LIMITED
+    return ProviderStatus.FAILED if _only_hard_failures(warnings) else ProviderStatus.EMPTY
 
 
 def _warning_code_from_transport(error: ProviderTransportError) -> WarningCode:

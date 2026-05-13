@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from math import exp, isfinite, log, sqrt
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -28,6 +28,7 @@ from nlp_stock_prediction.ml.dataset import (
     TechnicalFeatureRow,
     temporal_train_validation_split,
 )
+from nlp_stock_prediction.reporting.audit import write_json_artifact
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 SelectedDevice = Literal["cpu", "cuda"]
@@ -303,7 +304,10 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
     model_path = output_dir / "model.json"
     metrics_path = output_dir / "metrics.json"
     metadata_path = output_dir / "metadata.json"
-    model_path.write_text(result.model.model_dump_json(indent=2), encoding="utf-8")
+    model_sha256 = write_json_artifact(
+        model_path,
+        cast(JsonObject, result.model.model_dump(mode="json")),
+    )
     metrics_payload = {
         "schema_version": "ml.training_metrics.v1",
         "dataset_hash": result.dataset_hash,
@@ -311,12 +315,7 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
         "train": result.train_metrics.model_dump(mode="json"),
         "validation": result.validation_metrics.model_dump(mode="json"),
     }
-    metrics_path.write_text(
-        json.dumps(metrics_payload, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    model_sha256 = _file_sha256(model_path)
-    metrics_sha256 = _file_sha256(metrics_path)
+    metrics_sha256 = write_json_artifact(metrics_path, cast(JsonObject, metrics_payload))
     metadata_payload = {
         "schema_version": "ml.training_metadata.v1",
         "config": result.config.model_dump(mode="json"),
@@ -334,11 +333,7 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
         "split": _split_metadata(result.split),
         "trained_at": result.trained_at.isoformat(),
     }
-    metadata_path.write_text(
-        json.dumps(metadata_payload, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    metadata_sha256 = _file_sha256(metadata_path)
+    metadata_sha256 = write_json_artifact(metadata_path, cast(JsonObject, metadata_payload))
     return TrainingArtifactPaths(
         model_path=model_path,
         metrics_path=metrics_path,
@@ -486,10 +481,6 @@ def _hash_model(
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _runtime_metadata(device: TrainingDeviceMetadata) -> JsonObject:

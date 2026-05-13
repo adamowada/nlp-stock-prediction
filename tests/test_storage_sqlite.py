@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from nlp_stock_prediction.contracts import JsonObject
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
     CandidateArtifactLinkRecord,
@@ -78,7 +79,7 @@ def test_research_database_initialization_is_idempotent_and_excludes_planning(
 
     with store.connect() as connection:
         migration_count = connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
-    assert migration_count == 1
+    assert migration_count == CURRENT_RESEARCH_SCHEMA_VERSION
     assert {
         "artifacts",
         "candidate_artifact_links",
@@ -117,7 +118,7 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
     tmp_path: Path,
 ) -> None:
     store = _research_store(tmp_path)
-    with store.connect() as connection:
+    with store.connect(create=True) as connection:
         connection.executescript(
             """
             CREATE TABLE schema_migrations (
@@ -248,7 +249,7 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
     }.issubset(_table_names(store))
     with store.connect() as connection:
         migration_count = connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
-    assert migration_count == 2
+    assert migration_count == CURRENT_RESEARCH_SCHEMA_VERSION
 
 
 @pytest.mark.unit
@@ -776,6 +777,77 @@ def test_append_tradability_evidence_returns_latest_by_provider(tmp_path: Path) 
         url="https://example.test/eth",
         metadata={"reason": "fixture-new"},
     )
+
+
+@pytest.mark.unit
+def test_instrument_upsert_does_not_erase_appended_tradability_evidence(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="crypto:SOL",
+            symbol="SOL",
+            asset_class="crypto",
+        )
+    )
+    store.append_tradability_evidence(
+        InstrumentTradabilityEvidenceRecord(
+            instrument_id="crypto:SOL",
+            provider="ExampleBroker",
+            status="available",
+            retrieved_at=_timestamp(),
+        )
+    )
+
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="crypto:SOL",
+            symbol="SOL",
+            asset_class="crypto",
+            aliases=("Solana",),
+        )
+    )
+
+    assert store.get_latest_tradability_evidence(
+        "crypto:SOL",
+        "ExampleBroker",
+    ) == InstrumentTradabilityEvidenceRecord(
+        instrument_id="crypto:SOL",
+        provider="ExampleBroker",
+        status="available",
+        retrieved_at=_timestamp(),
+    )
+
+
+@pytest.mark.unit
+def test_provider_identifier_conflict_is_rejected(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    provider_id: JsonObject = {
+        "provider": "ExampleMarket",
+        "namespace": "ticker",
+        "identifier": "TSLA",
+    }
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="equity:NASDAQ:TSLA",
+            symbol="TSLA",
+            asset_class="stock",
+            provider_ids=(provider_id,),
+        )
+    )
+
+    with pytest.raises(ValueError, match="provider identifier is already assigned"):
+        store.upsert_instrument(
+            InstrumentRecord(
+                instrument_id="equity:NYSE:TSLA",
+                symbol="TSLA",
+                asset_class="stock",
+                provider_ids=(provider_id,),
+            )
+        )
 
 
 @pytest.mark.unit

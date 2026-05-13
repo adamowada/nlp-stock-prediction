@@ -39,7 +39,10 @@ FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "raw"
 
 
 def _fixture(*parts: str) -> dict[str, Any]:
-    return cast(dict[str, Any], json.loads((FIXTURE_ROOT.joinpath(*parts)).read_text()))
+    return cast(
+        dict[str, Any],
+        json.loads((FIXTURE_ROOT.joinpath(*parts)).read_text(encoding="utf-8")),
+    )
 
 
 @dataclass
@@ -595,6 +598,7 @@ def test_sec_edgar_maps_company_facts_and_recent_filings() -> None:
     )
     provider = SecEdgarFundamentalsProvider(
         ticker_cik_map={"TSLA": "1318605"},
+        user_agent="nlp-stock-prediction-test contact@example.test",
         transport=transport,
         now=lambda: FETCHED_AT,
     )
@@ -624,6 +628,7 @@ def test_sec_edgar_maps_company_facts_and_recent_filings() -> None:
 def test_sec_edgar_warns_when_ticker_cik_mapping_is_unconfigured() -> None:
     provider = SecEdgarFundamentalsProvider(
         ticker_cik_map={},
+        user_agent="nlp-stock-prediction-test contact@example.test",
         transport=_FakeJsonTransport({}),
         now=lambda: FETCHED_AT,
     )

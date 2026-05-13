@@ -675,3 +675,9 @@ def test_date_window_rejects_end_before_start() -> None:
             start=datetime(2026, 5, 11, 16, 0, tzinfo=UTC),
             end=datetime(2026, 5, 11, 9, 30, tzinfo=UTC),
         )
+
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        DateWindow(
+            start=datetime(2026, 5, 11, 9, 30),
+            end=datetime(2026, 5, 11, 16, 0, tzinfo=UTC),
+        )

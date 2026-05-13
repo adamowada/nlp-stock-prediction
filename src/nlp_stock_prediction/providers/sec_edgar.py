@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from decimal import Decimal
@@ -14,6 +15,7 @@ from nlp_stock_prediction.contracts import (
     ProviderMetric,
     ProviderResult,
     ProviderStatus,
+    ProviderWarning,
     WarningCode,
     WarningSeverity,
 )
@@ -42,7 +44,9 @@ from nlp_stock_prediction.providers._base import (
 
 SEC_COMPANY_FACTS_ENDPOINT = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 SEC_SUBMISSIONS_ENDPOINT = "https://data.sec.gov/submissions/CIK{cik}.json"
-DEFAULT_SEC_USER_AGENT = "nlp-stock-prediction/0.1 contact@example.invalid"
+SEC_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_SEC_USER_AGENT"
+LIVE_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_LIVE_USER_AGENT"
+DEFAULT_SEC_USER_AGENT = ""
 
 
 class SecEdgarFundamentalsProvider:
@@ -56,7 +60,7 @@ class SecEdgarFundamentalsProvider:
         ticker_cik_map: Mapping[str, str],
         company_facts_endpoint: str = SEC_COMPANY_FACTS_ENDPOINT,
         submissions_endpoint: str = SEC_SUBMISSIONS_ENDPOINT,
-        user_agent: str = DEFAULT_SEC_USER_AGENT,
+        user_agent: str | None = None,
         transport: JsonTransport | None = None,
         cache: ProviderCache | None = None,
         now: Callable[[], datetime] = utc_now,
@@ -65,7 +69,11 @@ class SecEdgarFundamentalsProvider:
         self._ticker_cik_map = {ticker.upper(): cik for ticker, cik in ticker_cik_map.items()}
         self._company_facts_endpoint = company_facts_endpoint
         self._submissions_endpoint = submissions_endpoint
-        self._user_agent = user_agent
+        self._user_agent = (
+            user_agent
+            or os.environ.get(SEC_USER_AGENT_ENV)
+            or os.environ.get(LIVE_USER_AGENT_ENV, "")
+        ).strip()
         self._transport = transport or UrllibJsonTransport()
         self._cache = cache
         self._now = now
@@ -75,6 +83,16 @@ class SecEdgarFundamentalsProvider:
         self, request: FundamentalsRequest
     ) -> ProviderResult[FundamentalsSnapshot]:
         fetched_at = self._now()
+        user_agent_warning = self._user_agent_warning(fetched_at)
+        if user_agent_warning is not None:
+            return provider_result(
+                provider_name=self.provider_name,
+                status=ProviderStatus.UNCONFIGURED,
+                request=request,
+                fetched_at=fetched_at,
+                credential_state=CredentialState.MISSING,
+                warnings=(user_agent_warning,),
+            )
         ticker = first_ticker(request)
         if ticker is None:
             return no_data_result(
@@ -188,11 +206,33 @@ class SecEdgarFundamentalsProvider:
         )
 
     def health(self) -> ProviderHealth:
+        checked_at = self._now()
+        user_agent_warning = self._user_agent_warning(checked_at)
         return provider_health(
             provider_name=self.provider_name,
-            status=ProviderStatus.OK,
-            checked_at=self._now(),
-            credential_state=CredentialState.NOT_REQUIRED,
+            status=ProviderStatus.UNCONFIGURED
+            if user_agent_warning is not None
+            else ProviderStatus.OK,
+            checked_at=checked_at,
+            credential_state=CredentialState.MISSING
+            if user_agent_warning is not None
+            else CredentialState.CONFIGURED,
+            warnings=() if user_agent_warning is None else (user_agent_warning,),
+        )
+
+    def _user_agent_warning(self, occurred_at: datetime) -> ProviderWarning | None:
+        if self._user_agent:
+            return None
+        return provider_warning(
+            provider_name=self.provider_name,
+            code=WarningCode.MISSING_CREDENTIALS,
+            severity=WarningSeverity.ERROR,
+            message=(
+                "SEC EDGAR requires a contact User-Agent; set "
+                f"{SEC_USER_AGENT_ENV}, {LIVE_USER_AGENT_ENV}, or pass user_agent explicitly"
+            ),
+            occurred_at=occurred_at,
+            metadata={"credential_name": SEC_USER_AGENT_ENV},
         )
 
     def _map_payload(
@@ -341,4 +381,4 @@ def _optional_text(value: object) -> str | None:
     return text or None
 
 
-__all__ = ["SecEdgarFundamentalsProvider"]
+__all__ = ["LIVE_USER_AGENT_ENV", "SEC_USER_AGENT_ENV", "SecEdgarFundamentalsProvider"]

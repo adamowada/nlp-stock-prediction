@@ -15,11 +15,12 @@ from nlp_stock_prediction.contracts import (
     TickerDiscoveryStatus,
     WarningCode,
 )
+from nlp_stock_prediction.providers._base import ProviderTransportError
 from nlp_stock_prediction.providers.reddit_scrape import (
-    HtmlResponse,
     RedditPublicPageProvider,
     StaticHtmlTransport,
 )
+from nlp_stock_prediction.providers.scraping import HtmlResponse
 
 RUN_DATE = date(2026, 5, 11)
 FETCHED_AT = datetime(2026, 5, 11, 16, 0, tzinfo=UTC)
@@ -44,6 +45,19 @@ class _CountingTransport:
         del url, headers, timeout, max_bytes
         self.calls += 1
         return HtmlResponse(html=self.html)
+
+
+class _RateLimitedTransport:
+    def get_html(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+        max_bytes: int = 2_000_000,
+    ) -> HtmlResponse:
+        del url, headers, timeout, max_bytes
+        raise ProviderTransportError("rate limited", status_code=429, error_type="rate_limited")
 
 
 def _html(name: str) -> str:
@@ -146,6 +160,28 @@ def test_public_page_provider_reports_malformed_ticker_markup_without_raising() 
 
 
 @pytest.mark.contract
+def test_public_page_provider_ignores_login_nav_when_public_tickers_are_visible() -> None:
+    html = """
+    <main data-snapshot-observed-at="2026-05-11T15:45:00Z">
+      <a href="/login">Log in</a>
+      <div id="ticker-container-tsla">TSLA</div>
+      <div id="ticker-container-nvda">NVDA</div>
+      <div id="ticker-container-amd">AMD</div>
+      <div id="ticker-container-ai">AI</div>
+      <div id="ticker-container-mu">MU</div>
+      <div id="ticker-container-on">ON</div>
+    </main>
+    """
+    provider = _provider({SUBREDDIT_URL: html})
+
+    result = provider.discover_tickers(_ticker_request())
+
+    assert result.status == ProviderStatus.OK
+    assert result.data is not None
+    assert result.warnings == ()
+
+
+@pytest.mark.contract
 def test_public_page_provider_marks_stale_ticker_snapshot() -> None:
     provider = _provider({SUBREDDIT_URL: _html("public_page_stale_devvit_card.html")})
 
@@ -228,6 +264,21 @@ def test_public_page_discussion_without_matches_returns_empty_result() -> None:
     assert result.data is None
     assert result.warnings[-1].code == WarningCode.NO_DATA
     assert result.warnings[-1].metadata["validation"] == "no_public_discussion_evidence"
+
+
+@pytest.mark.contract
+def test_public_page_discussion_rate_limit_only_returns_rate_limited() -> None:
+    provider = RedditPublicPageProvider(
+        transport=_RateLimitedTransport(),
+        discussion_urls=(POST_URL,),
+        now=lambda: FETCHED_AT,
+    )
+
+    result = provider.fetch_discussion(_discussion_request())
+
+    assert result.status == ProviderStatus.RATE_LIMITED
+    assert result.warnings[0].code == WarningCode.RATE_LIMITED
+    assert all(warning.code != WarningCode.NO_DATA for warning in result.warnings)
 
 
 @pytest.mark.contract

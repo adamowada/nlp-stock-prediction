@@ -170,7 +170,7 @@ def render_phase2_prediction_report(
         ),
         (
             f"artifact-audit-manifest-{stable_digest(run.run_id)}",
-            "provider_result",
+            "audit_manifest",
             paths.audit_manifest_path,
             manifest_sha,
         ),
@@ -270,8 +270,9 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
         "provider_result",
         "ml_forecast",
         "instrument_universe",
+        "audit_manifest",
     }:
-        artifact_type = "provider_result"
+        raise ValueError(f"unknown artifact type: {artifact_type}")
     return AuditArtifact(
         artifact_id=record.artifact_id,
         artifact_type=cast(ArtifactType, artifact_type),

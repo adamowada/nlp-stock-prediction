@@ -16,7 +16,8 @@ from nlp_stock_prediction.contracts import (
     SourceKind,
     WarningCode,
 )
-from nlp_stock_prediction.providers.apnews import APNewsProvider, HtmlResponse
+from nlp_stock_prediction.providers.apnews import APNewsProvider
+from nlp_stock_prediction.providers.scraping import HtmlResponse
 
 RUN_DATE = date(2026, 5, 11)
 FETCHED_AT = datetime(2026, 5, 11, 18, 0, tzinfo=UTC)

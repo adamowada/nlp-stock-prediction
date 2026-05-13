@@ -20,6 +20,7 @@ from nlp_stock_prediction.contracts.instruments import (
     ProviderInstrumentId,
     TradabilityEvidence,
 )
+from nlp_stock_prediction.instruments.registry import instrument_to_record
 from nlp_stock_prediction.storage import InstrumentRecord
 
 PHASE3_UNIVERSE_SCHEMA_VERSION = "phase3.instrument-universe.v1"
@@ -150,13 +151,15 @@ def build_phase3_fixture_universe(
 def phase3_universe_artifact_payload(*, run_id: str, universe: InstrumentUniverse) -> JsonObject:
     """Serialize a full universe artifact with a stable top-level envelope."""
 
+    universe_payload = universe.model_dump(mode="json")
+    universe_payload["instrument_ids"] = list(universe.instrument_ids)
     return cast(
         JsonObject,
         {
             "schema_version": PHASE3_UNIVERSE_SCHEMA_VERSION,
             "run_id": run_id,
             "universe_id": universe.request_id,
-            "universe": universe.model_dump(mode="json"),
+            "universe": universe_payload,
         },
     )
 
@@ -164,31 +167,7 @@ def phase3_universe_artifact_payload(*, run_id: str, universe: InstrumentUnivers
 def instrument_record_from_contract(instrument: Instrument) -> InstrumentRecord:
     """Convert a public Instrument contract into the SQLite registry record."""
 
-    return InstrumentRecord(
-        instrument_id=instrument.instrument_id,
-        symbol=instrument.symbol,
-        asset_class=instrument.asset_class.value,
-        name=instrument.display_name,
-        venue=instrument.venue,
-        aliases=instrument.aliases,
-        provider_ids=tuple(
-            cast(JsonObject, provider_id.model_dump(mode="json"))
-            for provider_id in instrument.provider_ids
-        ),
-        related_instruments=tuple(
-            cast(JsonObject, related.model_dump(mode="json"))
-            for related in instrument.related_instruments
-        ),
-        tradability_evidence=tuple(
-            cast(JsonObject, evidence.model_dump(mode="json"))
-            for evidence in instrument.tradability_evidence
-        ),
-        data_availability=tuple(
-            cast(JsonObject, availability.model_dump(mode="json"))
-            for availability in instrument.data_availability
-        ),
-        metadata={**instrument.metadata, "phase3_universe": True},
-    )
+    return instrument_to_record(instrument, metadata={"phase3_universe": True})
 
 
 def _resolved_resolution(query: str, instrument: Instrument) -> InstrumentResolution:

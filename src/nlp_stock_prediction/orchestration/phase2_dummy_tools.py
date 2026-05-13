@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import cast
 
 from nlp_stock_prediction.contracts import JsonObject
+from nlp_stock_prediction.instruments.registry import instrument_to_record
 from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
     phase2_instrument,
@@ -21,7 +21,6 @@ from nlp_stock_prediction.orchestration.phase3_universe import (
 from nlp_stock_prediction.reporting.audit import write_json_artifact
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
-    InstrumentRecord,
     SQLiteStore,
     ToolRunRecord,
 )
@@ -147,27 +146,7 @@ def run_phase2_dummy_analysis_tool(
 
 def upsert_phase2_instrument(store: SQLiteStore, *, symbol: str, retrieved_at: datetime) -> None:
     instrument = phase2_instrument(symbol.strip().upper(), retrieved_at)
-    store.upsert_instrument(
-        InstrumentRecord(
-            instrument_id=instrument.instrument_id,
-            symbol=instrument.symbol,
-            asset_class=instrument.asset_class.value,
-            name=instrument.display_name,
-            venue=instrument.venue,
-            provider_ids=tuple(
-                cast(JsonObject, item.model_dump(mode="json")) for item in instrument.provider_ids
-            ),
-            tradability_evidence=tuple(
-                cast(JsonObject, item.model_dump(mode="json"))
-                for item in instrument.tradability_evidence
-            ),
-            data_availability=tuple(
-                cast(JsonObject, item.model_dump(mode="json"))
-                for item in instrument.data_availability
-            ),
-            metadata={"phase2_mcp": True},
-        )
-    )
+    store.upsert_instrument(instrument_to_record(instrument, metadata={"phase2_mcp": True}))
 
 
 __all__ = [

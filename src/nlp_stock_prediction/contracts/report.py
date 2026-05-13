@@ -110,6 +110,7 @@ class AuditArtifact(ContractModel):
         "provider_result",
         "ml_forecast",
         "instrument_universe",
+        "audit_manifest",
     ]
     path: NonEmptyStr
     created_at: AwareDatetime
@@ -269,9 +270,7 @@ class DailyReport(ContractModel):
                 section.macro_context,
             ):
                 if component is not None:
-                    cited_evidence_ids.update(
-                        reference.evidence_id for reference in component.evidence
-                    )
+                    cited_evidence_ids.update(_analysis_evidence_ids(component))
             for candidate_id in section.prediction_candidate_ids:
                 if candidate_id not in candidate_by_id:
                     raise ValueError(
@@ -307,6 +306,15 @@ class DailyReport(ContractModel):
                 )
             raise ValueError("report evidence_sources must include every cited evidence_id")
         return self
+
+
+def _analysis_evidence_ids(
+    component: TechnicalAnalysis | FundamentalAnalysis | SectorContext | MacroContext,
+) -> tuple[str, ...]:
+    ids = [reference.evidence_id for reference in component.evidence]
+    if isinstance(component, FundamentalAnalysis) and component.agent_signal is not None:
+        ids.extend(component.agent_signal.source_evidence_ids)
+    return tuple(ids)
 
 
 __all__ = [

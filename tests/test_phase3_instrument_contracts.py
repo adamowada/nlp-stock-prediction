@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from nlp_stock_prediction.contracts import (
     AssetClass,
     AuditArtifact,
+    FreshnessStatus,
     Instrument,
     InstrumentDataAvailability,
     InstrumentQuery,
@@ -321,6 +322,8 @@ def test_universe_result_validates_selected_and_materialized_instrument_ids() ->
     )
 
     assert universe.instrument_ids == ("instrument-us-equity-tsla",)
+    round_tripped = InstrumentUniverse.model_validate(universe.model_dump(mode="json"))
+    assert round_tripped.instrument_ids == universe.instrument_ids
 
     with pytest.raises(ValidationError, match="selected resolution ids must be materialized"):
         InstrumentUniverse(
@@ -395,6 +398,51 @@ def test_source_evidence_tracks_generic_instrument_ids_with_ticker_compatibility
     assert evidence.matched_tickers == ("TSLA", "XLY")
     assert evidence.instrument_id == "instrument-us-equity-tsla"
     assert evidence.matched_instrument_ids == ("instrument-us-equity-tsla", "instrument-etf-xly")
+
+
+def test_source_evidence_rejects_source_kind_mismatch() -> None:
+    with pytest.raises(ValidationError, match="source_kind must match"):
+        SourceEvidence(
+            evidence_id="evidence-mismatch",
+            source_kind=SourceKind.NEWS_ARTICLE,
+            text="A source kind mismatch should not validate.",
+            provenance=SourceProvenance(
+                provider_name="fixture-reddit",
+                source_kind=SourceKind.REDDIT_POST,
+                retrieval_method=RetrievalMethod.FIXTURE,
+                fetched_at=_now(),
+                source_url="https://example.test/mismatch",
+                raw_identifier="mismatch",
+                raw_snapshot_id="raw-mismatch",
+                freshness_status=FreshnessStatus.FRESH,
+            ),
+        )
+
+
+def test_json_metadata_rejects_augmented_assignment_mutation() -> None:
+    evidence = SourceEvidence(
+        evidence_id="evidence-frozen-json",
+        source_kind=SourceKind.NEWS_ARTICLE,
+        text="Metadata mutation should be rejected.",
+        provenance=SourceProvenance(
+            provider_name="fixture-news",
+            source_kind=SourceKind.NEWS_ARTICLE,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=_now(),
+            source_url="https://example.test/frozen",
+            raw_identifier="frozen",
+            raw_snapshot_id="raw-frozen",
+            freshness_status=FreshnessStatus.FRESH,
+        ),
+        metadata={"tags": ["initial"]},
+    )
+
+    with pytest.raises(TypeError, match="immutable"):
+        evidence.metadata.__ior__({"extra": True})
+    tags = evidence.metadata["tags"]
+    assert isinstance(tags, list)
+    with pytest.raises(TypeError, match="immutable"):
+        tags += ["extra"]
 
 
 def test_audit_artifact_accepts_instrument_universe_type() -> None:

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -253,16 +254,38 @@ class SQLiteStore:
 
     def __init__(self, path: Path = DEFAULT_DATABASE_PATH) -> None:
         self.path = path
+        self._active_connection: sqlite3.Connection | None = None
 
-    def connect(self) -> sqlite3.Connection:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(str(self.path))
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+    @contextmanager
+    def connect(self, *, create: bool = False) -> Iterator[sqlite3.Connection]:
+        if self._active_connection is not None:
+            yield self._active_connection
+            return
+        connection = _open_sqlite_connection(self.path, create=create)
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        if self._active_connection is not None:
+            yield
+            return
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            self._active_connection = connection
+            try:
+                yield
+            finally:
+                self._active_connection = None
 
     def initialize(self) -> None:
-        with self.connect() as connection:
+        with self.connect(create=True) as connection:
             _initialize_connection(connection)
 
     def schema_version(self) -> int:
@@ -635,9 +658,6 @@ class SQLiteStore:
             return None
         return _tool_run_from_row(row)
 
-    def list_tool_runs(self, run_id: str) -> tuple[ToolRunRecord, ...]:
-        return self.list_tool_runs_for_run(run_id)
-
     def list_tool_runs_for_run(self, run_id: str) -> tuple[ToolRunRecord, ...]:
         _validate_required(run_id, "run_id")
         with self.connect() as connection:
@@ -1009,15 +1029,20 @@ class PlanningSQLiteStore:
     def __init__(self, path: Path = DEFAULT_PLANNING_DATABASE_PATH) -> None:
         self.path = path
 
-    def connect(self) -> sqlite3.Connection:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(str(self.path))
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+    @contextmanager
+    def connect(self, *, create: bool = False) -> Iterator[sqlite3.Connection]:
+        connection = _open_sqlite_connection(self.path, create=create)
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def initialize(self) -> None:
-        with self.connect() as connection:
+        with self.connect(create=True) as connection:
             _initialize_planning_connection(connection)
 
     def schema_version(self) -> int:
@@ -1335,21 +1360,41 @@ def initialize_planning_database(
 def _initialize_connection(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(_RESEARCH_SCHEMA_SQL)
-    _migrate_research_schema(connection)
-    connection.execute(
-        """
-        INSERT OR IGNORE INTO schema_migrations(version, name, applied_at)
-        VALUES (?, ?, ?)
-        """,
-        (
-            CURRENT_RESEARCH_SCHEMA_VERSION,
-            "registry_grade_research_schema_v4",
-            _format_datetime(_utc_now()),
-        ),
-    )
+    _apply_research_migrations(connection)
 
 
-def _migrate_research_schema(connection: sqlite3.Connection) -> None:
+@dataclass(frozen=True)
+class _SchemaMigrationStep:
+    version: int
+    name: str
+    apply: Callable[[sqlite3.Connection], None]
+
+
+def _apply_research_migrations(connection: sqlite3.Connection) -> None:
+    applied_versions = {
+        int(row["version"]) for row in connection.execute("SELECT version FROM schema_migrations")
+    }
+    for step in _RESEARCH_MIGRATION_STEPS:
+        if step.version in applied_versions:
+            continue
+        step.apply(connection)
+        connection.execute(
+            """
+            INSERT INTO schema_migrations(version, name, applied_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(version) DO UPDATE SET
+                name = excluded.name,
+                applied_at = excluded.applied_at
+            """,
+            (step.version, step.name, _format_datetime(_utc_now())),
+        )
+
+
+def _noop_migration(_connection: sqlite3.Connection) -> None:
+    return None
+
+
+def _migrate_research_schema_v4(connection: sqlite3.Connection) -> None:
     columns = _table_columns(connection, "instruments")
     migrations = {
         "provider_ids_json": "TEXT NOT NULL DEFAULT '[]'",
@@ -1390,6 +1435,14 @@ def _migrate_research_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(_RESEARCH_REGISTRY_SCHEMA_SQL)
 
 
+_RESEARCH_MIGRATION_STEPS = (
+    _SchemaMigrationStep(1, "initial_research_schema", _noop_migration),
+    _SchemaMigrationStep(2, "phase2_research_graph_schema", _noop_migration),
+    _SchemaMigrationStep(3, "phase2_evidence_provenance_schema", _noop_migration),
+    _SchemaMigrationStep(4, "registry_grade_research_schema_v4", _migrate_research_schema_v4),
+)
+
+
 def _replace_instrument_children(
     connection: sqlite3.Connection, record: InstrumentRecord, now: datetime
 ) -> None:
@@ -1397,9 +1450,9 @@ def _replace_instrument_children(
         "instrument_aliases",
         "instrument_provider_ids",
         "instrument_related_instruments",
-        "instrument_tradability_evidence",
         "instrument_data_availability",
     ):
+        _require_safe_table_name(table_name)
         connection.execute(
             f"DELETE FROM {table_name} WHERE instrument_id = ?", (record.instrument_id,)
         )
@@ -1422,6 +1475,25 @@ def _replace_instrument_children(
         provider = _json_required_text(provider_id, "provider")
         namespace = _json_optional_text(provider_id, "namespace") or "default"
         identifier = _json_required_text(provider_id, "identifier")
+        provider_lower = _normalize_lookup(provider)
+        namespace_lower = _normalize_lookup(namespace)
+        existing_provider_row = connection.execute(
+            """
+            SELECT instrument_id FROM instrument_provider_ids
+            WHERE provider_lower = ?
+              AND namespace_lower = ?
+              AND identifier = ?
+            """,
+            (provider_lower, namespace_lower, identifier),
+        ).fetchone()
+        if (
+            existing_provider_row is not None
+            and existing_provider_row["instrument_id"] != record.instrument_id
+        ):
+            raise ValueError(
+                "provider identifier is already assigned to "
+                f"{existing_provider_row['instrument_id']}"
+            )
         connection.execute(
             """
             INSERT INTO instrument_provider_ids (
@@ -1430,7 +1502,6 @@ def _replace_instrument_children(
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(provider_lower, namespace_lower, identifier) DO UPDATE SET
-                instrument_id = excluded.instrument_id,
                 provider = excluded.provider,
                 namespace = excluded.namespace,
                 metadata_json = excluded.metadata_json
@@ -1438,9 +1509,9 @@ def _replace_instrument_children(
             (
                 record.instrument_id,
                 provider,
-                _normalize_lookup(provider),
+                provider_lower,
                 namespace,
-                _normalize_lookup(namespace),
+                namespace_lower,
                 identifier,
                 _dump_json(
                     _json_metadata_without(provider_id, {"provider", "namespace", "identifier"})
@@ -1476,7 +1547,7 @@ def _replace_instrument_children(
             or _json_optional_text(evidence, "source_url")
             or _json_optional_text(evidence, "permalink")
         )
-        _insert_tradability_evidence(
+        _insert_tradability_evidence_once(
             connection,
             InstrumentTradabilityEvidenceRecord(
                 instrument_id=record.instrument_id,
@@ -1570,11 +1641,92 @@ def _insert_tradability_evidence(
     )
 
 
+def _insert_tradability_evidence_once(
+    connection: sqlite3.Connection, record: InstrumentTradabilityEvidenceRecord
+) -> None:
+    metadata_json = _dump_json(record.metadata)
+    existing = connection.execute(
+        """
+        SELECT evidence_rowid FROM instrument_tradability_evidence
+        WHERE instrument_id = ?
+          AND provider_lower = ?
+          AND status = ?
+          AND retrieved_at = ?
+          AND COALESCE(source_query_id, '') = COALESCE(?, '')
+          AND COALESCE(url, '') = COALESCE(?, '')
+          AND COALESCE(raw_identifier, '') = COALESCE(?, '')
+          AND COALESCE(extraction_confidence, -1.0) = COALESCE(?, -1.0)
+          AND metadata_json = ?
+        LIMIT 1
+        """,
+        (
+            record.instrument_id,
+            _normalize_lookup(record.provider),
+            record.status,
+            _format_datetime(record.retrieved_at),
+            record.source_query_id,
+            record.url,
+            record.raw_identifier,
+            record.extraction_confidence,
+            metadata_json,
+        ),
+    ).fetchone()
+    if existing is None:
+        _insert_tradability_evidence(connection, record)
+
+
 def _normalize_lookup(value: str) -> str:
     return value.strip().casefold()
 
 
+_SAFE_SQL_TABLE_NAMES = frozenset(
+    {
+        "artifacts",
+        "candidate_artifact_links",
+        "candidate_evidence_links",
+        "evidence_items",
+        "instrument_aliases",
+        "instrument_data_availability",
+        "instrument_provider_ids",
+        "instrument_related_instruments",
+        "instrument_tradability_evidence",
+        "instruments",
+        "plan_artifact_links",
+        "plan_commit_links",
+        "planning_decisions",
+        "planning_done_criteria",
+        "planning_milestones",
+        "planning_progress",
+        "plans",
+        "prediction_candidates",
+        "research_runs",
+        "schema_migrations",
+        "source_queries",
+        "tool_runs",
+        "watchlist_items",
+        "watchlists",
+    }
+)
+
+
+def _require_safe_table_name(table_name: str) -> None:
+    if table_name not in _SAFE_SQL_TABLE_NAMES:
+        raise ValueError(f"unsupported SQLite table identifier: {table_name}")
+
+
+def _open_sqlite_connection(path: Path, *, create: bool) -> sqlite3.Connection:
+    if create:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(str(path))
+    else:
+        connection = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=rw", uri=True)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
 def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
+    _require_safe_table_name(table_name)
     return {
         row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
     }
@@ -1601,8 +1753,12 @@ def _ensure_initialized(connection: sqlite3.Connection) -> None:
         row = connection.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
     except sqlite3.OperationalError as exc:
         raise RuntimeError("SQLite prediction research database is not initialized") from exc
-    if row is None or row["version"] != CURRENT_RESEARCH_SCHEMA_VERSION:
-        raise RuntimeError("SQLite prediction research database schema is not current")
+    found_version = None if row is None else row["version"]
+    if found_version != CURRENT_RESEARCH_SCHEMA_VERSION:
+        raise RuntimeError(
+            "SQLite prediction research database schema is not current "
+            f"(found={found_version}, expected={CURRENT_RESEARCH_SCHEMA_VERSION})"
+        )
 
 
 def _ensure_planning_initialized(connection: sqlite3.Connection) -> None:
@@ -1610,8 +1766,12 @@ def _ensure_planning_initialized(connection: sqlite3.Connection) -> None:
         row = connection.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
     except sqlite3.OperationalError as exc:
         raise RuntimeError("SQLite prediction planning database is not initialized") from exc
-    if row is None or row["version"] != CURRENT_PLANNING_SCHEMA_VERSION:
-        raise RuntimeError("SQLite prediction planning database schema is not current")
+    found_version = None if row is None else row["version"]
+    if found_version != CURRENT_PLANNING_SCHEMA_VERSION:
+        raise RuntimeError(
+            "SQLite prediction planning database schema is not current "
+            f"(found={found_version}, expected={CURRENT_PLANNING_SCHEMA_VERSION})"
+        )
 
 
 def _validate_required(value: str, field_name: str) -> None:
@@ -1709,6 +1869,8 @@ def _json_optional_float(value: JsonObject, key: str) -> float | None:
     raw_value: object = value.get(key)
     if raw_value is None:
         return None
+    if isinstance(raw_value, bool):
+        raise ValueError(f"{key} must be numeric when provided")
     if not isinstance(raw_value, int | float):
         raise ValueError(f"{key} must be numeric when provided")
     return float(raw_value)

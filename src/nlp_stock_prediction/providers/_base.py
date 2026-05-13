@@ -29,6 +29,12 @@ from nlp_stock_prediction.contracts import (
     WarningCode,
     WarningSeverity,
 )
+from nlp_stock_prediction.reddit.matching import (
+    find_ticker_matches as find_precise_ticker_matches,
+)
+from nlp_stock_prediction.reddit.matching import (
+    matched_tickers,
+)
 
 T = TypeVar("T")
 JsonPayload = dict[str, Any]
@@ -146,7 +152,10 @@ class ProviderCache:
         path = self.path_for(run_date, ticker, source, cache_key)
         if not path.exists():
             return None
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except OSError, json.JSONDecodeError:
+            return None
         if not isinstance(raw, dict):
             return None
         payload = raw.get("payload")
@@ -225,6 +234,23 @@ def parse_provider_datetime(value: object, *, fallback: datetime) -> datetime:
         except ValueError:
             return ensure_aware_utc(fallback)
     return ensure_aware_utc(fallback)
+
+
+def parse_optional_provider_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return ensure_aware_utc(value)
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
+    if isinstance(value, str) and value.strip():
+        normalized = value.strip().replace("Z", "+00:00")
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized):
+            parsed_date = date.fromisoformat(normalized)
+            return datetime(parsed_date.year, parsed_date.month, parsed_date.day, tzinfo=UTC)
+        try:
+            return ensure_aware_utc(datetime.fromisoformat(normalized))
+        except ValueError:
+            return None
+    return None
 
 
 def parse_provider_date(value: object) -> date | None:
@@ -646,25 +672,9 @@ def find_ticker_matches(
     text: str,
     tickers: Sequence[str],
 ) -> tuple[tuple[str, ...], tuple[TextSpan, ...]]:
-    matched: list[str] = []
-    spans: list[TextSpan] = []
-    for ticker in tickers:
-        normalized = ticker.upper()
-        patterns = (
-            re.compile(rf"\${re.escape(normalized)}\b", re.IGNORECASE),
-            re.compile(rf"(?<![A-Z0-9$]){re.escape(normalized)}(?![A-Z0-9])", re.IGNORECASE),
-        )
-        for pattern in patterns:
-            match = pattern.search(text)
-            if match:
-                if normalized not in matched:
-                    matched.append(normalized)
-                spans.append(
-                    TextSpan(
-                        text=match.group(0),
-                        start_char=match.start(),
-                        end_char=match.end(),
-                    )
-                )
-                break
-    return tuple(matched), tuple(spans)
+    matches = find_precise_ticker_matches(text, tickers)
+    spans = tuple(
+        TextSpan(text=match.text, start_char=match.start_char, end_char=match.end_char)
+        for match in matches
+    )
+    return matched_tickers(matches), spans

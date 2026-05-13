@@ -135,13 +135,13 @@ variables or ignored `.env` files.
 | --- | --- | --- |
 | `OPENAI_API_KEY` | No | Required only for workflows that call OpenAI-backed tooling. |
 | `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE` | No | Set to `1` to opt in to the real Codex smoke path. |
-| `X_BEARER_TOKEN` | No | Token for X/Twitter-backed provider experiments. |
-| `REDDIT_CLIENT_ID` | No | Reddit API client ID for provider experiments. |
-| `REDDIT_CLIENT_SECRET` | No | Reddit API client secret for provider experiments. |
-| `LIVE_PROVIDER_USER_AGENT` | No | User agent for live scraping/provider tests. |
+| `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | No | Token for X/Twitter-backed provider experiments. |
+| `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | No | Contact User-Agent for opt-in live provider smoke tests. |
+| `NLP_STOCK_PREDICTION_SEC_USER_AGENT` | No | Contact User-Agent for SEC EDGAR requests. |
+| `NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` | No | User agent for public HTML scraping providers. |
 | `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS` | No | Enables opt-in live test groups when combined with marked tests. |
-| `NLP_STOCK_PREDICTION_ALLOW_LIVE_API_TESTS` | No | Enables live API tests. |
-| `NLP_STOCK_PREDICTION_ALLOW_LIVE_SCRAPING_TESTS` | No | Enables live scraping tests. |
+| `NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL` | No | URL used by the opt-in live scraping smoke test. |
+| `NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT` | No | Text expected in the opt-in live scraping smoke response. |
 
 The project uses two SQLite databases:
 

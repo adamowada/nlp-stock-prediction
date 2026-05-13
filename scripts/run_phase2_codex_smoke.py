@@ -29,11 +29,6 @@ from nlp_stock_prediction.orchestration.codex_smoke import (
     verify_sqlite_run,
 )
 
-_expected_run_id = expected_run_id
-_prepare_clean_database = prepare_clean_database
-_prepare_clean_run_dir = prepare_clean_run_dir
-_resolve_repo_path = resolve_repo_path
-
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)

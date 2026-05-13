@@ -8,6 +8,7 @@ from datetime import datetime
 from nlp_stock_prediction.contracts import (
     CredentialState,
     EvidenceRequest,
+    FreshnessStatus,
     ProviderHealth,
     ProviderResult,
     ProviderStatus,
@@ -34,7 +35,7 @@ from nlp_stock_prediction.providers._base import (
     malformed_result,
     missing_credentials_result,
     no_data_result,
-    parse_provider_datetime,
+    parse_optional_provider_datetime,
     provider_health,
     provider_result,
     provider_warning,
@@ -133,7 +134,7 @@ class XRecentSearchProvider:
                 headers={"Authorization": f"Bearer {self._bearer_token}"},
                 timeout=self._timeout,
             )
-            evidence = self._map_payload(
+            evidence, partial_warnings = self._map_payload(
                 request,
                 fetched.payload,
                 fetched,
@@ -169,11 +170,11 @@ class XRecentSearchProvider:
                 raw_snapshot_id=fetched.raw_snapshot_id,
                 cache_key=fetched.cache_key,
             )
-        warnings: tuple[ProviderWarning, ...] = ()
-        status = ProviderStatus.OK
+        warnings: tuple[ProviderWarning, ...] = partial_warnings
+        status = ProviderStatus.PARTIAL if warnings else ProviderStatus.OK
         if any(item.provenance.freshness_status.value == "stale" for item in evidence):
             status = ProviderStatus.STALE
-            warnings = (
+            warnings += (
                 provider_warning(
                     provider_name=self.provider_name,
                     code=WarningCode.STALE_DATA,
@@ -228,24 +229,47 @@ class XRecentSearchProvider:
         source_url: str,
         fetched_at: datetime,
         sort_order: str,
-    ) -> tuple[SourceEvidence, ...]:
-        items = payload.get("data", [])
+    ) -> tuple[tuple[SourceEvidence, ...], tuple[ProviderWarning, ...]]:
+        if "data" not in payload:
+            raise MalformedProviderResponse("X response missing data")
+        items = payload.get("data")
         if not isinstance(items, list):
             raise MalformedProviderResponse("X response data must be a list")
         evidence: list[SourceEvidence] = []
-        for raw_item in items:
+        warnings: list[ProviderWarning] = []
+        for index, raw_item in enumerate(items):
             if not isinstance(raw_item, dict):
-                raise MalformedProviderResponse("X response item must be an object")
+                warnings.append(
+                    _malformed_item_warning(
+                        fetched_at=fetched_at,
+                        raw_snapshot_id=fetched.raw_snapshot_id,
+                        index=index,
+                        message="X response item must be an object",
+                    )
+                )
+                continue
             post_id = str(raw_item.get("id") or "").strip()
             text = str(raw_item.get("text") or "").strip()
             if not post_id or not text:
-                raise MalformedProviderResponse("X response item missing id or text")
-            created_at = parse_provider_datetime(raw_item.get("created_at"), fallback=fetched_at)
-            freshness, freshness_seconds = freshness_status(
-                observed_at=created_at,
-                fetched_at=fetched_at,
-                stale_after_seconds=self._stale_after_seconds,
-            )
+                warnings.append(
+                    _malformed_item_warning(
+                        fetched_at=fetched_at,
+                        raw_snapshot_id=fetched.raw_snapshot_id,
+                        index=index,
+                        message="X response item missing id or text",
+                    )
+                )
+                continue
+            created_at = parse_optional_provider_datetime(raw_item.get("created_at"))
+            if created_at is None:
+                freshness = FreshnessStatus.MISSING
+                freshness_seconds = None
+            else:
+                freshness, freshness_seconds = freshness_status(
+                    observed_at=created_at,
+                    fetched_at=fetched_at,
+                    stale_after_seconds=self._stale_after_seconds,
+                )
             matched_tickers, spans = find_ticker_matches(text, request.tickers)
             if request.tickers and not matched_tickers:
                 continue
@@ -293,7 +317,25 @@ class XRecentSearchProvider:
                     metadata={"provider": self.provider_name},
                 )
             )
-        return tuple(evidence)
+        return tuple(evidence), tuple(warnings)
+
+
+def _malformed_item_warning(
+    *,
+    fetched_at: datetime,
+    raw_snapshot_id: str,
+    index: int,
+    message: str,
+) -> ProviderWarning:
+    return provider_warning(
+        provider_name=XRecentSearchProvider.provider_name,
+        code=WarningCode.PARTIAL_DATA,
+        severity=WarningSeverity.WARNING,
+        message=message,
+        occurred_at=fetched_at,
+        raw_snapshot_id=raw_snapshot_id,
+        metadata={"item_index": index},
+    )
 
 
 def _author_hash(author_id: object) -> str | None:

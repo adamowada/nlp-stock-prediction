@@ -9,6 +9,7 @@ from datetime import datetime
 from nlp_stock_prediction.contracts import (
     CredentialState,
     EvidenceRequest,
+    FreshnessStatus,
     ProviderHealth,
     ProviderResult,
     ProviderStatus,
@@ -35,7 +36,7 @@ from nlp_stock_prediction.providers._base import (
     malformed_result,
     missing_credentials_result,
     no_data_result,
-    parse_provider_datetime,
+    parse_optional_provider_datetime,
     provider_health,
     provider_result,
     provider_warning,
@@ -131,7 +132,7 @@ class PublicNewsProvider:
                 cache=self._cache,
                 timeout=self._timeout,
             )
-            evidence = self._map_payload(request, fetched, query, url, fetched_at)
+            evidence, partial_warnings = self._map_payload(request, fetched, query, url, fetched_at)
         except ProviderTransportError as exc:
             return transport_error_result(
                 provider_name=self.provider_name,
@@ -159,11 +160,11 @@ class PublicNewsProvider:
                 raw_snapshot_id=fetched.raw_snapshot_id,
                 cache_key=fetched.cache_key,
             )
-        warnings: tuple[ProviderWarning, ...] = ()
-        status = ProviderStatus.OK
+        warnings: tuple[ProviderWarning, ...] = partial_warnings
+        status = ProviderStatus.PARTIAL if warnings else ProviderStatus.OK
         if any(item.provenance.freshness_status.value == "stale" for item in evidence):
             status = ProviderStatus.STALE
-            warnings = (
+            warnings += (
                 provider_warning(
                     provider_name=self.provider_name,
                     code=WarningCode.STALE_DATA,
@@ -220,16 +221,30 @@ class PublicNewsProvider:
         query: str,
         source_url: str,
         fetched_at: datetime,
-    ) -> tuple[SourceEvidence, ...]:
-        articles = fetched.payload.get(self._config.articles_key, [])
+    ) -> tuple[tuple[SourceEvidence, ...], tuple[ProviderWarning, ...]]:
+        if self._config.articles_key not in fetched.payload:
+            raise MalformedProviderResponse(
+                f"{self.provider_name} response missing {self._config.articles_key}"
+            )
+        articles = fetched.payload.get(self._config.articles_key)
         if not isinstance(articles, list):
             raise MalformedProviderResponse(
                 f"{self.provider_name} response {self._config.articles_key} must be a list"
             )
         evidence: list[SourceEvidence] = []
+        warnings: list[ProviderWarning] = []
         for index, raw_article in enumerate(articles):
             if not isinstance(raw_article, dict):
-                raise MalformedProviderResponse(f"{self.provider_name} article must be an object")
+                warnings.append(
+                    _malformed_item_warning(
+                        provider_name=self.provider_name,
+                        fetched_at=fetched_at,
+                        raw_snapshot_id=fetched.raw_snapshot_id,
+                        index=index,
+                        message=f"{self.provider_name} article must be an object",
+                    )
+                )
+                continue
             title = _optional_text(raw_article.get("title"))
             text = (
                 _optional_text(raw_article.get("content"))
@@ -238,16 +253,26 @@ class PublicNewsProvider:
             )
             article_url = _optional_text(raw_article.get("url"))
             if not text or not article_url:
-                raise MalformedProviderResponse(f"{self.provider_name} article missing text or url")
-            published_at = parse_provider_datetime(
-                raw_article.get("publishedAt"),
-                fallback=fetched_at,
-            )
-            freshness, freshness_seconds = freshness_status(
-                observed_at=published_at,
-                fetched_at=fetched_at,
-                stale_after_seconds=self._stale_after_seconds,
-            )
+                warnings.append(
+                    _malformed_item_warning(
+                        provider_name=self.provider_name,
+                        fetched_at=fetched_at,
+                        raw_snapshot_id=fetched.raw_snapshot_id,
+                        index=index,
+                        message=f"{self.provider_name} article missing text or url",
+                    )
+                )
+                continue
+            published_at = parse_optional_provider_datetime(raw_article.get("publishedAt"))
+            if published_at is None:
+                freshness = FreshnessStatus.MISSING
+                freshness_seconds = None
+            else:
+                freshness, freshness_seconds = freshness_status(
+                    observed_at=published_at,
+                    fetched_at=fetched_at,
+                    stale_after_seconds=self._stale_after_seconds,
+                )
             combined_text = f"{title or ''} {text}"
             matched_tickers, spans = find_ticker_matches(combined_text, request.tickers)
             if request.tickers and not matched_tickers:
@@ -291,7 +316,26 @@ class PublicNewsProvider:
                     metadata={"source_name": source_name},
                 )
             )
-        return tuple(evidence)
+        return tuple(evidence), tuple(warnings)
+
+
+def _malformed_item_warning(
+    *,
+    provider_name: str,
+    fetched_at: datetime,
+    raw_snapshot_id: str,
+    index: int,
+    message: str,
+) -> ProviderWarning:
+    return provider_warning(
+        provider_name=provider_name,
+        code=WarningCode.PARTIAL_DATA,
+        severity=WarningSeverity.WARNING,
+        message=message,
+        occurred_at=fetched_at,
+        raw_snapshot_id=raw_snapshot_id,
+        metadata={"item_index": index},
+    )
 
 
 def _optional_text(value: object) -> str | None:

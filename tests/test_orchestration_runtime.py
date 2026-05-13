@@ -74,6 +74,30 @@ def test_artifact_writer_writes_stable_json_with_audit_metadata(tmp_path: Path) 
 
 
 @pytest.mark.unit
+def test_artifact_writer_rejects_paths_outside_base_dir(tmp_path: Path) -> None:
+    writer = ArtifactWriter(
+        base_dir=tmp_path / "audit",
+        created_at=deterministic_generated_at(RUN_DATE),
+        produced_by="unit-test",
+    )
+
+    with pytest.raises(ValueError, match="base directory"):
+        writer.write_text(
+            artifact_id="escape",
+            artifact_type="markdown_report",
+            filename="../escape.md",
+            content="nope",
+        )
+    with pytest.raises(ValueError, match="relative"):
+        writer.write_text(
+            artifact_id="absolute",
+            artifact_type="markdown_report",
+            filename=str((tmp_path / "escape.md").resolve()),
+            content="nope",
+        )
+
+
+@pytest.mark.unit
 def test_tool_registry_orders_by_stage_then_tool_id_and_rejects_duplicates() -> None:
     registry = build_dummy_tool_registry()
 

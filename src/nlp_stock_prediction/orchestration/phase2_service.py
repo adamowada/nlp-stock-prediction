@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
@@ -36,9 +36,15 @@ class Phase2McpService:
 
     repo_root: Path = Path(".")
     database_path: Path = Path("data/prediction-research.sqlite3")
+    _store: SQLiteStore = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "repo_root", self.repo_root.resolve())
+        object.__setattr__(
+            self,
+            "_store",
+            initialize_research_database(self._resolve_write_path(self.database_path)),
+        )
 
     @property
     def write_policy(self) -> Phase2WritePolicy:
@@ -46,7 +52,7 @@ class Phase2McpService:
 
     @property
     def store(self) -> SQLiteStore:
-        return initialize_research_database(self._resolve_write_path(self.database_path))
+        return self._store
 
     def start_research_run(
         self,
@@ -102,73 +108,86 @@ class Phase2McpService:
         stance: str | None = None,
     ) -> JsonObject:
         run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
         run_date = run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        return record_codex_search_evidence(
-            store=self.store,
-            repo_root=self.repo_root,
-            paths=paths,
-            run_id=run_id,
-            symbol=symbol,
-            title=title,
-            url=url,
-            claim=claim,
-            query=query,
-            published_at=published_at,
-            stance=stance,
-        )
+        with self.store.transaction():
+            return record_codex_search_evidence(
+                store=self.store,
+                repo_root=self.repo_root,
+                paths=paths,
+                run_id=run_id,
+                symbol=normalized_symbol,
+                title=title,
+                url=url,
+                claim=claim,
+                query=query,
+                published_at=published_at,
+                stance=stance,
+            )
 
     def run_dummy_universe_tool(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
         run_date = run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        return run_phase2_dummy_universe_tool(
-            store=self.store,
-            repo_root=self.repo_root,
-            paths=paths,
-            run_id=run_id,
-            symbol=symbol,
-        )
+        with self.store.transaction():
+            return run_phase2_dummy_universe_tool(
+                store=self.store,
+                repo_root=self.repo_root,
+                paths=paths,
+                run_id=run_id,
+                symbol=normalized_symbol,
+            )
 
     def run_dummy_analysis_tool(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
         run_date = run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        return run_phase2_dummy_analysis_tool(
-            store=self.store,
-            repo_root=self.repo_root,
-            paths=paths,
-            run_id=run_id,
-            symbol=symbol,
-        )
+        with self.store.transaction():
+            return run_phase2_dummy_analysis_tool(
+                store=self.store,
+                repo_root=self.repo_root,
+                paths=paths,
+                run_id=run_id,
+                symbol=normalized_symbol,
+            )
 
     def synthesize_prediction_candidates(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
         run_date = run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        return synthesize_prediction_candidates(
-            store=self.store,
-            repo_root=self.repo_root,
-            paths=paths,
-            run_id=run_id,
-            symbol=symbol,
-            ensure_instrument=lambda: self.run_dummy_universe_tool(run_id=run_id, symbol=symbol),
-        )
+        with self.store.transaction():
+            return synthesize_prediction_candidates(
+                store=self.store,
+                repo_root=self.repo_root,
+                paths=paths,
+                run_id=run_id,
+                symbol=normalized_symbol,
+                ensure_instrument=lambda: self.run_dummy_universe_tool(
+                    run_id=run_id,
+                    symbol=normalized_symbol,
+                ),
+            )
 
     def render_prediction_report(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
         run_date = run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        if not self.store.list_prediction_candidates_for_run(run_id):
-            self.synthesize_prediction_candidates(run_id=run_id, symbol=symbol)
-        return render_phase2_prediction_report(
-            store=self.store,
-            repo_root=self.repo_root,
-            run=run,
-            paths=paths,
-            run_date=run_date,
-            symbol=symbol,
-        )
+        with self.store.transaction():
+            if not self.store.list_prediction_candidates_for_run(run_id):
+                self.synthesize_prediction_candidates(run_id=run_id, symbol=normalized_symbol)
+            return render_phase2_prediction_report(
+                store=self.store,
+                repo_root=self.repo_root,
+                run=run,
+                paths=paths,
+                run_date=run_date,
+                symbol=normalized_symbol,
+            )
 
     def inspect_research_run(self, *, run_id: str) -> JsonObject:
         run = self._require_run(run_id)
@@ -192,6 +211,19 @@ class Phase2McpService:
         if run is None:
             raise ValueError(f"research run does not exist: {run_id}")
         return run
+
+    def _validated_symbol(self, run: ResearchRunRecord, symbol: str) -> str:
+        stored_symbol = run.metadata.get("symbol")
+        if not isinstance(stored_symbol, str) or not stored_symbol.strip():
+            raise ValueError(f"research run is missing stored symbol metadata: {run.run_id}")
+        normalized_stored_symbol = stored_symbol.strip().upper()
+        normalized_symbol = symbol.strip().upper()
+        if normalized_symbol != normalized_stored_symbol:
+            raise ValueError(
+                f"symbol {normalized_symbol} does not match research run symbol "
+                f"{normalized_stored_symbol}"
+            )
+        return normalized_stored_symbol
 
     def _paths(self, run_date: date, output_dir: str) -> Phase2RunPaths:
         return self.write_policy.run_paths(run_date, output_dir)

@@ -60,6 +60,8 @@ class SourceEvidence(ContractModel):
 
     @model_validator(mode="after")
     def validate_instrument_traceability(self) -> SourceEvidence:
+        if self.source_kind != self.provenance.source_kind:
+            raise ValueError("source_kind must match provenance.source_kind")
         if (
             self.instrument_id is not None
             and self.matched_instrument_ids

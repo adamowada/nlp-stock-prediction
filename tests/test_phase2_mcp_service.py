@@ -101,6 +101,19 @@ def test_phase2_mcp_service_restricts_write_roots(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.unit
+def test_phase2_mcp_service_rejects_symbol_mismatch(tmp_path: Path) -> None:
+    service = Phase2McpService(repo_root=tmp_path)
+    started = service.start_research_run(
+        run_date="2026-05-13",
+        output_dir="reports/phase2-codex-smoke",
+        symbol="TSLA",
+    )
+
+    with pytest.raises(ValueError, match="does not match research run symbol"):
+        service.run_dummy_universe_tool(run_id=str(started["run_id"]), symbol="BTC")
+
+
 @pytest.mark.integration
 def test_phase2_mcp_service_synthesizes_contradictory_evidence(tmp_path: Path) -> None:
     service = Phase2McpService(repo_root=tmp_path)

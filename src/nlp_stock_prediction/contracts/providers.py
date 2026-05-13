@@ -28,8 +28,8 @@ from nlp_stock_prediction.contracts.provenance import ProviderHealth, ProviderWa
 
 
 class DateWindow(ContractModel):
-    start: date | datetime
-    end: date | datetime
+    start: date | AwareDatetime
+    end: date | AwareDatetime
 
     @model_validator(mode="after")
     def validate_order(self) -> DateWindow:

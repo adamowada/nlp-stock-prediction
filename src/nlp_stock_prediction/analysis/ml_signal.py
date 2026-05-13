@@ -258,7 +258,14 @@ def _timesfm_forecast_confidence(artifact: TimesFmForecastArtifact) -> float:
         return 0.0
     probability = artifact.directional_probability_proxy
     probability_edge = abs((probability if probability is not None else 0.5) - 0.5) * 2.0
-    uncertainty = 1.0 - min(artifact.uncertainty_score or artifact.interval_width or 1.0, 1.0)
+    raw_uncertainty = (
+        artifact.uncertainty_score
+        if artifact.uncertainty_score is not None
+        else artifact.interval_width
+        if artifact.interval_width is not None
+        else 1.0
+    )
+    uncertainty = 1.0 - min(raw_uncertainty, 1.0)
     confidence = probability_edge * 0.55 + uncertainty * 0.45
     if artifact.status == "weak":
         confidence = min(confidence, 0.24)

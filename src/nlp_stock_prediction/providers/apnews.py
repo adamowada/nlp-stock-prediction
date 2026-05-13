@@ -518,11 +518,14 @@ class _APHtmlParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag_name = tag.lower()
-        while self._captures:
-            capture = self._captures.pop()
-            self._finish_capture(capture)
-            if capture.tag == tag_name:
-                return
+        for index in range(len(self._captures) - 1, -1, -1):
+            if self._captures[index].tag != tag_name:
+                continue
+            finished = self._captures[index:]
+            del self._captures[index:]
+            for capture in reversed(finished):
+                self._finish_capture(capture)
+            return
 
     def close(self) -> None:
         super().close()

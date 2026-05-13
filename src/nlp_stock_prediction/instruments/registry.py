@@ -29,7 +29,11 @@ from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, JsonV
 from nlp_stock_prediction.storage import InstrumentRecord, SQLiteStore
 
 
-def instrument_to_record(instrument: Instrument) -> InstrumentRecord:
+def instrument_to_record(
+    instrument: Instrument,
+    *,
+    metadata: JsonObject | None = None,
+) -> InstrumentRecord:
     """Convert a validated instrument contract into the SQLite persistence record."""
 
     validated = Instrument.model_validate(instrument)
@@ -44,7 +48,7 @@ def instrument_to_record(instrument: Instrument) -> InstrumentRecord:
         related_instruments=tuple(_dump_contract(item) for item in validated.related_instruments),
         tradability_evidence=tuple(_dump_contract(item) for item in validated.tradability_evidence),
         data_availability=tuple(_dump_contract(item) for item in validated.data_availability),
-        metadata=validated.metadata,
+        metadata=validated.metadata if metadata is None else {**validated.metadata, **metadata},
     )
 
 

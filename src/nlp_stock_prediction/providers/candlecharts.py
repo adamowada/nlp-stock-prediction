@@ -493,19 +493,23 @@ def _html_fetch(
 def _json_payloads_from_parser(parser: _CandlechartsHtmlParser) -> tuple[object, ...]:
     payloads: list[object] = []
     for raw_value in parser.json_attributes:
-        payloads.append(_loads_json(raw_value, context="Candlecharts data attribute"))
+        payload = _loads_json(raw_value)
+        if payload is not None:
+            payloads.append(payload)
     for script in parser.scripts:
         if "json" not in script.script_type.lower():
             continue
-        payloads.append(_loads_json(script.text, context="Candlecharts JSON script"))
+        payload = _loads_json(script.text)
+        if payload is not None:
+            payloads.append(payload)
     return tuple(payloads)
 
 
-def _loads_json(value: str, *, context: str) -> object:
+def _loads_json(value: str) -> object | None:
     try:
-        return json.loads(value)
-    except json.JSONDecodeError as exc:
-        raise MalformedProviderResponse(f"{context} is malformed JSON") from exc
+        return cast(object, json.loads(value))
+    except json.JSONDecodeError:
+        return None
 
 
 def _bars_from_payload(payload: object, ticker: str) -> tuple[PriceBar, ...]:

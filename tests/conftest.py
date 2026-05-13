@@ -6,8 +6,6 @@ from collections.abc import Iterator
 
 import pytest
 
-os.environ.setdefault("NLP_STOCK_PREDICTION_DISABLE_DOTENV", "1")
-
 
 def _network_guard(*_args: object, **_kwargs: object) -> None:
     raise RuntimeError(
@@ -15,6 +13,12 @@ def _network_guard(*_args: object, **_kwargs: object) -> None:
         "Use a live_api or live_scraping marker with "
         "NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1 for opt-in live checks."
     )
+
+
+@pytest.fixture(autouse=True)
+def deterministic_test_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setenv("NLP_STOCK_PREDICTION_DISABLE_DOTENV", "1")
+    yield
 
 
 @pytest.fixture(autouse=True)

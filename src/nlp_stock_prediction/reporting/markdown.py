@@ -9,10 +9,14 @@ from nlp_stock_prediction.contracts import (
     AuditManifest,
     DailyReport,
     EvidenceReference,
+    FundamentalAnalysis,
     Instrument,
     InstrumentResolution,
+    MacroContext,
     PredictionCandidate,
+    SectorContext,
     SourceEvidence,
+    TechnicalAnalysis,
     TechnicalMlSignal,
 )
 
@@ -24,18 +28,18 @@ def render_markdown_report(report: DailyReport) -> str:
         f"Report date: {report.report_date.isoformat()}",
         f"Generated at: {report.generated_at.isoformat()}",
         f"Run ID: `{report.run_id}`",
-        f"Objective: {report.objective}",
-        f"Universe: {report.universe}",
-        f"Data freshness: {report.data_freshness.summary}",
+        f"Objective: {_markdown_text(report.objective)}",
+        f"Universe: {_markdown_text(report.universe)}",
+        f"Data freshness: {_markdown_text(report.data_freshness.summary)}",
         "",
         "## Research Objective",
         "",
-        report.objective,
+        _markdown_text(report.objective),
         "",
         "## Data Freshness",
         "",
         f"- As of: {report.data_freshness.as_of.isoformat()}",
-        f"- Summary: {report.data_freshness.summary}",
+        f"- Summary: {_markdown_text(report.data_freshness.summary)}",
         f"- Stale providers: {_format_list(report.data_freshness.stale_provider_names)}",
         f"- Missing providers: {_format_list(report.data_freshness.missing_provider_names)}",
         "",
@@ -47,7 +51,8 @@ def render_markdown_report(report: DailyReport) -> str:
         for warning in warnings:
             provider = warning.provider_name or "unknown-provider"
             lines.append(
-                f"- `{provider}` {warning.severity.value}: [{warning.code.value}] {warning.message}"
+                f"- `{provider}` {warning.severity.value}: "
+                f"[{warning.code.value}] {_markdown_text(warning.message)}"
             )
     else:
         lines.append("- No provider warnings.")
@@ -68,7 +73,7 @@ def render_markdown_report(report: DailyReport) -> str:
             [
                 f"### {section.symbol}",
                 "",
-                f"Name: {section.display_name or 'Unknown'}",
+                f"Name: {_markdown_text(section.display_name or 'Unknown')}",
                 "",
                 "#### Identity & Availability",
                 "",
@@ -83,11 +88,14 @@ def render_markdown_report(report: DailyReport) -> str:
                 "",
                 "#### Observed Evidence",
                 "",
-                section.observed_discussion_summary or "No observed discussion summary available.",
+                _markdown_text(
+                    section.observed_discussion_summary
+                    or "No observed discussion summary available."
+                ),
                 "",
                 "#### Analysis",
                 "",
-                section.analysis_summary or "No analysis summary available.",
+                _markdown_text(section.analysis_summary or "No analysis summary available."),
                 "",
                 "Technical:",
                 "",
@@ -125,7 +133,7 @@ def render_markdown_report(report: DailyReport) -> str:
     else:
         lines.extend(
             [
-                report.insufficient_evidence_summary
+                _markdown_text(report.insufficient_evidence_summary)
                 or "No prediction scenarios have enough evidence for this report.",
                 "",
             ]
@@ -185,9 +193,12 @@ def _render_instrument_identity(instrument: Instrument) -> list[str]:
     ]
     if instrument.provider_ids:
         for provider_id in instrument.provider_ids:
-            namespace = f"/{provider_id.namespace}" if provider_id.namespace else ""
-            url = f"; URL: {provider_id.url}" if provider_id.url else ""
-            lines.append(f"  - {provider_id.provider}{namespace}: `{provider_id.identifier}`{url}")
+            namespace = f"/{_markdown_text(provider_id.namespace)}" if provider_id.namespace else ""
+            url = f"; URL: {_markdown_text(provider_id.url)}" if provider_id.url else ""
+            lines.append(
+                f"  - {_markdown_text(provider_id.provider)}{namespace}: "
+                f"`{_markdown_code(provider_id.identifier)}`{url}"
+            )
     else:
         lines.append("  - none")
 
@@ -199,9 +210,10 @@ def _render_instrument_identity(instrument: Instrument) -> list[str]:
                 if availability.provider_identifier
                 else ""
             )
-            notes = f"; notes: {availability.notes}" if availability.notes else ""
+            notes = f"; notes: {_markdown_text(availability.notes)}" if availability.notes else ""
             lines.append(
-                f"  - {availability.provider} {availability.data_type}: "
+                f"  - {_markdown_text(availability.provider)} "
+                f"{_markdown_text(availability.data_type)}: "
                 f"{availability.status.value}; checked {availability.checked_at.isoformat()}"
                 f"{provider_identifier}{notes}"
             )
@@ -218,9 +230,9 @@ def _render_instrument_identity(instrument: Instrument) -> list[str]:
                     ("raw", evidence.raw_identifier),
                 )
             )
-            notes = f"; notes: {evidence.notes}" if evidence.notes else ""
+            notes = f"; notes: {_markdown_text(evidence.notes)}" if evidence.notes else ""
             lines.append(
-                f"  - {evidence.provider}: {evidence.status.value}; "
+                f"  - {_markdown_text(evidence.provider)}: {evidence.status.value}; "
                 f"retrieved {evidence.retrieved_at.isoformat()}{trace_parts}{notes}"
             )
     else:
@@ -231,7 +243,8 @@ def _render_instrument_identity(instrument: Instrument) -> list[str]:
         for related in instrument.related_instruments:
             lines.append(
                 f"  - `{related.instrument_id}` {related.relationship}: "
-                f"{related.rationale}; evidence {_format_code_list(related.evidence_ids)}"
+                f"{_markdown_text(related.rationale)}; "
+                f"evidence {_format_code_list(related.evidence_ids)}"
             )
     else:
         lines.append("  - none")
@@ -240,12 +253,12 @@ def _render_instrument_identity(instrument: Instrument) -> list[str]:
 
 def _render_candidate(candidate: PredictionCandidate) -> list[str]:
     lines = [
-        f"- `{candidate.candidate_id}` ({candidate.symbol}): {candidate.thesis}",
+        f"- `{candidate.candidate_id}` ({candidate.symbol}): {_markdown_text(candidate.thesis)}",
         (
             f"  - Status: {candidate.status.value}; direction: {candidate.direction.value}; "
             f"horizon: {candidate.horizon.value}; confidence {candidate.confidence:.2f}"
         ),
-        f"  - Baseline: {candidate.baseline}",
+        f"  - Baseline: {_markdown_text(candidate.baseline)}",
         f"  - Evidence for: {_format_evidence_ids(candidate.evidence_for)}",
         f"  - Evidence against: {_format_evidence_ids(candidate.evidence_against)}",
         f"  - Assumptions: {_format_list(candidate.assumptions)}",
@@ -261,7 +274,7 @@ def _render_evidence_ledger(evidence_sources: tuple[SourceEvidence, ...]) -> lis
     lines: list[str] = []
     for evidence in evidence_sources:
         provenance = evidence.provenance
-        title = f": {evidence.title}" if evidence.title else ""
+        title = f": {_markdown_text(evidence.title)}" if evidence.title else ""
         source_url = provenance.source_url or evidence.permalink
         permalink = provenance.permalink or evidence.permalink
         raw_artifact_ids = _evidence_raw_artifact_ids(evidence)
@@ -269,10 +282,10 @@ def _render_evidence_ledger(evidence_sources: tuple[SourceEvidence, ...]) -> lis
             [
                 (
                     f"- `{evidence.evidence_id}` {evidence.source_kind.value} "
-                    f"via {provenance.provider_name}{title}"
+                    f"via {_markdown_text(provenance.provider_name)}{title}"
                 ),
-                f"  - URL: {source_url or 'none'}",
-                f"  - Permalink: {permalink or 'none'}",
+                f"  - URL: {_markdown_text(source_url or 'none')}",
+                f"  - Permalink: {_markdown_text(permalink or 'none')}",
                 f"  - Fetched: {provenance.fetched_at.isoformat()}",
                 f"  - Observed: {_format_optional_datetime(provenance.observed_at)}",
                 f"  - Freshness: {provenance.freshness_status.value}",
@@ -289,29 +302,25 @@ def _render_analysis(component: AnalysisComponent | None) -> list[str]:
     if component is None:
         return ["- No analysis available."]
     lines = [
-        f"- Summary: {component.summary}",
+        f"- Summary: {_markdown_text(component.summary)}",
         f"- Signal: {component.signal.value}; confidence {component.confidence:.2f}",
     ]
-    trend = getattr(component, "trend", None)
-    if isinstance(trend, str) and trend:
-        lines.append(f"- Trend: {trend}")
-    valuation_summary = getattr(component, "valuation_summary", None)
-    if isinstance(valuation_summary, str) and valuation_summary:
-        lines.append(f"- Valuation: {valuation_summary}")
-    sector = getattr(component, "sector", None)
-    if isinstance(sector, str) and sector:
-        lines.append(f"- Sector: {sector}")
-    ml_signal = getattr(component, "ml_signal", None)
-    if ml_signal is not None:
-        lines.extend(_render_ml_signal(ml_signal))
-    supportive = getattr(component, "supportive_factors", ())
-    if supportive:
-        formatted = _format_list(tuple(str(item) for item in supportive))
-        lines.append(f"- Supportive factors: {formatted}")
-    conflicting = getattr(component, "conflicting_factors", ())
-    if conflicting:
-        formatted = _format_list(tuple(str(item) for item in conflicting))
-        lines.append(f"- Conflicting factors: {formatted}")
+    if isinstance(component, TechnicalAnalysis):
+        if component.trend:
+            lines.append(f"- Trend: {_markdown_text(component.trend)}")
+        if component.ml_signal is not None:
+            lines.extend(_render_ml_signal(component.ml_signal))
+    elif isinstance(component, FundamentalAnalysis):
+        if component.valuation_summary:
+            lines.append(f"- Valuation: {_markdown_text(component.valuation_summary)}")
+    elif isinstance(component, SectorContext):
+        if component.sector:
+            lines.append(f"- Sector: {_markdown_text(component.sector)}")
+    elif isinstance(component, MacroContext):
+        if component.supportive_factors:
+            lines.append(f"- Supportive factors: {_format_list(component.supportive_factors)}")
+        if component.conflicting_factors:
+            lines.append(f"- Conflicting factors: {_format_list(component.conflicting_factors)}")
     if component.evidence:
         lines.append(f"- Evidence: {_format_evidence_ids(component.evidence)}")
     return lines
@@ -320,7 +329,7 @@ def _render_analysis(component: AnalysisComponent | None) -> list[str]:
 def _render_evidence_refs(evidence: tuple[EvidenceReference, ...]) -> list[str]:
     lines: list[str] = []
     for reference in evidence:
-        quote = f" - {reference.quote}" if reference.quote else ""
+        quote = f" - {_markdown_text(reference.quote)}" if reference.quote else ""
         lines.append(f"- `{reference.evidence_id}`{quote}")
     return lines
 
@@ -342,15 +351,15 @@ def _format_evidence_ids(evidence: tuple[EvidenceReference, ...]) -> str:
 
 
 def _format_list(values: tuple[str, ...]) -> str:
-    return ", ".join(values) if values else "none"
+    return ", ".join(_markdown_text(value) for value in values) if values else "none"
 
 
 def _format_code_list(values: tuple[str, ...]) -> str:
-    return ", ".join(f"`{value}`" for value in values) if values else "none"
+    return ", ".join(f"`{_markdown_code(value)}`" for value in values) if values else "none"
 
 
 def _format_optional_code(value: str | None) -> str:
-    return f"`{value}`" if value else "none"
+    return f"`{_markdown_code(value)}`" if value else "none"
 
 
 def _format_optional_datetime(value: datetime | None) -> str:
@@ -367,7 +376,7 @@ def _format_resolution_matches(matches: tuple[Instrument, ...]) -> str:
 
 def _format_trace_parts(parts: tuple[tuple[str, str | None], ...]) -> str:
     formatted = [
-        f"{label} {value}" if label != "raw" else f"raw `{value}`"
+        f"{label} {_markdown_text(value)}" if label != "raw" else f"raw `{_markdown_code(value)}`"
         for label, value in parts
         if value
     ]
@@ -408,6 +417,17 @@ def _evidence_raw_artifact_ids(evidence: SourceEvidence) -> tuple[str, ...]:
             elif isinstance(value, (tuple, list)):
                 values.extend(str(item) for item in value if item)
     return tuple(dict.fromkeys(values))
+
+
+def _markdown_text(value: object | None) -> str:
+    if value is None:
+        return ""
+    text = " ".join(str(value).split())
+    return text.replace("`", "'")
+
+
+def _markdown_code(value: object) -> str:
+    return str(value).replace("`", "'")
 
 
 __all__ = ["render_markdown_report"]

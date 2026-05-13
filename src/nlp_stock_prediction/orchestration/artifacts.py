@@ -22,6 +22,7 @@ ArtifactType = Literal[
     "provider_result",
     "ml_forecast",
     "instrument_universe",
+    "audit_manifest",
 ]
 
 
@@ -82,7 +83,7 @@ class ArtifactWriter:
         record_count: int | None,
         metadata: JsonObject | None,
     ) -> AuditArtifact:
-        path = self.base_dir / filename
+        path = self._resolve_artifact_path(filename)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         return AuditArtifact(
@@ -95,6 +96,20 @@ class ArtifactWriter:
             record_count=record_count,
             metadata={} if metadata is None else metadata,
         )
+
+    def _resolve_artifact_path(self, filename: str) -> Path:
+        requested_path = Path(filename)
+        if requested_path.is_absolute():
+            raise ValueError("artifact filename must be relative to the artifact base directory")
+        base_dir = self.base_dir.resolve()
+        path = (base_dir / requested_path).resolve()
+        try:
+            path.relative_to(base_dir)
+        except ValueError as exc:
+            raise ValueError(
+                "artifact filename must stay within the artifact base directory"
+            ) from exc
+        return path
 
 
 __all__ = ["ArtifactType", "ArtifactWriter"]
