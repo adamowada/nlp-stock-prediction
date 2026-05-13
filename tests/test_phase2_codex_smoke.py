@@ -39,7 +39,7 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
     rendered = " ".join(command)
 
     assert command[:4] == ["codex", "--ask-for-approval", "never", "--search"]
-    assert 'mcp_servers."nlp-stock-prediction".command' in rendered
+    assert "mcp_servers.nlp-stock-prediction.command" in rendered
     assert "nlp_stock_prediction.codex_mcp" in rendered
     assert "workspace-write" in command
     assert str(config.final_message_path) in command
