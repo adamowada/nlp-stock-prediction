@@ -32,6 +32,16 @@ class CodexSmokeConfig:
     def final_message_path(self) -> Path:
         return self.run_dir / "codex-final.md"
 
+    @property
+    def database_arg_path(self) -> Path:
+        normalized_symbol = self.symbol.lower().replace("/", "-")
+        filename = f"phase2-codex-smoke-{self.run_date.isoformat()}-{normalized_symbol}.sqlite3"
+        return Path("data") / filename
+
+    @property
+    def database_path(self) -> Path:
+        return _resolve_repo_path(self, self.database_arg_path)
+
 
 def build_codex_prompt(config: CodexSmokeConfig) -> str:
     """Return the instruction payload for the real Codex smoke run."""
@@ -67,6 +77,14 @@ def build_codex_command(config: CodexSmokeConfig) -> list[str]:
     """Build the Codex CLI invocation without launching it."""
 
     mcp_command = _toml_string(str(config.python_executable))
+    mcp_args = json.dumps(
+        [
+            "-m",
+            "nlp_stock_prediction.codex_mcp",
+            "--database",
+            config.database_arg_path.as_posix(),
+        ]
+    )
     prompt = build_codex_prompt(config)
     return [
         config.codex_executable,
@@ -76,7 +94,7 @@ def build_codex_command(config: CodexSmokeConfig) -> list[str]:
         "-c",
         f"mcp_servers.nlp-stock-prediction.command={mcp_command}",
         "-c",
-        'mcp_servers.nlp-stock-prediction.args=["-m","nlp_stock_prediction.codex_mcp"]',
+        f"mcp_servers.nlp-stock-prediction.args={mcp_args}",
         "exec",
         "-s",
         "danger-full-access",
@@ -156,6 +174,7 @@ def run_codex_smoke(config: CodexSmokeConfig) -> None:
         raise RuntimeError("Codex CLI is not available on PATH.")
 
     _prepare_clean_run_dir(config)
+    _prepare_clean_database(config)
     baseline_status = require_clean_tracked_status(config.repo_root)
     completed = subprocess.run(
         build_codex_command(config),
@@ -216,7 +235,7 @@ def _is_codex_search_evidence(item: object) -> bool:
 def _verify_sqlite_run(config: CodexSmokeConfig) -> None:
     from nlp_stock_prediction.storage import initialize_research_database
 
-    store = initialize_research_database(config.repo_root / "data" / "prediction-research.sqlite3")
+    store = initialize_research_database(config.database_path)
     run_id = _expected_run_id(config)
     run = store.get_research_run(run_id)
     if run is None:
@@ -252,6 +271,21 @@ def _prepare_clean_run_dir(config: CodexSmokeConfig) -> None:
     if run_dir.exists():
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _prepare_clean_database(config: CodexSmokeConfig) -> None:
+    database_path = config.database_path.resolve()
+    data_root = (config.repo_root / "data").resolve()
+    if not (_is_relative_to(database_path, data_root) or database_path == data_root):
+        raise RuntimeError("Refusing to clean smoke database outside data/.")
+    for path in (
+        database_path,
+        database_path.with_name(f"{database_path.name}-wal"),
+        database_path.with_name(f"{database_path.name}-shm"),
+        database_path.with_name(f"{database_path.name}-journal"),
+    ):
+        if path.exists():
+            path.unlink()
 
 
 def _expected_run_id(config: CodexSmokeConfig) -> str:

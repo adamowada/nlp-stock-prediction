@@ -41,6 +41,8 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
     assert command[:4] == ["codex", "--ask-for-approval", "never", "--search"]
     assert "mcp_servers.nlp-stock-prediction.command" in rendered
     assert "nlp_stock_prediction.codex_mcp" in rendered
+    assert "--database" in rendered
+    assert "phase2-codex-smoke-2026-05-13-tsla.sqlite3" in rendered
     assert "danger-full-access" in command
     assert str(config.final_message_path) in command
     assert "Do not import project modules directly" in command[-1]
@@ -139,6 +141,27 @@ def test_codex_smoke_prepares_clean_ignored_run_dir(tmp_path: Path) -> None:
     )
     with pytest.raises(RuntimeError, match="outside ignored roots"):
         smoke._prepare_clean_run_dir(unsafe)
+
+
+@pytest.mark.unit
+def test_codex_smoke_prepares_isolated_database(tmp_path: Path) -> None:
+    smoke = _load_smoke_module()
+    config = smoke.CodexSmokeConfig(
+        run_date=date(2026, 5, 13),
+        output_dir=tmp_path / "reports" / "phase2-codex-smoke",
+        symbol="TSLA",
+        repo_root=tmp_path,
+        python_executable=Path("python"),
+    )
+    database_path = config.database_path
+    database_path.parent.mkdir(parents=True)
+    database_path.write_text("stale\n", encoding="utf-8")
+    database_path.with_name(f"{database_path.name}-wal").write_text("stale\n", encoding="utf-8")
+
+    smoke._prepare_clean_database(config)
+
+    assert not database_path.exists()
+    assert not database_path.with_name(f"{database_path.name}-wal").exists()
 
 
 @pytest.mark.codex_smoke
