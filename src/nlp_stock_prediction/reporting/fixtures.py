@@ -17,10 +17,13 @@ from nlp_stock_prediction.contracts import (
     FreshnessStatus,
     Instrument,
     InstrumentReportSection,
+    InstrumentResolution,
+    InstrumentResolutionStatus,
     JsonObject,
     PredictionCandidate,
     PredictionStatus,
     ProviderHealth,
+    RelatedInstrument,
     RetrievalMethod,
     RunConfig,
     SourceEvidence,
@@ -167,6 +170,7 @@ def build_offline_fixture_bundle(config: RunConfig) -> OfflineFixtureBundle:
             ),
         ),
         evidence_sources=evidence,
+        instrument_resolutions=_instrument_resolutions(instruments),
         instrument_sections=sections,
         prediction_candidates=(candidate,),
         audit_manifest=AuditManifest(
@@ -201,6 +205,8 @@ def _source_evidence(generated_at: datetime) -> tuple[SourceEvidence, ...]:
             raw_identifier="fixture-news-tsla-001",
             generated_at=generated_at,
             source_url="https://example.com/fixtures/tsla-delivery-context",
+            instrument_id="instrument:equity:us:tsla",
+            matched_instrument_ids=("instrument:equity:us:tsla",),
         ),
         _evidence(
             evidence_id="fixture-market-spy-001",
@@ -214,6 +220,8 @@ def _source_evidence(generated_at: datetime) -> tuple[SourceEvidence, ...]:
             raw_identifier="fixture-market-spy-001",
             generated_at=generated_at,
             source_url="https://example.com/fixtures/spy-regime-context",
+            instrument_id="instrument:etf:us:spy",
+            matched_instrument_ids=("instrument:etf:us:spy",),
         ),
         _evidence(
             evidence_id="fixture-crypto-btc-001",
@@ -228,6 +236,8 @@ def _source_evidence(generated_at: datetime) -> tuple[SourceEvidence, ...]:
             generated_at=generated_at,
             source_url="https://example.com/fixtures/btc-usd-availability",
             matched_tickers=(),
+            instrument_id="instrument:crypto:btc-usd",
+            matched_instrument_ids=("instrument:crypto:btc-usd",),
         ),
     )
 
@@ -243,6 +253,8 @@ def _evidence(
     generated_at: datetime,
     source_url: str,
     matched_tickers: tuple[str, ...] | None = None,
+    instrument_id: str | None = None,
+    matched_instrument_ids: tuple[str, ...] = (),
 ) -> SourceEvidence:
     return SourceEvidence(
         evidence_id=evidence_id,
@@ -252,9 +264,11 @@ def _evidence(
         text=text,
         created_at=generated_at,
         permalink=source_url,
+        instrument_id=instrument_id,
         matched_tickers=matched_tickers
         if matched_tickers is not None
         else ((ticker,) if ticker else ()),
+        matched_instrument_ids=matched_instrument_ids,
         provenance=SourceProvenance(
             provider_name="offline-fixture",
             source_kind=source_kind,
@@ -279,14 +293,26 @@ def _instruments(generated_at: datetime) -> tuple[Instrument, ...]:
             symbol="TSLA",
             display_name="Tesla Inc.",
             asset_class=AssetClass.STOCK,
+            venue="NASDAQ",
+            aliases=("TESLA", "TSLA.US"),
             provider_identifier="TSLA",
             generated_at=generated_at,
+            related_instruments=(
+                RelatedInstrument(
+                    instrument_id="instrument:etf:us:spy",
+                    relationship="broad_market_proxy",
+                    rationale="SPY fixture evidence supplies broad-index context.",
+                    evidence_ids=("fixture-market-spy-001",),
+                ),
+            ),
         ),
         _instrument(
             instrument_id="instrument:etf:us:spy",
             symbol="SPY",
             display_name="SPDR S&P 500 ETF Trust",
             asset_class=AssetClass.ETF,
+            venue="NYSEARCA",
+            aliases=("SPY.US",),
             provider_identifier="SPY",
             generated_at=generated_at,
         ),
@@ -295,8 +321,54 @@ def _instruments(generated_at: datetime) -> tuple[Instrument, ...]:
             symbol="BTC/USD",
             display_name="Bitcoin versus U.S. dollar",
             asset_class=AssetClass.CRYPTO,
+            venue="crypto-spot",
+            aliases=("BTC-USD", "XBT/USD"),
             provider_identifier="BTC/USD",
             generated_at=generated_at,
+        ),
+    )
+
+
+def _instrument_resolutions(
+    instruments: tuple[Instrument, ...],
+) -> tuple[InstrumentResolution, ...]:
+    tsla, _spy, _btc = instruments
+    ambiguous_stock = Instrument(
+        instrument_id="instrument:equity:us:ai",
+        symbol="AI",
+        display_name="C3.ai Inc.",
+        asset_class=AssetClass.STOCK,
+        venue="NYSE",
+    )
+    ambiguous_token = Instrument(
+        instrument_id="instrument:crypto:ai-token",
+        symbol="AI",
+        display_name="AI token fixture",
+        asset_class=AssetClass.CRYPTO,
+        venue="crypto-spot",
+    )
+    return (
+        InstrumentResolution(
+            query="TSLA",
+            status=InstrumentResolutionStatus.RESOLVED,
+            matches=(tsla,),
+            selected_instrument_id=tsla.instrument_id,
+        ),
+        InstrumentResolution(
+            query="AI",
+            status=InstrumentResolutionStatus.AMBIGUOUS,
+            matches=(ambiguous_stock, ambiguous_token),
+            warnings=("AI maps to multiple fixture instruments; no default selection made.",),
+        ),
+        InstrumentResolution(
+            query="OTC:MISSING",
+            status=InstrumentResolutionStatus.UNSUPPORTED,
+            warnings=("No offline fixture adapter supports this instrument query.",),
+        ),
+        InstrumentResolution(
+            query="DELISTED",
+            status=InstrumentResolutionStatus.UNAVAILABLE,
+            warnings=("Offline fixture provider returned no available instrument data.",),
         ),
     )
 
@@ -307,26 +379,34 @@ def _instrument(
     symbol: str,
     display_name: str,
     asset_class: AssetClass,
+    venue: str,
+    aliases: tuple[str, ...],
     provider_identifier: str,
     generated_at: datetime,
+    related_instruments: tuple[RelatedInstrument, ...] = (),
 ) -> Instrument:
     return Instrument(
         instrument_id=instrument_id,
         symbol=symbol,
         display_name=display_name,
         asset_class=asset_class,
+        venue=venue,
+        aliases=aliases,
         provider_ids=(
             ProviderInstrumentId(
                 provider="offline-fixture",
                 identifier=provider_identifier,
                 namespace="fixture-symbol",
+                url=f"https://example.com/fixtures/instruments/{provider_identifier}",
             ),
         ),
+        related_instruments=related_instruments,
         tradability_evidence=(
             TradabilityEvidence(
                 provider="offline-fixture",
                 status=TradabilityStatus.UNKNOWN,
                 retrieved_at=generated_at,
+                source_url=f"https://example.com/fixtures/access/{provider_identifier}",
                 raw_identifier=f"{provider_identifier}:fixture-tradability",
                 notes="Fixture records availability context only.",
             ),
@@ -338,6 +418,7 @@ def _instrument(
                 status=TradabilityStatus.AVAILABLE,
                 checked_at=generated_at,
                 provider_identifier=provider_identifier,
+                notes="Offline fixture provider can return deterministic research data.",
             ),
         ),
         metadata={"fixture": True},
