@@ -19,7 +19,7 @@ from nlp_stock_prediction.storage.run_graph import (
     fetch_tool_run_rows,
 )
 
-CURRENT_RESEARCH_SCHEMA_VERSION = 3
+CURRENT_RESEARCH_SCHEMA_VERSION = 4
 CURRENT_PLANNING_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = CURRENT_RESEARCH_SCHEMA_VERSION
 DEFAULT_RESEARCH_DATABASE_PATH = Path("data/prediction-research.sqlite3")
@@ -39,6 +39,36 @@ class InstrumentRecord:
     related_instruments: tuple[JsonObject, ...] = ()
     tradability_evidence: tuple[JsonObject, ...] = ()
     data_availability: tuple[JsonObject, ...] = ()
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class InstrumentTradabilityEvidenceRecord:
+    instrument_id: str
+    provider: str
+    status: str
+    retrieved_at: datetime
+    source_query_id: str | None = None
+    url: str | None = None
+    raw_identifier: str | None = None
+    extraction_confidence: float | None = None
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class WatchlistRecord:
+    watchlist_id: str
+    name: str
+    description: str | None = None
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class WatchlistItemRecord:
+    watchlist_id: str
+    instrument_id: str
+    sort_order: int = 0
+    notes: str | None = None
     metadata: JsonObject = field(default_factory=dict)
 
 
@@ -289,6 +319,7 @@ class SQLiteStore:
                     _format_datetime(now),
                 ),
             )
+            _replace_instrument_children(connection, record, now)
 
     def get_instrument(self, instrument_id: str) -> InstrumentRecord | None:
         _validate_required(instrument_id, "instrument_id")
@@ -300,6 +331,213 @@ class SQLiteStore:
         if row is None:
             return None
         return _instrument_from_row(row)
+
+    def list_instruments(self) -> tuple[InstrumentRecord, ...]:
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                "SELECT * FROM instruments ORDER BY asset_class, symbol, instrument_id"
+            ).fetchall()
+        return tuple(_instrument_from_row(row) for row in rows)
+
+    def find_instruments_by_symbol_or_alias(self, value: str) -> tuple[InstrumentRecord, ...]:
+        _validate_required(value, "value")
+        normalized = _normalize_lookup(value)
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT DISTINCT i.* FROM instruments AS i
+                LEFT JOIN instrument_aliases AS a
+                    ON a.instrument_id = i.instrument_id
+                WHERE lower(i.symbol) = ?
+                   OR a.alias_lower = ?
+                ORDER BY i.asset_class, i.symbol, i.instrument_id
+                """,
+                (normalized, normalized),
+            ).fetchall()
+        return tuple(_instrument_from_row(row) for row in rows)
+
+    def find_instrument_by_provider_id(
+        self, provider: str, namespace: str, identifier: str
+    ) -> InstrumentRecord | None:
+        _validate_required(provider, "provider")
+        _validate_required(namespace, "namespace")
+        _validate_required(identifier, "identifier")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                """
+                SELECT i.* FROM instruments AS i
+                INNER JOIN instrument_provider_ids AS p
+                    ON p.instrument_id = i.instrument_id
+                WHERE p.provider_lower = ?
+                  AND p.namespace_lower = ?
+                  AND p.identifier = ?
+                ORDER BY i.instrument_id
+                LIMIT 1
+                """,
+                (_normalize_lookup(provider), _normalize_lookup(namespace), identifier),
+            ).fetchone()
+        if row is None:
+            return None
+        return _instrument_from_row(row)
+
+    def list_instruments_by_asset_class(self, asset_class: str) -> tuple[InstrumentRecord, ...]:
+        _validate_required(asset_class, "asset_class")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM instruments
+                WHERE lower(asset_class) = ?
+                ORDER BY symbol, instrument_id
+                """,
+                (_normalize_lookup(asset_class),),
+            ).fetchall()
+        return tuple(_instrument_from_row(row) for row in rows)
+
+    def append_tradability_evidence(
+        self, record: InstrumentTradabilityEvidenceRecord
+    ) -> None:
+        _validate_required(record.instrument_id, "instrument_id")
+        _validate_required(record.provider, "provider")
+        _validate_required(record.status, "status")
+        _validate_confidence(record.extraction_confidence)
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            _insert_tradability_evidence(connection, record)
+
+    def get_latest_tradability_evidence(
+        self, instrument_id: str, provider: str | None = None
+    ) -> InstrumentTradabilityEvidenceRecord | None:
+        _validate_required(instrument_id, "instrument_id")
+        params: tuple[str, ...]
+        provider_filter = ""
+        if provider is None:
+            params = (instrument_id,)
+        else:
+            _validate_required(provider, "provider")
+            provider_filter = "AND provider_lower = ?"
+            params = (instrument_id, _normalize_lookup(provider))
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                f"""
+                SELECT * FROM instrument_tradability_evidence
+                WHERE instrument_id = ?
+                {provider_filter}
+                ORDER BY retrieved_at DESC, evidence_rowid DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+        if row is None:
+            return None
+        return _tradability_evidence_from_row(row)
+
+    def upsert_watchlist(self, record: WatchlistRecord) -> None:
+        _validate_required(record.watchlist_id, "watchlist_id")
+        _validate_required(record.name, "name")
+        now = _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO watchlists (
+                    watchlist_id, name, description, metadata_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(watchlist_id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record.watchlist_id,
+                    record.name,
+                    record.description,
+                    _dump_json(record.metadata),
+                    _format_datetime(now),
+                    _format_datetime(now),
+                ),
+            )
+
+    def get_watchlist(self, watchlist_id: str) -> WatchlistRecord | None:
+        _validate_required(watchlist_id, "watchlist_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                "SELECT * FROM watchlists WHERE watchlist_id = ?", (watchlist_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return _watchlist_from_row(row)
+
+    def list_watchlists(self) -> tuple[WatchlistRecord, ...]:
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                "SELECT * FROM watchlists ORDER BY name, watchlist_id"
+            ).fetchall()
+        return tuple(_watchlist_from_row(row) for row in rows)
+
+    def upsert_watchlist_item(self, record: WatchlistItemRecord) -> None:
+        _validate_required(record.watchlist_id, "watchlist_id")
+        _validate_required(record.instrument_id, "instrument_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO watchlist_items (
+                    watchlist_id, instrument_id, sort_order, notes, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(watchlist_id, instrument_id) DO UPDATE SET
+                    sort_order = excluded.sort_order,
+                    notes = excluded.notes,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    record.watchlist_id,
+                    record.instrument_id,
+                    record.sort_order,
+                    record.notes,
+                    _dump_json(record.metadata),
+                    _format_datetime(_utc_now()),
+                ),
+            )
+
+    def list_watchlist_items(self, watchlist_id: str) -> tuple[WatchlistItemRecord, ...]:
+        _validate_required(watchlist_id, "watchlist_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM watchlist_items
+                WHERE watchlist_id = ?
+                ORDER BY sort_order, instrument_id
+                """,
+                (watchlist_id,),
+            ).fetchall()
+        return tuple(_watchlist_item_from_row(row) for row in rows)
+
+    def list_watchlist_instruments(self, watchlist_id: str) -> tuple[InstrumentRecord, ...]:
+        _validate_required(watchlist_id, "watchlist_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT i.* FROM instruments AS i
+                INNER JOIN watchlist_items AS wi
+                    ON wi.instrument_id = i.instrument_id
+                WHERE wi.watchlist_id = ?
+                ORDER BY wi.sort_order, i.instrument_id
+                """,
+                (watchlist_id,),
+            ).fetchall()
+        return tuple(_instrument_from_row(row) for row in rows)
 
     def upsert_research_run(self, record: ResearchRunRecord) -> None:
         _validate_required(record.run_id, "run_id")
@@ -1107,7 +1345,7 @@ def _initialize_connection(connection: sqlite3.Connection) -> None:
         """,
         (
             CURRENT_RESEARCH_SCHEMA_VERSION,
-            "runtime_graph_research_schema_v3",
+            "registry_grade_research_schema_v4",
             _format_datetime(_utc_now()),
         ),
     )
@@ -1151,6 +1389,177 @@ def _migrate_research_schema(connection: sqlite3.Connection) -> None:
         ON evidence_items(source_query_id);
         """
     )
+    connection.executescript(_RESEARCH_REGISTRY_SCHEMA_SQL)
+
+
+def _replace_instrument_children(
+    connection: sqlite3.Connection, record: InstrumentRecord, now: datetime
+) -> None:
+    for table_name in (
+        "instrument_aliases",
+        "instrument_provider_ids",
+        "instrument_related_instruments",
+        "instrument_tradability_evidence",
+        "instrument_data_availability",
+    ):
+        connection.execute(
+            f"DELETE FROM {table_name} WHERE instrument_id = ?", (record.instrument_id,)
+        )
+
+    for alias in record.aliases:
+        _validate_required(alias, "alias")
+        connection.execute(
+            """
+            INSERT INTO instrument_aliases (
+                instrument_id, alias, alias_lower, created_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(instrument_id, alias_lower) DO UPDATE SET
+                alias = excluded.alias
+            """,
+            (record.instrument_id, alias, _normalize_lookup(alias), _format_datetime(now)),
+        )
+
+    for provider_id in record.provider_ids:
+        provider = _json_required_text(provider_id, "provider")
+        namespace = _json_optional_text(provider_id, "namespace") or "default"
+        identifier = _json_required_text(provider_id, "identifier")
+        connection.execute(
+            """
+            INSERT INTO instrument_provider_ids (
+                instrument_id, provider, provider_lower, namespace, namespace_lower,
+                identifier, metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(provider_lower, namespace_lower, identifier) DO UPDATE SET
+                instrument_id = excluded.instrument_id,
+                provider = excluded.provider,
+                namespace = excluded.namespace,
+                metadata_json = excluded.metadata_json
+            """,
+            (
+                record.instrument_id,
+                provider,
+                _normalize_lookup(provider),
+                namespace,
+                _normalize_lookup(namespace),
+                identifier,
+                _dump_json(
+                    _json_metadata_without(provider_id, {"provider", "namespace", "identifier"})
+                ),
+                _format_datetime(now),
+            ),
+        )
+
+    for related in record.related_instruments:
+        related_id = _json_required_text(related, "instrument_id")
+        relationship = _json_required_text(related, "relationship")
+        connection.execute(
+            """
+            INSERT INTO instrument_related_instruments (
+                instrument_id, related_instrument_id, relationship, metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(instrument_id, related_instrument_id, relationship) DO UPDATE SET
+                metadata_json = excluded.metadata_json
+            """,
+            (
+                record.instrument_id,
+                related_id,
+                relationship,
+                _dump_json(_json_metadata_without(related, {"instrument_id", "relationship"})),
+                _format_datetime(now),
+            ),
+        )
+
+    for evidence in record.tradability_evidence:
+        _insert_tradability_evidence(
+            connection,
+            InstrumentTradabilityEvidenceRecord(
+                instrument_id=record.instrument_id,
+                provider=_json_required_text(evidence, "provider"),
+                status=_json_required_text(evidence, "status"),
+                retrieved_at=_json_optional_datetime(evidence, "retrieved_at") or now,
+                source_query_id=_json_optional_text(evidence, "source_query_id"),
+                url=_json_optional_text(evidence, "url"),
+                raw_identifier=_json_optional_text(evidence, "raw_identifier"),
+                extraction_confidence=_json_optional_float(evidence, "extraction_confidence"),
+                metadata=_json_metadata_without(
+                    evidence,
+                    {
+                        "provider",
+                        "status",
+                        "retrieved_at",
+                        "source_query_id",
+                        "url",
+                        "raw_identifier",
+                        "extraction_confidence",
+                    },
+                ),
+            ),
+        )
+
+    for availability in record.data_availability:
+        provider = _json_required_text(availability, "provider")
+        data_type = _json_required_text(availability, "data_type")
+        status = _json_required_text(availability, "status")
+        as_of = _json_optional_datetime(availability, "as_of") or now
+        connection.execute(
+            """
+            INSERT INTO instrument_data_availability (
+                instrument_id, provider, provider_lower, data_type, status,
+                as_of, metadata_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(instrument_id, provider_lower, data_type) DO UPDATE SET
+                provider = excluded.provider,
+                status = excluded.status,
+                as_of = excluded.as_of,
+                metadata_json = excluded.metadata_json
+            """,
+            (
+                record.instrument_id,
+                provider,
+                _normalize_lookup(provider),
+                data_type,
+                status,
+                _format_datetime(as_of),
+                _dump_json(_json_metadata_without(
+                    availability, {"provider", "data_type", "status", "as_of"}
+                )),
+            ),
+        )
+
+
+def _insert_tradability_evidence(
+    connection: sqlite3.Connection, record: InstrumentTradabilityEvidenceRecord
+) -> None:
+    _validate_confidence(record.extraction_confidence)
+    connection.execute(
+        """
+        INSERT INTO instrument_tradability_evidence (
+            instrument_id, provider, provider_lower, status, retrieved_at,
+            source_query_id, url, raw_identifier, extraction_confidence, metadata_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            record.instrument_id,
+            record.provider,
+            _normalize_lookup(record.provider),
+            record.status,
+            _format_datetime(record.retrieved_at),
+            record.source_query_id,
+            record.url,
+            record.raw_identifier,
+            record.extraction_confidence,
+            _dump_json(record.metadata),
+        ),
+    )
+
+
+def _normalize_lookup(value: str) -> str:
+    return value.strip().casefold()
 
 
 def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
@@ -1268,6 +1677,46 @@ def _load_json_object_tuple(value: str) -> tuple[JsonObject, ...]:
     return tuple(cast(JsonObject, item) for item in loaded)
 
 
+def _json_required_text(value: JsonObject, key: str) -> str:
+    raw_value = value.get(key)
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        raise ValueError(f"{key} must be a non-empty string")
+    return raw_value
+
+
+def _json_optional_text(value: JsonObject, key: str) -> str | None:
+    raw_value = value.get(key)
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, str):
+        raise ValueError(f"{key} must be a string when provided")
+    return raw_value
+
+
+def _json_optional_float(value: JsonObject, key: str) -> float | None:
+    raw_value = value.get(key)
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, int | float):
+        raise ValueError(f"{key} must be numeric when provided")
+    return float(raw_value)
+
+
+def _json_optional_datetime(value: JsonObject, key: str) -> datetime | None:
+    raw_value = value.get(key)
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, datetime):
+        return raw_value
+    if not isinstance(raw_value, str):
+        raise ValueError(f"{key} must be an ISO timestamp when provided")
+    return _parse_datetime(raw_value)
+
+
+def _json_metadata_without(value: JsonObject, excluded_keys: set[str]) -> JsonObject:
+    return {key: item for key, item in value.items() if key not in excluded_keys}
+
+
 def _row_text(row: sqlite3.Row, column: str) -> str:
     return cast(str, row[column])
 
@@ -1292,6 +1741,39 @@ def _instrument_from_row(row: sqlite3.Row) -> InstrumentRecord:
         related_instruments=_load_json_object_tuple(_row_text(row, "related_instruments_json")),
         tradability_evidence=_load_json_object_tuple(_row_text(row, "tradability_evidence_json")),
         data_availability=_load_json_object_tuple(_row_text(row, "data_availability_json")),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+    )
+
+
+def _tradability_evidence_from_row(row: sqlite3.Row) -> InstrumentTradabilityEvidenceRecord:
+    return InstrumentTradabilityEvidenceRecord(
+        instrument_id=_row_text(row, "instrument_id"),
+        provider=_row_text(row, "provider"),
+        status=_row_text(row, "status"),
+        retrieved_at=_parse_datetime(_row_text(row, "retrieved_at")),
+        source_query_id=_row_optional_text(row, "source_query_id"),
+        url=_row_optional_text(row, "url"),
+        raw_identifier=_row_optional_text(row, "raw_identifier"),
+        extraction_confidence=_row_optional_float(row, "extraction_confidence"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+    )
+
+
+def _watchlist_from_row(row: sqlite3.Row) -> WatchlistRecord:
+    return WatchlistRecord(
+        watchlist_id=_row_text(row, "watchlist_id"),
+        name=_row_text(row, "name"),
+        description=_row_optional_text(row, "description"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+    )
+
+
+def _watchlist_item_from_row(row: sqlite3.Row) -> WatchlistItemRecord:
+    return WatchlistItemRecord(
+        watchlist_id=_row_text(row, "watchlist_id"),
+        instrument_id=_row_text(row, "instrument_id"),
+        sort_order=int(row["sort_order"]),
+        notes=_row_optional_text(row, "notes"),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
     )
 
@@ -1654,6 +2136,104 @@ CREATE INDEX IF NOT EXISTS idx_candidate_artifact_links_artifact_id
 ON candidate_artifact_links(artifact_id);
 """
 
+_RESEARCH_REGISTRY_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS instrument_aliases (
+    instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE CASCADE,
+    alias TEXT NOT NULL CHECK(length(alias) > 0),
+    alias_lower TEXT NOT NULL CHECK(length(alias_lower) > 0),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(instrument_id, alias_lower)
+);
+
+CREATE INDEX IF NOT EXISTS idx_instrument_aliases_alias_lower
+ON instrument_aliases(alias_lower);
+
+CREATE TABLE IF NOT EXISTS instrument_provider_ids (
+    instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE CASCADE,
+    provider TEXT NOT NULL CHECK(length(provider) > 0),
+    provider_lower TEXT NOT NULL CHECK(length(provider_lower) > 0),
+    namespace TEXT NOT NULL CHECK(length(namespace) > 0),
+    namespace_lower TEXT NOT NULL CHECK(length(namespace_lower) > 0),
+    identifier TEXT NOT NULL CHECK(length(identifier) > 0),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(provider_lower, namespace_lower, identifier)
+);
+
+CREATE INDEX IF NOT EXISTS idx_instrument_provider_ids_instrument
+ON instrument_provider_ids(instrument_id);
+
+CREATE TABLE IF NOT EXISTS instrument_related_instruments (
+    instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE CASCADE,
+    related_instrument_id TEXT NOT NULL CHECK(length(related_instrument_id) > 0),
+    relationship TEXT NOT NULL CHECK(length(relationship) > 0),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(instrument_id, related_instrument_id, relationship)
+);
+
+CREATE INDEX IF NOT EXISTS idx_instrument_related_related_id
+ON instrument_related_instruments(related_instrument_id);
+
+CREATE TABLE IF NOT EXISTS instrument_tradability_evidence (
+    evidence_rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+    instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE CASCADE,
+    provider TEXT NOT NULL CHECK(length(provider) > 0),
+    provider_lower TEXT NOT NULL CHECK(length(provider_lower) > 0),
+    status TEXT NOT NULL CHECK(length(status) > 0),
+    retrieved_at TEXT NOT NULL,
+    source_query_id TEXT REFERENCES source_queries(source_query_id) ON DELETE SET NULL,
+    url TEXT,
+    raw_identifier TEXT,
+    extraction_confidence REAL CHECK(
+        extraction_confidence IS NULL
+        OR (extraction_confidence >= 0.0 AND extraction_confidence <= 1.0)
+    ),
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_instrument_tradability_latest
+ON instrument_tradability_evidence(instrument_id, provider_lower, retrieved_at);
+
+CREATE TABLE IF NOT EXISTS instrument_data_availability (
+    instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE CASCADE,
+    provider TEXT NOT NULL CHECK(length(provider) > 0),
+    provider_lower TEXT NOT NULL CHECK(length(provider_lower) > 0),
+    data_type TEXT NOT NULL CHECK(length(data_type) > 0),
+    status TEXT NOT NULL CHECK(length(status) > 0),
+    as_of TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY(instrument_id, provider_lower, data_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_instrument_data_availability_provider
+ON instrument_data_availability(provider_lower, data_type);
+
+CREATE TABLE IF NOT EXISTS watchlists (
+    watchlist_id TEXT PRIMARY KEY CHECK(length(watchlist_id) > 0),
+    name TEXT NOT NULL CHECK(length(name) > 0),
+    description TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_watchlists_name ON watchlists(name);
+
+CREATE TABLE IF NOT EXISTS watchlist_items (
+    watchlist_id TEXT NOT NULL REFERENCES watchlists(watchlist_id) ON DELETE CASCADE,
+    instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE CASCADE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    notes TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(watchlist_id, instrument_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_watchlist_items_instrument
+ON watchlist_items(instrument_id);
+"""
+
 _PLANNING_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -1754,6 +2334,7 @@ __all__ = [
     "CandidateEvidenceLinkRecord",
     "EvidenceRecord",
     "InstrumentRecord",
+    "InstrumentTradabilityEvidenceRecord",
     "PlanAcceptanceCriterionRecord",
     "PlanArtifactLinkRecord",
     "PlanCommitLinkRecord",
@@ -1768,6 +2349,8 @@ __all__ = [
     "SQLiteStore",
     "SourceQueryRecord",
     "ToolRunRecord",
+    "WatchlistItemRecord",
+    "WatchlistRecord",
     "initialize_database",
     "initialize_planning_database",
     "initialize_research_database",
