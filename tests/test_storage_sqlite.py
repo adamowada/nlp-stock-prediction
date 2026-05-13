@@ -8,6 +8,8 @@ import pytest
 
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
+    CandidateArtifactLinkRecord,
+    CandidateEvidenceLinkRecord,
     EvidenceRecord,
     InstrumentRecord,
     PlanAcceptanceCriterionRecord,
@@ -53,6 +55,13 @@ def _table_names(store: SQLiteStore | PlanningSQLiteStore) -> set[str]:
         }
 
 
+def _column_names(store: SQLiteStore, table_name: str) -> set[str]:
+    with store.connect() as connection:
+        return {
+            row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        }
+
+
 @pytest.mark.unit
 def test_research_database_initialization_is_idempotent_and_excludes_planning(
     tmp_path: Path,
@@ -69,6 +78,8 @@ def test_research_database_initialization_is_idempotent_and_excludes_planning(
     assert migration_count == 1
     assert {
         "artifacts",
+        "candidate_artifact_links",
+        "candidate_evidence_links",
         "evidence_items",
         "instruments",
         "prediction_candidates",
@@ -89,6 +100,138 @@ def test_research_database_initialization_is_idempotent_and_excludes_planning(
                 status="watchlist",
             )
         )
+
+
+@pytest.mark.unit
+def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    with store.connect() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            );
+            INSERT INTO schema_migrations(version, name, applied_at)
+            VALUES (2, 'instrument_provenance_research_schema', '2026-05-13T00:00:00+00:00');
+
+            CREATE TABLE instruments (
+                instrument_id TEXT PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                name TEXT,
+                asset_class TEXT NOT NULL,
+                venue TEXT,
+                aliases_json TEXT NOT NULL DEFAULT '[]',
+                provider_ids_json TEXT NOT NULL DEFAULT '[]',
+                related_instruments_json TEXT NOT NULL DEFAULT '[]',
+                tradability_evidence_json TEXT NOT NULL DEFAULT '[]',
+                data_availability_json TEXT NOT NULL DEFAULT '[]',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE research_runs (
+                run_id TEXT PRIMARY KEY,
+                run_kind TEXT NOT NULL,
+                objective TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE tool_runs (
+                tool_run_id TEXT PRIMARY KEY,
+                run_id TEXT REFERENCES research_runs(run_id) ON DELETE SET NULL,
+                tool_name TEXT NOT NULL,
+                tool_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                inputs_json TEXT NOT NULL DEFAULT '{}',
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                warnings_json TEXT NOT NULL DEFAULT '[]',
+                error_message TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+                artifact_type TEXT NOT NULL,
+                path TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                schema_version TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE source_queries (
+                source_query_id TEXT PRIMARY KEY,
+                tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+                provider TEXT NOT NULL,
+                query TEXT NOT NULL,
+                url TEXT,
+                retrieved_at TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE evidence_items (
+                evidence_id TEXT PRIMARY KEY,
+                source_type TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                url TEXT,
+                query TEXT,
+                retrieved_at TEXT NOT NULL,
+                published_at TEXT,
+                instruments_json TEXT NOT NULL DEFAULT '[]',
+                claim TEXT NOT NULL,
+                extraction_confidence REAL,
+                source_reliability TEXT,
+                freshness_status TEXT NOT NULL DEFAULT 'unknown',
+                artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+                raw_excerpt TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE prediction_candidates (
+                candidate_id TEXT PRIMARY KEY,
+                instrument_id TEXT NOT NULL
+                    REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
+                prediction_horizon TEXT NOT NULL,
+                prediction_type TEXT NOT NULL,
+                scenario TEXT NOT NULL,
+                direction TEXT,
+                confidence REAL,
+                status TEXT NOT NULL,
+                evidence_for_json TEXT NOT NULL DEFAULT '[]',
+                evidence_against_json TEXT NOT NULL DEFAULT '[]',
+                signal_artifacts_json TEXT NOT NULL DEFAULT '[]',
+                baseline_json TEXT NOT NULL DEFAULT '{}',
+                uncertainty TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """
+        )
+
+    store.initialize()
+    store.initialize()
+
+    assert store.schema_version() == CURRENT_RESEARCH_SCHEMA_VERSION
+    assert "run_id" in _column_names(store, "prediction_candidates")
+    assert {
+        "tool_run_id",
+        "source_query_id",
+        "provenance_json",
+    }.issubset(_column_names(store, "evidence_items"))
+    assert {
+        "candidate_artifact_links",
+        "candidate_evidence_links",
+    }.issubset(_table_names(store))
+    with store.connect() as connection:
+        migration_count = connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
+    assert migration_count == 2
 
 
 @pytest.mark.unit
@@ -209,6 +352,8 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
     store.record_evidence(
         EvidenceRecord(
             evidence_id="evidence-news-tsla",
+            tool_run_id="tool-technical-tsla",
+            source_query_id="query-news-tsla",
             source_type="news_article",
             provider="example-news",
             url="https://example.test/tsla",
@@ -222,12 +367,17 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
             freshness_status="fresh",
             artifact_id="artifact-technical-tsla",
             raw_excerpt="announced a test catalyst",
+            provenance_json={
+                "provider": "example-news",
+                "source_query_id": "query-news-tsla",
+            },
             metadata={"language": "en"},
         )
     )
     store.upsert_prediction_candidate(
         PredictionCandidateRecord(
             candidate_id="candidate-tsla-5d",
+            run_id="run-2026-05-13",
             instrument_id="equity:NASDAQ:TSLA",
             prediction_horizon="5d",
             prediction_type="direction",
@@ -243,6 +393,33 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
             metadata={"report_section": "top_candidates"},
         )
     )
+    store.link_candidate_evidence(
+        CandidateEvidenceLinkRecord(
+            candidate_id="candidate-tsla-5d",
+            evidence_id="evidence-news-tsla",
+            relationship="supports",
+            metadata={"stance": "for"},
+            created_at=_timestamp(),
+        )
+    )
+    store.link_candidate_evidence(
+        CandidateEvidenceLinkRecord(
+            candidate_id="candidate-tsla-5d",
+            evidence_id="evidence-news-tsla",
+            relationship="supports",
+            metadata={"stance": "for"},
+            created_at=_timestamp(),
+        )
+    )
+    store.link_candidate_artifact(
+        CandidateArtifactLinkRecord(
+            candidate_id="candidate-tsla-5d",
+            artifact_id="artifact-technical-tsla",
+            relationship="signal",
+            metadata={"section": "technical_package"},
+            created_at=_timestamp(),
+        )
+    )
 
     run = store.get_research_run("run-2026-05-13")
     tool_run = store.get_tool_run("tool-technical-tsla")
@@ -251,6 +428,8 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
     artifact = store.get_artifact("artifact-technical-tsla")
     evidence = store.get_evidence("evidence-news-tsla")
     candidate = store.get_prediction_candidate("candidate-tsla-5d")
+    candidate_evidence_links = store.list_candidate_evidence_links("candidate-tsla-5d")
+    candidate_artifact_links = store.list_candidate_artifact_links("candidate-tsla-5d")
 
     assert run is not None
     assert run.metadata["universe"] == "test"
@@ -269,12 +448,128 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
     assert artifact.path == Path("artifacts/tools/technical-package/tsla.json")
     assert artifact.metadata["latest_bar"] == "2026-05-12"
     assert evidence is not None
+    assert evidence.tool_run_id == "tool-technical-tsla"
+    assert evidence.source_query_id == "query-news-tsla"
     assert evidence.instruments == ("equity:NASDAQ:TSLA",)
     assert evidence.extraction_confidence == pytest.approx(0.82)
+    assert evidence.provenance_json["source_query_id"] == "query-news-tsla"
     assert candidate is not None
+    assert candidate.run_id == "run-2026-05-13"
     assert candidate.evidence_for == ("evidence-news-tsla",)
     assert candidate.signal_artifacts == ("artifact-technical-tsla",)
     assert candidate.baseline["comparison"] == "market_neutral"
+    assert store.list_tool_runs_for_run("run-2026-05-13") == (tool_run,)
+    assert store.list_source_queries_for_run("run-2026-05-13") == (source_query,)
+    assert store.list_artifacts_for_run("run-2026-05-13") == (artifact,)
+    assert store.list_evidence_for_run("run-2026-05-13") == (evidence,)
+    assert store.list_prediction_candidates_for_run("run-2026-05-13") == (candidate,)
+    assert candidate_evidence_links == (
+        CandidateEvidenceLinkRecord(
+            candidate_id="candidate-tsla-5d",
+            evidence_id="evidence-news-tsla",
+            relationship="supports",
+            metadata={"stance": "for"},
+            created_at=_timestamp(),
+        ),
+    )
+    assert candidate_artifact_links == (
+        CandidateArtifactLinkRecord(
+            candidate_id="candidate-tsla-5d",
+            artifact_id="artifact-technical-tsla",
+            relationship="signal",
+            metadata={"section": "technical_package"},
+            created_at=_timestamp(),
+        ),
+    )
+
+
+@pytest.mark.unit
+def test_run_scoped_lists_follow_candidate_links_without_tool_runs(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="etf:NYSEARCA:SPY",
+            symbol="SPY",
+            asset_class="etf",
+        )
+    )
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id="run-link-only",
+            run_kind="candidate_graph",
+            objective="link-only graph test",
+            status="completed",
+            started_at=_timestamp(),
+        )
+    )
+    store.record_source_query(
+        SourceQueryRecord(
+            source_query_id="query-link-only",
+            provider="example-search",
+            query="SPY macro context",
+            retrieved_at=_timestamp(),
+        )
+    )
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-link-only",
+            artifact_type="evidence_bundle",
+            path=Path("artifacts/link-only.json"),
+            sha256="b" * 64,
+            schema_version="bundle.v1",
+            created_at=_timestamp(),
+        )
+    )
+    store.record_evidence(
+        EvidenceRecord(
+            evidence_id="evidence-link-only",
+            source_query_id="query-link-only",
+            source_type="search_result",
+            provider="example-search",
+            retrieved_at=_timestamp(),
+            claim="SPY has link-only evidence in this fixture.",
+            artifact_id="artifact-link-only",
+        )
+    )
+    store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            candidate_id="candidate-link-only",
+            run_id="run-link-only",
+            instrument_id="etf:NYSEARCA:SPY",
+            prediction_horizon="1d",
+            prediction_type="direction",
+            scenario="Candidate link graph should scope evidence.",
+            status="low_confidence",
+        )
+    )
+    store.link_candidate_evidence(
+        CandidateEvidenceLinkRecord(
+            candidate_id="candidate-link-only",
+            evidence_id="evidence-link-only",
+            relationship="supports",
+            created_at=_timestamp(),
+        )
+    )
+    store.link_candidate_artifact(
+        CandidateArtifactLinkRecord(
+            candidate_id="candidate-link-only",
+            artifact_id="artifact-link-only",
+            relationship="source_artifact",
+            created_at=_timestamp(),
+        )
+    )
+
+    assert store.list_tool_runs_for_run("run-link-only") == ()
+    assert tuple(
+        item.source_query_id for item in store.list_source_queries_for_run("run-link-only")
+    ) == ("query-link-only",)
+    assert tuple(item.artifact_id for item in store.list_artifacts_for_run("run-link-only")) == (
+        "artifact-link-only",
+    )
+    assert tuple(item.evidence_id for item in store.list_evidence_for_run("run-link-only")) == (
+        "evidence-link-only",
+    )
 
 
 @pytest.mark.unit

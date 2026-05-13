@@ -11,11 +11,17 @@ coordinates the work and writes the final Markdown/JSON report.
 
 ## Current State
 
-This branch is ready for Phase 2 work on Codex orchestration and agentic report workflows.
+This branch contains the Phase 2 Codex Orchestrator scaffolding: deterministic offline orchestration
+and an opt-in real Codex smoke path that validates MCP tool use with live search evidence. The tools
+remain dummy/fixture-backed until the Phase 4 tool-suite work.
 
 What exists now:
 
 - an offline `research` CLI that writes Markdown, JSON, and audit artifacts;
+- a Phase 2 orchestration runtime with dummy tools, candidate synthesis, and report assembly;
+- a local MCP server for real Codex smoke runs;
+- an opt-in smoke runner that uses live Codex search, records evidence, and verifies ignored
+  artifacts only;
 - provider, evidence, extraction, analysis, reporting, raw TimesFM, and storage modules;
 - SQLite storage under `nlp_stock_prediction.storage`;
 - tests for the clean report contracts, provider attribution, and storage round trips.
@@ -93,6 +99,15 @@ Generate the deterministic offline report:
 
 ```sh
 python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
+```
+
+Phase 2 also includes an opt-in real Codex smoke path. It exposes the dummy research tools through a
+local MCP server, lets Codex use live web search, and writes only ignored artifacts under `reports/`,
+`artifacts/`, `data/`, or `cache/`:
+
+```sh
+python -m pip install -e ".[dev,codex-smoke]"
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py --date 2026-05-13 --output reports/phase2-codex-smoke --symbol TSLA
 ```
 
 ## SQLite

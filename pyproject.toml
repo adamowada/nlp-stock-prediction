@@ -19,6 +19,9 @@ dev = [
   "pytest>=8.3,<9",
   "ruff>=0.6,<1",
 ]
+codex-smoke = [
+  "mcp>=1,<2",
+]
 timesfm-raw = [
   "accelerate>=1.13,<2",
   "huggingface_hub>=1.14,<2",
@@ -45,6 +48,7 @@ markers = [
   "live_scraping: Real public HTML scraping checks.",
   "llm: LLM extraction and schema validation.",
   "e2e: Full CLI report generation.",
+  "codex_smoke: Opt-in real Codex agent smoke checks.",
 ]
 
 [tool.ruff]

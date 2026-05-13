@@ -26,6 +26,22 @@ Generate the deterministic offline report:
 python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 ```
 
+Run the optional Phase 2 real-Codex smoke after installing the MCP extra:
+
+```sh
+python -m pip install -e ".[dev,codex-smoke]"
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py --date 2026-05-13 --output reports/phase2-codex-smoke --symbol TSLA
+```
+
+The smoke command launches `codex --search` against the local
+`python -B -m nlp_stock_prediction.codex_mcp` server so the MCP process does not write bytecode
+caches outside artifact roots. It may use live web search, but it writes only ignored local
+artifacts. On the current Windows Codex CLI, the runner uses `danger-full-access` because stdio MCP
+tool calls are cancelled under `workspace-write`; the MCP service still enforces write roots and the
+runner fails if tracked files or restricted ignored repo files change. Each smoke run uses a
+date/symbol-specific ignored SQLite database under `data/` so stale evidence cannot satisfy a later
+run.
+
 ## Local Storage
 
 Use these conventions:
@@ -82,6 +98,7 @@ Expected variable families:
 
 ```text
 OPENAI_API_KEY
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE
 X_BEARER_TOKEN
 REDDIT_CLIENT_ID
 REDDIT_CLIENT_SECRET
