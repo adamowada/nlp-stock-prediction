@@ -11,7 +11,7 @@ This document defines target contracts and invariants for the prediction researc
 - Evidence for and evidence against must both be preserved.
 - Social content is observed discussion, not fact.
 - News and filings are source evidence, but extracted claims still require provenance.
-- Raw TimesFM is a technical signal only; fine-tuned TimesFM is retired.
+- Raw TimesFM is a technical signal only; TimesFM tuning is not part of the product workflow.
 - SQLite is split into a tracked planning database and an ignored research database; large payloads
   remain on disk.
 

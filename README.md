@@ -6,26 +6,24 @@ The important boundary: this is not a trading app. It should not place trades, s
 tell anyone what to buy or sell. The output is a prediction report: what the evidence seems to imply,
 how strong that evidence is, what conflicts with it, and what would change the view.
 
-The old version was centered on a fixed stock-report pipeline and later spent too much energy on
-TimesFM fine-tuning. That direction is being retired. The new direction is a set of small research
-tools, a local SQLite memory layer, and a Codex agent that coordinates the work and writes the final
-Markdown/JSON report.
+The rebuild is centered on small research tools, a local SQLite memory layer, and a Codex agent that
+coordinates the work and writes the final Markdown/JSON report.
 
 ## Current State
 
-This branch is in the middle of the rebuild.
+This branch is ready for Phase 2 work on instrument universe depth.
 
 What exists now:
 
-- legacy offline report CLI and tests;
-- provider, evidence, scoring, reporting, and TimesFM-era modules from the previous design;
-- a new SQLite storage layer under `nlp_stock_prediction.storage`;
-- refreshed docs that describe the new architecture.
+- an offline `research` CLI that writes Markdown, JSON, and audit artifacts;
+- provider, evidence, extraction, analysis, reporting, raw TimesFM, and storage modules;
+- SQLite storage under `nlp_stock_prediction.storage`;
+- tests for the clean report contracts, provider attribution, and storage round trips.
 
 What is intentionally not the focus anymore:
 
-- TimesFM fine-tuning;
-- one-off HPO workflows;
+- TimesFM tuning;
+- one-off TimesFM tuning workflows;
 - visual dashboards;
 - trading-language output.
 
@@ -91,19 +89,11 @@ ruff format --check .
 mypy .
 ```
 
-The legacy report command still works while the rebuild is underway:
+Generate the deterministic offline report:
 
 ```sh
-python -m nlp_stock_prediction run --date 2026-05-12 --output reports/ --offline
+python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 ```
-
-The target command is not implemented yet, but the direction is roughly:
-
-```sh
-python -m nlp_stock_prediction research --objective daily-prediction-report --universe retail-tradable --output reports/
-```
-
-Do not treat that target command as available until it has code and tests behind it.
 
 ## SQLite
 

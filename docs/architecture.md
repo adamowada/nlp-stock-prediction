@@ -45,8 +45,8 @@ First-class tools should be independently callable and should emit typed artifac
 - prediction evaluation and calibration;
 - report generation.
 
-Raw TimesFM belongs only in the technical package as a baseline-aware signal. Fine-tuning TimesFM is
-retired.
+Raw TimesFM belongs only in the technical package as a baseline-aware signal. TimesFM tuning is not
+part of the product workflow.
 
 ## SQLite Role
 

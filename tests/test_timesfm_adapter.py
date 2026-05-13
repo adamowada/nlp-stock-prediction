@@ -9,7 +9,6 @@ from typing import Any, ClassVar
 import pytest
 
 from nlp_stock_prediction.contracts import PriceBar
-from nlp_stock_prediction.ml import timesfm
 from nlp_stock_prediction.ml.timesfm.adapter import (
     TimesFmForecastConfig,
     _InferenceStack,
@@ -24,12 +23,6 @@ from nlp_stock_prediction.ml.timesfm.dataset import (
 )
 
 RUN_DATE = date(2026, 5, 11)
-
-
-def test_timesfm_package_marks_training_surfaces_as_legacy() -> None:
-    assert "train" in timesfm.LEGACY_TIMESFM_TRAINING_MODULES
-    assert "focused_hpo" in timesfm.LEGACY_TIMESFM_TRAINING_MODULES
-    assert "legacy" in timesfm.LEGACY_TIMESFM_TRAINING_NOTE.lower()
 
 
 def _bar(

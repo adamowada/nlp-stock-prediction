@@ -68,7 +68,7 @@ def test_live_llm_smoke_fixture_shape_stays_schema_valid_without_network() -> No
         run_date=date(2026, 5, 11),
         tickers=("NVDA",),
         evidence=(evidence,),
-        prompt_version="lane-c-live-smoke-v1",
+        prompt_version="strategy-live-smoke-v1",
         schema_version=STRATEGY_EXTRACTION_SCHEMA_VERSION,
     )
 

@@ -12,7 +12,7 @@ from typing import cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
 
-CURRENT_RESEARCH_SCHEMA_VERSION = 1
+CURRENT_RESEARCH_SCHEMA_VERSION = 2
 CURRENT_PLANNING_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = CURRENT_RESEARCH_SCHEMA_VERSION
 DEFAULT_RESEARCH_DATABASE_PATH = Path("data/prediction-research.sqlite3")
@@ -28,7 +28,10 @@ class InstrumentRecord:
     name: str | None = None
     venue: str | None = None
     aliases: tuple[str, ...] = ()
-    tradability_source: str | None = None
+    provider_ids: tuple[JsonObject, ...] = ()
+    related_instruments: tuple[JsonObject, ...] = ()
+    tradability_evidence: tuple[JsonObject, ...] = ()
+    data_availability: tuple[JsonObject, ...] = ()
     metadata: JsonObject = field(default_factory=dict)
 
 
@@ -132,6 +135,25 @@ class PlanRecord:
 
 
 @dataclass(frozen=True)
+class PlanMilestoneRecord:
+    milestone_id: str
+    plan_id: str
+    title: str
+    status: str
+    sort_order: int = 0
+    details: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PlanAcceptanceCriterionRecord:
+    criterion_id: str
+    plan_id: str
+    description: str
+    status: str
+    verification_command: str | None = None
+
+
+@dataclass(frozen=True)
 class PlanDecisionRecord:
     decision_id: str
     plan_id: str
@@ -151,6 +173,20 @@ class PlanProgressRecord:
     details: str | None = None
     linked_artifact_id: str | None = None
     occurred_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class PlanArtifactLinkRecord:
+    plan_id: str
+    artifact_id: str
+    relationship: str
+
+
+@dataclass(frozen=True)
+class PlanCommitLinkRecord:
+    plan_id: str
+    commit_sha: str
+    relationship: str
 
 
 class SQLiteStore:
@@ -191,16 +227,20 @@ class SQLiteStore:
                 """
                 INSERT INTO instruments (
                     instrument_id, symbol, name, asset_class, venue, aliases_json,
-                    tradability_source, metadata_json, created_at, updated_at
+                    provider_ids_json, related_instruments_json, tradability_evidence_json,
+                    data_availability_json, metadata_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(instrument_id) DO UPDATE SET
                     symbol = excluded.symbol,
                     name = excluded.name,
                     asset_class = excluded.asset_class,
                     venue = excluded.venue,
                     aliases_json = excluded.aliases_json,
-                    tradability_source = excluded.tradability_source,
+                    provider_ids_json = excluded.provider_ids_json,
+                    related_instruments_json = excluded.related_instruments_json,
+                    tradability_evidence_json = excluded.tradability_evidence_json,
+                    data_availability_json = excluded.data_availability_json,
                     metadata_json = excluded.metadata_json,
                     updated_at = excluded.updated_at
                 """,
@@ -211,7 +251,10 @@ class SQLiteStore:
                     record.asset_class,
                     record.venue,
                     _dump_json_array(record.aliases),
-                    record.tradability_source,
+                    _dump_json_object_array(record.provider_ids),
+                    _dump_json_object_array(record.related_instruments),
+                    _dump_json_object_array(record.tradability_evidence),
+                    _dump_json_object_array(record.data_availability),
                     _dump_json(record.metadata),
                     _format_datetime(now),
                     _format_datetime(now),
@@ -712,6 +755,154 @@ class PlanningSQLiteStore:
             ).fetchall()
         return tuple(_plan_progress_from_row(row) for row in rows)
 
+    def upsert_plan_milestone(self, record: PlanMilestoneRecord) -> None:
+        _validate_required(record.milestone_id, "milestone_id")
+        _validate_required(record.plan_id, "plan_id")
+        _validate_required(record.title, "title")
+        _validate_required(record.status, "status")
+        with self.connect() as connection:
+            _ensure_planning_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO plan_milestones (
+                    milestone_id, plan_id, title, status, sort_order, details_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(milestone_id) DO UPDATE SET
+                    plan_id = excluded.plan_id,
+                    title = excluded.title,
+                    status = excluded.status,
+                    sort_order = excluded.sort_order,
+                    details_json = excluded.details_json
+                """,
+                (
+                    record.milestone_id,
+                    record.plan_id,
+                    record.title,
+                    record.status,
+                    record.sort_order,
+                    _dump_json(record.details),
+                ),
+            )
+
+    def list_plan_milestones(self, plan_id: str) -> tuple[PlanMilestoneRecord, ...]:
+        _validate_required(plan_id, "plan_id")
+        with self.connect() as connection:
+            _ensure_planning_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM plan_milestones
+                WHERE plan_id = ?
+                ORDER BY sort_order, milestone_id
+                """,
+                (plan_id,),
+            ).fetchall()
+        return tuple(_plan_milestone_from_row(row) for row in rows)
+
+    def upsert_plan_acceptance_criterion(self, record: PlanAcceptanceCriterionRecord) -> None:
+        _validate_required(record.criterion_id, "criterion_id")
+        _validate_required(record.plan_id, "plan_id")
+        _validate_required(record.description, "description")
+        _validate_required(record.status, "status")
+        with self.connect() as connection:
+            _ensure_planning_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO plan_acceptance_criteria (
+                    criterion_id, plan_id, description, status, verification_command
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(criterion_id) DO UPDATE SET
+                    plan_id = excluded.plan_id,
+                    description = excluded.description,
+                    status = excluded.status,
+                    verification_command = excluded.verification_command
+                """,
+                (
+                    record.criterion_id,
+                    record.plan_id,
+                    record.description,
+                    record.status,
+                    record.verification_command,
+                ),
+            )
+
+    def list_plan_acceptance_criteria(
+        self, plan_id: str
+    ) -> tuple[PlanAcceptanceCriterionRecord, ...]:
+        _validate_required(plan_id, "plan_id")
+        with self.connect() as connection:
+            _ensure_planning_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM plan_acceptance_criteria
+                WHERE plan_id = ?
+                ORDER BY criterion_id
+                """,
+                (plan_id,),
+            ).fetchall()
+        return tuple(_plan_acceptance_criterion_from_row(row) for row in rows)
+
+    def link_plan_artifact(self, record: PlanArtifactLinkRecord) -> None:
+        _validate_required(record.plan_id, "plan_id")
+        _validate_required(record.artifact_id, "artifact_id")
+        _validate_required(record.relationship, "relationship")
+        with self.connect() as connection:
+            _ensure_planning_initialized(connection)
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO plan_artifact_links (
+                    plan_id, artifact_id, relationship
+                )
+                VALUES (?, ?, ?)
+                """,
+                (record.plan_id, record.artifact_id, record.relationship),
+            )
+
+    def list_plan_artifact_links(self, plan_id: str) -> tuple[PlanArtifactLinkRecord, ...]:
+        _validate_required(plan_id, "plan_id")
+        with self.connect() as connection:
+            _ensure_planning_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM plan_artifact_links
+                WHERE plan_id = ?
+                ORDER BY artifact_id, relationship
+                """,
+                (plan_id,),
+            ).fetchall()
+        return tuple(_plan_artifact_link_from_row(row) for row in rows)
+
+    def link_plan_commit(self, record: PlanCommitLinkRecord) -> None:
+        _validate_required(record.plan_id, "plan_id")
+        _validate_required(record.commit_sha, "commit_sha")
+        _validate_required(record.relationship, "relationship")
+        with self.connect() as connection:
+            _ensure_planning_initialized(connection)
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO plan_commit_links (
+                    plan_id, commit_sha, relationship
+                )
+                VALUES (?, ?, ?)
+                """,
+                (record.plan_id, record.commit_sha, record.relationship),
+            )
+
+    def list_plan_commit_links(self, plan_id: str) -> tuple[PlanCommitLinkRecord, ...]:
+        _validate_required(plan_id, "plan_id")
+        with self.connect() as connection:
+            _ensure_planning_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM plan_commit_links
+                WHERE plan_id = ?
+                ORDER BY commit_sha, relationship
+                """,
+                (plan_id,),
+            ).fetchall()
+        return tuple(_plan_commit_link_from_row(row) for row in rows)
+
 
 def initialize_database(path: Path = DEFAULT_RESEARCH_DATABASE_PATH) -> SQLiteStore:
     return initialize_research_database(path)
@@ -734,6 +925,7 @@ def initialize_planning_database(
 def _initialize_connection(connection: sqlite3.Connection) -> None:
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(_RESEARCH_SCHEMA_SQL)
+    _migrate_research_schema(connection)
     connection.execute(
         """
         INSERT OR IGNORE INTO schema_migrations(version, name, applied_at)
@@ -741,10 +933,25 @@ def _initialize_connection(connection: sqlite3.Connection) -> None:
         """,
         (
             CURRENT_RESEARCH_SCHEMA_VERSION,
-            "initial_prediction_research_schema",
+            "instrument_provenance_research_schema",
             _format_datetime(_utc_now()),
         ),
     )
+
+
+def _migrate_research_schema(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(instruments)").fetchall()
+    }
+    migrations = {
+        "provider_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+        "related_instruments_json": "TEXT NOT NULL DEFAULT '[]'",
+        "tradability_evidence_json": "TEXT NOT NULL DEFAULT '[]'",
+        "data_availability_json": "TEXT NOT NULL DEFAULT '[]'",
+    }
+    for column, definition in migrations.items():
+        if column not in columns:
+            connection.execute(f"ALTER TABLE instruments ADD COLUMN {column} {definition}")
 
 
 def _initialize_planning_connection(connection: sqlite3.Connection) -> None:
@@ -827,6 +1034,10 @@ def _dump_json_array(value: Iterable[str]) -> str:
     return json.dumps(tuple(value), sort_keys=True, separators=(",", ":"))
 
 
+def _dump_json_object_array(value: Iterable[JsonObject]) -> str:
+    return json.dumps(tuple(value), sort_keys=True, separators=(",", ":"))
+
+
 def _load_json_object(value: str) -> JsonObject:
     loaded = json.loads(value)
     if not isinstance(loaded, dict):
@@ -841,6 +1052,15 @@ def _load_string_tuple(value: str) -> tuple[str, ...]:
     if not all(isinstance(item, str) for item in loaded):
         raise ValueError("stored JSON array must contain strings")
     return tuple(loaded)
+
+
+def _load_json_object_tuple(value: str) -> tuple[JsonObject, ...]:
+    loaded = json.loads(value)
+    if not isinstance(loaded, list):
+        raise ValueError("stored JSON value must be an array")
+    if not all(isinstance(item, dict) for item in loaded):
+        raise ValueError("stored JSON array must contain objects")
+    return tuple(cast(JsonObject, item) for item in loaded)
 
 
 def _row_text(row: sqlite3.Row, column: str) -> str:
@@ -863,7 +1083,10 @@ def _instrument_from_row(row: sqlite3.Row) -> InstrumentRecord:
         asset_class=_row_text(row, "asset_class"),
         venue=_row_optional_text(row, "venue"),
         aliases=_load_string_tuple(_row_text(row, "aliases_json")),
-        tradability_source=_row_optional_text(row, "tradability_source"),
+        provider_ids=_load_json_object_tuple(_row_text(row, "provider_ids_json")),
+        related_instruments=_load_json_object_tuple(_row_text(row, "related_instruments_json")),
+        tradability_evidence=_load_json_object_tuple(_row_text(row, "tradability_evidence_json")),
+        data_availability=_load_json_object_tuple(_row_text(row, "data_availability_json")),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
     )
 
@@ -998,6 +1221,43 @@ def _plan_progress_from_row(row: sqlite3.Row) -> PlanProgressRecord:
     )
 
 
+def _plan_milestone_from_row(row: sqlite3.Row) -> PlanMilestoneRecord:
+    return PlanMilestoneRecord(
+        milestone_id=_row_text(row, "milestone_id"),
+        plan_id=_row_text(row, "plan_id"),
+        title=_row_text(row, "title"),
+        status=_row_text(row, "status"),
+        sort_order=int(row["sort_order"]),
+        details=_load_json_object(_row_text(row, "details_json")),
+    )
+
+
+def _plan_acceptance_criterion_from_row(row: sqlite3.Row) -> PlanAcceptanceCriterionRecord:
+    return PlanAcceptanceCriterionRecord(
+        criterion_id=_row_text(row, "criterion_id"),
+        plan_id=_row_text(row, "plan_id"),
+        description=_row_text(row, "description"),
+        status=_row_text(row, "status"),
+        verification_command=_row_optional_text(row, "verification_command"),
+    )
+
+
+def _plan_artifact_link_from_row(row: sqlite3.Row) -> PlanArtifactLinkRecord:
+    return PlanArtifactLinkRecord(
+        plan_id=_row_text(row, "plan_id"),
+        artifact_id=_row_text(row, "artifact_id"),
+        relationship=_row_text(row, "relationship"),
+    )
+
+
+def _plan_commit_link_from_row(row: sqlite3.Row) -> PlanCommitLinkRecord:
+    return PlanCommitLinkRecord(
+        plan_id=_row_text(row, "plan_id"),
+        commit_sha=_row_text(row, "commit_sha"),
+        relationship=_row_text(row, "relationship"),
+    )
+
+
 _RESEARCH_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -1012,7 +1272,10 @@ CREATE TABLE IF NOT EXISTS instruments (
     asset_class TEXT NOT NULL CHECK(length(asset_class) > 0),
     venue TEXT,
     aliases_json TEXT NOT NULL DEFAULT '[]',
-    tradability_source TEXT,
+    provider_ids_json TEXT NOT NULL DEFAULT '[]',
+    related_instruments_json TEXT NOT NULL DEFAULT '[]',
+    tradability_evidence_json TEXT NOT NULL DEFAULT '[]',
+    data_availability_json TEXT NOT NULL DEFAULT '[]',
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -1231,7 +1494,11 @@ __all__ = [
     "ArtifactRecord",
     "EvidenceRecord",
     "InstrumentRecord",
+    "PlanAcceptanceCriterionRecord",
+    "PlanArtifactLinkRecord",
+    "PlanCommitLinkRecord",
     "PlanDecisionRecord",
+    "PlanMilestoneRecord",
     "PlanProgressRecord",
     "PlanRecord",
     "PlanningSQLiteStore",

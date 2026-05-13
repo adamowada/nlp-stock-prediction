@@ -15,21 +15,20 @@ from nlp_stock_prediction.contracts.analysis import (
 )
 from nlp_stock_prediction.contracts.base import (
     AwareDatetime,
+    Confidence,
     ContractModel,
     JsonObject,
     NonEmptyStr,
-    TickerSymbol,
 )
-from nlp_stock_prediction.contracts.discovery import TickerDiscoveryResult
-from nlp_stock_prediction.contracts.enums import RiskProfile
+from nlp_stock_prediction.contracts.enums import Direction, PredictionStatus, TimeHorizon
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.extraction import StrategyCluster
+from nlp_stock_prediction.contracts.instruments import Instrument, InstrumentSymbol
 from nlp_stock_prediction.contracts.provenance import (
     DataReference,
     EvidenceReference,
     ProviderHealth,
 )
-from nlp_stock_prediction.contracts.recommendation import TradeCandidate
 
 
 class DataFreshnessSummary(ContractModel):
@@ -41,12 +40,43 @@ class DataFreshnessSummary(ContractModel):
     missing_provider_names: tuple[str, ...] = Field(default_factory=tuple)
 
 
-class TickerReportSection(ContractModel):
-    """One ticker section in the Markdown and JSON report."""
+class PredictionCandidate(ContractModel):
+    """Evidence-backed prediction scenario, not a trade instruction."""
 
-    ticker: TickerSymbol
-    company_name: str | None = None
-    discovery_refs: tuple[str, ...] = Field(default_factory=tuple)
+    candidate_id: NonEmptyStr
+    instrument_id: NonEmptyStr
+    symbol: InstrumentSymbol
+    horizon: TimeHorizon = TimeHorizon.UNKNOWN
+    direction: Direction = Direction.UNKNOWN
+    status: PredictionStatus
+    thesis: NonEmptyStr
+    baseline: NonEmptyStr
+    confidence: Confidence
+    evidence_for: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
+    evidence_against: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
+    assumptions: tuple[str, ...] = Field(default_factory=tuple)
+    uncertainties: tuple[str, ...] = Field(default_factory=tuple)
+    signal_artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_evidence_shape(self) -> PredictionCandidate:
+        if self.status == PredictionStatus.EVIDENCE_SUPPORTED and not self.evidence_for:
+            raise ValueError("evidence-supported predictions require evidence_for")
+        if self.status in {
+            PredictionStatus.CONTRADICTED,
+            PredictionStatus.INSUFFICIENT_EVIDENCE,
+        } and not (self.evidence_for or self.evidence_against or self.uncertainties):
+            raise ValueError("non-supported predictions require evidence or uncertainty context")
+        return self
+
+
+class InstrumentReportSection(ContractModel):
+    """One instrument section in the Markdown and JSON report."""
+
+    instrument_id: NonEmptyStr
+    symbol: InstrumentSymbol
+    display_name: str | None = None
     observed_discussion_summary: str | None = None
     social_news_summary: str | None = None
     strategy_clusters: tuple[StrategyCluster, ...] = Field(default_factory=tuple)
@@ -54,8 +84,8 @@ class TickerReportSection(ContractModel):
     fundamental_analysis: FundamentalAnalysis | None = None
     sector_context: SectorContext | None = None
     macro_context: MacroContext | None = None
-    opportunity_notes: tuple[str, ...] = Field(default_factory=tuple)
-    recommendation_ids: tuple[str, ...] = Field(default_factory=tuple)
+    analysis_summary: str | None = None
+    prediction_candidate_ids: tuple[str, ...] = Field(default_factory=tuple)
     evidence: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
     warning_ids: tuple[str, ...] = Field(default_factory=tuple)
     data_quality: JsonObject = Field(default_factory=dict)
@@ -70,11 +100,11 @@ class AuditArtifact(ContractModel):
         "normalized_evidence",
         "extraction_output",
         "analysis_context",
-        "scoring_input",
+        "prediction_input",
         "markdown_report",
         "json_report",
         "provider_result",
-        "ml_artifact",
+        "ml_forecast",
     ]
     path: NonEmptyStr
     created_at: AwareDatetime
@@ -96,16 +126,16 @@ class AuditManifest(ContractModel):
     prompt_versions: JsonObject = Field(default_factory=dict)
     config_hash: str | None = None
     command_args: JsonObject = Field(default_factory=dict)
-    recommendation_trace_ids: tuple[str, ...] = Field(default_factory=tuple)
+    prediction_trace_ids: tuple[str, ...] = Field(default_factory=tuple)
 
 
 class MarkdownReportOutline(ContractModel):
-    """Minimal Markdown renderer contract frozen before report rendering is implemented."""
+    """Markdown renderer contract."""
 
     schema_version: NonEmptyStr
     heading_order: tuple[NonEmptyStr, ...]
-    ticker_section_heading_template: NonEmptyStr
-    required_ticker_subsections: tuple[NonEmptyStr, ...]
+    instrument_section_heading_template: NonEmptyStr
+    required_instrument_subsections: tuple[NonEmptyStr, ...]
     final_section_headings: tuple[NonEmptyStr, ...]
     required_footer_headings: tuple[NonEmptyStr, ...]
     require_evidence_references: bool = True
@@ -115,39 +145,35 @@ class MarkdownReportOutline(ContractModel):
     def validate_outline(self) -> MarkdownReportOutline:
         if len(set(self.heading_order)) != len(self.heading_order):
             raise ValueError("Markdown heading_order entries must be unique")
-        if "{ticker}" not in self.ticker_section_heading_template:
-            raise ValueError("ticker section heading template must include {ticker}")
-        if not self.required_ticker_subsections:
-            raise ValueError("Markdown outline requires ticker subsections")
+        if "{symbol}" not in self.instrument_section_heading_template:
+            raise ValueError("instrument section heading template must include {symbol}")
+        if not self.required_instrument_subsections:
+            raise ValueError("Markdown outline requires instrument subsections")
         if not self.final_section_headings:
             raise ValueError("Markdown outline requires final section headings")
         return self
 
 
 DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
-    schema_version="markdown-report.v1",
+    schema_version="markdown-report.v2",
     heading_order=(
-        "Daily Prediction Research Report",
+        "Prediction Research Report",
+        "Research Objective",
         "Data Freshness",
         "Provider Warnings",
-        "Ticker Sections",
-        "Prediction Candidates Or Insufficient-Evidence Summary",
+        "Instrument Sections",
+        "Prediction Scenarios Or Insufficient-Evidence Summary",
         "Audit Artifacts",
     ),
-    ticker_section_heading_template="{ticker}",
-    required_ticker_subsections=(
-        "Observed Discussion",
-        "Social And News",
-        "Strategy Clusters",
-        "Technical Analysis",
-        "Fundamental Analysis",
-        "Sector Context",
-        "Macro Context",
-        "Opportunity Notes",
+    instrument_section_heading_template="{symbol}",
+    required_instrument_subsections=(
+        "Observed Evidence",
+        "Analysis",
+        "Prediction Scenarios",
         "Evidence References",
     ),
     final_section_headings=(
-        "Prediction Candidates",
+        "Prediction Scenarios",
         "Insufficient-Evidence Summary",
     ),
     required_footer_headings=("Audit Artifacts",),
@@ -162,40 +188,55 @@ class DailyReport(ContractModel):
     report_date: date
     generated_at: AwareDatetime
     timezone: NonEmptyStr
+    objective: NonEmptyStr
+    universe: NonEmptyStr
     app_version: str | None = None
     git_sha: str | None = None
     config_hash: str | None = None
     command_args: JsonObject = Field(default_factory=dict)
-    risk_profile: RiskProfile
-    account_capital: str | None = None
-    ticker_discovery: TickerDiscoveryResult
+    instruments: tuple[Instrument, ...]
     data_freshness: DataFreshnessSummary
     provider_health: tuple[ProviderHealth, ...] = Field(default_factory=tuple)
     evidence_sources: tuple[SourceEvidence, ...] = Field(default_factory=tuple)
-    ticker_sections: tuple[TickerReportSection, ...]
-    trade_candidates: tuple[TradeCandidate, ...] = Field(default_factory=tuple)
-    no_trade_summary: str | None = None
+    instrument_sections: tuple[InstrumentReportSection, ...]
+    prediction_candidates: tuple[PredictionCandidate, ...] = Field(default_factory=tuple)
+    insufficient_evidence_summary: str | None = None
     audit_manifest: AuditManifest | DataReference | None = None
 
     @model_validator(mode="after")
-    def validate_report_ticker_shape(self) -> DailyReport:
-        section_tickers = tuple(section.ticker for section in self.ticker_sections)
-        if len(section_tickers) != 6:
-            raise ValueError("daily reports must include exactly six ticker sections")
-        if tuple(self.ticker_discovery.tickers) != section_tickers:
-            raise ValueError("ticker sections must match discovered tickers in order")
-        if not self.trade_candidates and not self.no_trade_summary:
-            raise ValueError("reports without candidates must include no_trade_summary")
-        candidate_ids = tuple(candidate.candidate_id for candidate in self.trade_candidates)
+    def validate_report_shape(self) -> DailyReport:
+        instrument_ids = tuple(instrument.instrument_id for instrument in self.instruments)
+        if not instrument_ids:
+            raise ValueError("daily reports require at least one instrument")
+        if len(set(instrument_ids)) != len(instrument_ids):
+            raise ValueError("report instrument ids must be unique")
+
+        section_instrument_ids = tuple(
+            section.instrument_id for section in self.instrument_sections
+        )
+        if len(section_instrument_ids) != len(instrument_ids):
+            raise ValueError("instrument sections must cover each report instrument exactly once")
+        if section_instrument_ids != instrument_ids:
+            raise ValueError("instrument sections must match report instruments in order")
+
+        candidate_ids = tuple(candidate.candidate_id for candidate in self.prediction_candidates)
         if len(set(candidate_ids)) != len(candidate_ids):
-            raise ValueError("trade candidate ids must be unique")
+            raise ValueError("prediction candidate ids must be unique")
+        if not self.prediction_candidates and not self.insufficient_evidence_summary:
+            raise ValueError(
+                "reports without prediction candidates require insufficient_evidence_summary"
+            )
+
         source_evidence_ids = tuple(evidence.evidence_id for evidence in self.evidence_sources)
         if len(set(source_evidence_ids)) != len(source_evidence_ids):
             raise ValueError("report evidence_sources ids must be unique")
-        candidate_by_id = {candidate.candidate_id: candidate for candidate in self.trade_candidates}
-        section_references: dict[str, TickerSymbol] = {}
+
+        candidate_by_id = {
+            candidate.candidate_id: candidate for candidate in self.prediction_candidates
+        }
         cited_evidence_ids: set[str] = set()
-        for section in self.ticker_sections:
+        section_references: dict[str, str] = {}
+        for section in self.instrument_sections:
             cited_evidence_ids.update(reference.evidence_id for reference in section.evidence)
             for cluster in section.strategy_clusters:
                 cited_evidence_ids.update(reference.evidence_id for reference in cluster.evidence)
@@ -209,30 +250,33 @@ class DailyReport(ContractModel):
                     cited_evidence_ids.update(
                         reference.evidence_id for reference in component.evidence
                     )
-            for recommendation_id in section.recommendation_ids:
-                if recommendation_id not in candidate_by_id:
-                    raise ValueError("ticker section recommendation_ids must reference candidates")
-                if recommendation_id in section_references:
+            for candidate_id in section.prediction_candidate_ids:
+                if candidate_id not in candidate_by_id:
                     raise ValueError(
-                        "candidate ids must be referenced by exactly one ticker section"
+                        "instrument section prediction_candidate_ids must reference candidates"
                     )
-                section_references[recommendation_id] = section.ticker
-        for candidate in self.trade_candidates:
-            if candidate.ticker not in self.ticker_discovery.tickers:
-                raise ValueError("candidates must use discovered tickers")
-            if candidate.candidate_id not in section_references:
-                raise ValueError("candidates must be referenced by a ticker section")
-            if section_references[candidate.candidate_id] != candidate.ticker:
-                raise ValueError("ticker section recommendation_ids must match candidate ticker")
-            cited_evidence_ids.update(reference.evidence_id for reference in candidate.evidence)
-            for score_component in (*candidate.score.components, *candidate.score.penalties):
-                cited_evidence_ids.update(
-                    reference.evidence_id for reference in score_component.evidence
+                if candidate_id in section_references:
+                    raise ValueError(
+                        "prediction candidates must be referenced by exactly one instrument section"
+                    )
+                section_references[candidate_id] = section.instrument_id
+
+        valid_instrument_ids = set(instrument_ids)
+        for candidate in self.prediction_candidates:
+            if candidate.instrument_id not in valid_instrument_ids:
+                raise ValueError("prediction candidates must reference report instruments")
+            if section_references.get(candidate.candidate_id) != candidate.instrument_id:
+                raise ValueError(
+                    "instrument section prediction_candidate_ids must match candidate instrument_id"
                 )
-        if self.evidence_sources:
-            missing_evidence_ids = cited_evidence_ids.difference(source_evidence_ids)
-            if missing_evidence_ids:
-                raise ValueError("report evidence_sources must include every cited evidence_id")
+            cited_evidence_ids.update(reference.evidence_id for reference in candidate.evidence_for)
+            cited_evidence_ids.update(
+                reference.evidence_id for reference in candidate.evidence_against
+            )
+
+        missing_evidence_ids = cited_evidence_ids.difference(source_evidence_ids)
+        if missing_evidence_ids:
+            raise ValueError("report evidence_sources must include every cited evidence_id")
         return self
 
 
@@ -242,6 +286,7 @@ __all__ = [
     "AuditManifest",
     "DailyReport",
     "DataFreshnessSummary",
+    "InstrumentReportSection",
     "MarkdownReportOutline",
-    "TickerReportSection",
+    "PredictionCandidate",
 ]

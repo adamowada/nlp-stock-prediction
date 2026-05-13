@@ -1,4 +1,4 @@
-"""Deterministic analysis helpers for Phase 2 Lane D."""
+"""Deterministic analysis helpers."""
 
 from nlp_stock_prediction.analysis.fundamental_agent import apply_fundamental_agent_result
 from nlp_stock_prediction.analysis.fundamentals import analyze_fundamentals

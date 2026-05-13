@@ -19,7 +19,7 @@ The app should support any retail-accessible instrument class when data is avail
 crypto, currencies, commodities, futures context, and related proxy instruments. Tradability must be
 represented with source provenance and availability constraints, not hardcoded assumptions.
 
-Fine-tuning TimesFM is retired. Raw TimesFM may remain as one cheap technical signal inside a broader
+TimesFM tuning is not part of the product workflow. Raw TimesFM may remain as one cheap technical signal inside a broader
 technical package, but it must not become the product center of gravity.
 
 See [docs/architecture.md](docs/architecture.md), [docs/contracts.md](docs/contracts.md),
@@ -36,11 +36,10 @@ ruff check .
 ruff format --check .
 mypy .
 python -m nlp_stock_prediction --help
-python -m nlp_stock_prediction run --date 2026-05-12 --output reports/ --offline
+python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 ```
 
-The current `run` command is legacy scaffolding during the rebuild. Do not treat old TimesFM HPO or
-fine-tuning commands as the preferred workflow.
+Do not treat TimesFM tuning commands as part of the product workflow.
 
 Use `python -m nlp_stock_prediction` as the canonical CLI invocation until a console script is
 introduced.

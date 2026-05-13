@@ -1,6 +1,6 @@
 """Instrument-universe contracts for the Phase 2 rebuild.
 
-These models are intentionally broader than the legacy ticker contracts. They describe what the
+These models are intentionally broader than ticker-only contracts. They describe what the
 assistant is allowed to research, which provider identifiers point at it, and what evidence supports
 availability or tradability. They do not imply that any instrument should be bought, sold, or sized.
 """

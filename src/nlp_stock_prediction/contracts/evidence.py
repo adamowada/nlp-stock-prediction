@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import Field, model_validator
 
-from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr, TickerSymbol
+from nlp_stock_prediction.contracts.base import (
+    AwareDatetime,
+    ContractModel,
+    JsonObject,
+    NonEmptyStr,
+    TickerSymbol,
+)
 from nlp_stock_prediction.contracts.enums import SourceKind
 from nlp_stock_prediction.contracts.provenance import SourceProvenance
 
@@ -34,7 +38,7 @@ class SourceEvidence(ContractModel):
     title: str | None = None
     text: NonEmptyStr
     author_hash: str | None = None
-    created_at: datetime | None = None
+    created_at: AwareDatetime | None = None
     score: int | None = None
     permalink: str | None = None
     matched_tickers: tuple[TickerSymbol, ...] = Field(default_factory=tuple)

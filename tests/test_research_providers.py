@@ -203,8 +203,8 @@ def test_public_news_provider_uses_configured_mapping_and_normalizes_articles() 
     assert result.data is not None
     article = result.data[0]
     assert article.source_kind == SourceKind.NEWS_ARTICLE
-    assert article.title == "Tesla shares rise after robotaxi update"
-    assert article.text.startswith("Tesla shares rose Monday")
+    assert article.title == "TSLA shares rise after robotaxi update"
+    assert article.text.startswith("TSLA shares rose Monday")
     assert article.permalink == "https://news.example.invalid/tesla-robotaxi"
     assert article.provenance.provider_name == "fixture-news"
     assert article.provenance.query == "TSLA"
@@ -264,6 +264,78 @@ def test_public_news_provider_returns_no_data_warning_for_empty_articles() -> No
     assert result.warnings[0].code == WarningCode.NO_DATA
     assert "returned no articles" in result.warnings[0].message
     assert result.health.status == ProviderStatus.EMPTY
+
+
+@pytest.mark.contract
+def test_public_news_provider_does_not_attribute_unmatched_articles_to_requested_ticker() -> None:
+    config = PublicNewsProviderConfig(
+        provider_name="fixture-news",
+        endpoint="https://news.example.invalid/v1/search",
+        api_key_param="token",
+        query_param="search",
+    )
+    payload = {
+        "articles": [
+            {
+                "title": "Copper miners rally on supply concerns",
+                "description": "The article never mentions the requested symbol.",
+                "url": "https://news.example.invalid/copper",
+                "publishedAt": FETCHED_AT.isoformat(),
+            }
+        ]
+    }
+    transport = _FakeJsonTransport(
+        {"news.example.invalid/v1/search": JsonResponse(payload=payload)}
+    )
+    provider = PublicNewsProvider(
+        config=config,
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-unmatched-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+        query="TSLA",
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.EMPTY
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.NO_DATA
+
+
+@pytest.mark.contract
+def test_x_provider_does_not_attribute_unmatched_posts_to_requested_ticker() -> None:
+    payload = {
+        "data": [
+            {
+                "id": "1789000000000000999",
+                "text": "Copper miners rally on supply concerns.",
+                "created_at": FETCHED_AT.isoformat(),
+                "public_metrics": {"like_count": 4},
+            }
+        ]
+    }
+    transport = _FakeJsonTransport({"tweets/search/recent": JsonResponse(payload=payload)})
+    provider = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="x-unmatched-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_social_posts(request)
+
+    assert result.status == ProviderStatus.EMPTY
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.NO_DATA
 
 
 @pytest.mark.contract

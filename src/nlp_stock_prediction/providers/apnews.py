@@ -169,7 +169,29 @@ class APNewsProvider:
                 credential_state=CredentialState.NOT_REQUIRED,
             )
 
-        article_links = _extract_hub_article_links(hub_fetch.text, base_url=self._hub_url)
+        try:
+            article_links = _extract_hub_article_links(hub_fetch.text, base_url=self._hub_url)
+        except MalformedProviderResponse as exc:
+            warning = provider_warning(
+                provider_name=self.provider_name,
+                code=WarningCode.SCRAPING_DRIFT,
+                severity=WarningSeverity.ERROR,
+                message=str(exc),
+                occurred_at=fetched_at,
+                raw_snapshot_id=hub_fetch.raw_snapshot_id,
+                source_url=self._hub_url,
+                metadata={"validation": "malformed_ap_hub"},
+            )
+            return provider_result(
+                provider_name=self.provider_name,
+                status=ProviderStatus.MALFORMED,
+                request=request,
+                fetched_at=fetched_at,
+                credential_state=CredentialState.NOT_REQUIRED,
+                warnings=(warning,),
+                raw_snapshot_id=hub_fetch.raw_snapshot_id,
+                cache_key=hub_fetch.cache_key,
+            )
         if not article_links:
             warning = provider_warning(
                 provider_name=self.provider_name,

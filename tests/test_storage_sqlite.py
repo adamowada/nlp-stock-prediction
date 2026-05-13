@@ -10,7 +10,11 @@ from nlp_stock_prediction.storage import (
     ArtifactRecord,
     EvidenceRecord,
     InstrumentRecord,
+    PlanAcceptanceCriterionRecord,
+    PlanArtifactLinkRecord,
+    PlanCommitLinkRecord,
     PlanDecisionRecord,
+    PlanMilestoneRecord,
     PlanningSQLiteStore,
     PlanProgressRecord,
     PlanRecord,
@@ -130,7 +134,29 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
             name="Tesla Inc.",
             venue="NASDAQ",
             aliases=("Tesla", "$TSLA"),
-            tradability_source="user_watchlist",
+            provider_ids=(
+                {"provider": "example-market", "identifier": "TSLA", "namespace": "ticker"},
+            ),
+            related_instruments=(
+                {
+                    "instrument_id": "equity:NASDAQ:TSLA_OPTIONS",
+                    "relationship": "derivative-chain",
+                },
+            ),
+            tradability_evidence=(
+                {
+                    "provider": "example-broker",
+                    "status": "available",
+                    "raw_identifier": "tsla-availability",
+                },
+            ),
+            data_availability=(
+                {
+                    "provider": "example-market",
+                    "data_type": "daily_ohlcv",
+                    "status": "available",
+                },
+            ),
             metadata={"sector": "consumer_discretionary"},
         )
     )
@@ -234,6 +260,10 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
     assert source_query.metadata["limit"] == 10
     assert instrument is not None
     assert instrument.aliases == ("Tesla", "$TSLA")
+    assert instrument.provider_ids[0]["provider"] == "example-market"
+    assert instrument.related_instruments[0]["relationship"] == "derivative-chain"
+    assert instrument.tradability_evidence[0]["raw_identifier"] == "tsla-availability"
+    assert instrument.data_availability[0]["data_type"] == "daily_ohlcv"
     assert instrument.metadata["sector"] == "consumer_discretionary"
     assert artifact is not None
     assert artifact.path == Path("artifacts/tools/technical-package/tsla.json")
@@ -287,10 +317,47 @@ def test_planning_database_persists_structured_planning_state(tmp_path: Path) ->
             occurred_at=_timestamp(),
         )
     )
+    store.upsert_plan_milestone(
+        PlanMilestoneRecord(
+            milestone_id="milestone-schema",
+            plan_id="plan-sqlite-layer",
+            title="Schema initialized",
+            status="completed",
+            sort_order=1,
+            details={"tables": 12},
+        )
+    )
+    store.upsert_plan_acceptance_criterion(
+        PlanAcceptanceCriterionRecord(
+            criterion_id="criterion-storage-round-trip",
+            plan_id="plan-sqlite-layer",
+            description="Planning state round-trips through typed storage methods.",
+            status="met",
+            verification_command="python -m pytest tests/test_storage_sqlite.py",
+        )
+    )
+    store.link_plan_artifact(
+        PlanArtifactLinkRecord(
+            plan_id="plan-sqlite-layer",
+            artifact_id="artifact-in-research-db",
+            relationship="supports",
+        )
+    )
+    store.link_plan_commit(
+        PlanCommitLinkRecord(
+            plan_id="plan-sqlite-layer",
+            commit_sha="a" * 40,
+            relationship="implements",
+        )
+    )
 
     plan = store.get_plan_by_slug("sqlite-layer")
     decisions = store.list_plan_decisions("plan-sqlite-layer")
     progress = store.list_plan_progress("plan-sqlite-layer")
+    milestones = store.list_plan_milestones("plan-sqlite-layer")
+    criteria = store.list_plan_acceptance_criteria("plan-sqlite-layer")
+    artifact_links = store.list_plan_artifact_links("plan-sqlite-layer")
+    commit_links = store.list_plan_commit_links("plan-sqlite-layer")
 
     assert plan is not None
     assert plan.priority == 10
@@ -315,6 +382,39 @@ def test_planning_database_persists_structured_planning_state(tmp_path: Path) ->
             details="Added core operational tables.",
             linked_artifact_id="artifact-in-research-db",
             occurred_at=_timestamp(),
+        ),
+    )
+    assert milestones == (
+        PlanMilestoneRecord(
+            milestone_id="milestone-schema",
+            plan_id="plan-sqlite-layer",
+            title="Schema initialized",
+            status="completed",
+            sort_order=1,
+            details={"tables": 12},
+        ),
+    )
+    assert criteria == (
+        PlanAcceptanceCriterionRecord(
+            criterion_id="criterion-storage-round-trip",
+            plan_id="plan-sqlite-layer",
+            description="Planning state round-trips through typed storage methods.",
+            status="met",
+            verification_command="python -m pytest tests/test_storage_sqlite.py",
+        ),
+    )
+    assert artifact_links == (
+        PlanArtifactLinkRecord(
+            plan_id="plan-sqlite-layer",
+            artifact_id="artifact-in-research-db",
+            relationship="supports",
+        ),
+    )
+    assert commit_links == (
+        PlanCommitLinkRecord(
+            plan_id="plan-sqlite-layer",
+            commit_sha="a" * 40,
+            relationship="implements",
         ),
     )
 

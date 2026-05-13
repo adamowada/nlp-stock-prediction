@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap replaces the old lane-based stock-opportunity and TimesFM-focused plans.
+This roadmap describes the Codex-led prediction research assistant rebuild.
 
 ## Phase 0: Documentation Reset
 
@@ -139,18 +139,20 @@ Acceptance:
 - evaluation uses only point-in-time available evidence;
 - results are reported as prediction quality, not trading performance claims.
 
-## Phase 7: Cleanup And Migration
+## Phase 7: Evaluation Hardening
 
-Goal: retire or quarantine legacy surfaces.
+Goal: make the assistant easier to audit after repeated report runs.
 
 Build:
 
-- rename trading-era concepts;
-- deprecate old CLI paths;
-- remove obsolete TimesFM fine-tuning docs and commands from recommended workflow;
-- migrate useful legacy fixtures into the new fixture structure.
+- outcome review summaries;
+- stale artifact detection;
+- source reliability notes;
+- provider replacement playbooks;
+- calibration drift checks.
 
 Acceptance:
 
-- user-facing docs and commands describe the new architecture;
-- legacy code that remains is clearly marked or wrapped behind compatibility paths.
+- repeated reports can explain which prior evidence aged out;
+- calibration artifacts remain separate from prediction reports;
+- provider swaps preserve provenance and contract compatibility.

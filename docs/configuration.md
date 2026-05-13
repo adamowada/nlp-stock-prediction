@@ -16,24 +16,15 @@ Optional provider, model, and GPU dependencies must remain opt-in. The default t
 require network access, live credentials, CUDA, or TimesFM packages.
 
 TimesFM is an optional technical-signal adapter only. Raw inference artifacts may support technical
-context; LoRA training, HPO, and promotion funnels are legacy experiment surfaces and are not part of
-the preferred workflow.
+context; tuning and promotion workflows are outside the product workflow.
 
 ## Current Commands
 
-The legacy CLI remains available while the rebuild proceeds:
+Generate the deterministic offline report:
 
 ```sh
-python -m nlp_stock_prediction run --date 2026-05-12 --output reports/ --offline
+python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 ```
-
-The target command shape is:
-
-```sh
-python -m nlp_stock_prediction research --objective daily-prediction-report --universe retail-tradable --output reports/
-```
-
-Do not rely on the target command until it is implemented and tested.
 
 ## Local Storage
 
@@ -59,7 +50,7 @@ reports should stay as files with paths recorded in SQLite.
 
 Generated payloads are local working state by default. Keep `artifacts/`, `reports/`, provider
 `cache/`, and `data/ml/` out of git unless a small, scrubbed file is deliberately promoted into
-`tests/fixtures/` with a clear fixture purpose. Legacy TimesFM LoRA/HPO weights and report bundles
+`tests/fixtures/` with a clear fixture purpose. TimesFM tuning weights and ad hoc report bundles
 should be deleted or archived outside the repository rather than treated as source artifacts.
 
 The SQLite foundation is implemented in `nlp_stock_prediction.storage`. The planning database is
@@ -97,8 +88,9 @@ REDDIT_CLIENT_SECRET
 NEWS_* provider keys
 MARKET_DATA_* provider keys
 LIVE_PROVIDER_USER_AGENT
-ALLOW_LIVE_API_TESTS
-ALLOW_LIVE_SCRAPING_TESTS
+NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS
+NLP_STOCK_PREDICTION_ALLOW_LIVE_API_TESTS
+NLP_STOCK_PREDICTION_ALLOW_LIVE_SCRAPING_TESTS
 ```
 
 Provider-specific names should be documented when a provider is implemented.

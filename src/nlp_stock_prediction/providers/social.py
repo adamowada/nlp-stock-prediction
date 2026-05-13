@@ -247,6 +247,8 @@ class XRecentSearchProvider:
                 stale_after_seconds=self._stale_after_seconds,
             )
             matched_tickers, spans = find_ticker_matches(text, request.tickers)
+            if request.tickers and not matched_tickers:
+                continue
             permalink = f"https://x.com/i/web/status/{post_id}"
             metrics = raw_item.get("public_metrics")
             metric_map = metrics if isinstance(metrics, dict) else {}
@@ -254,7 +256,7 @@ class XRecentSearchProvider:
                 SourceEvidence(
                     evidence_id=f"x:{post_id}",
                     source_kind=SourceKind.X_POST,
-                    ticker=matched_tickers[0] if matched_tickers else first_ticker(request),
+                    ticker=matched_tickers[0] if matched_tickers else None,
                     title=None,
                     text=text,
                     author_hash=_author_hash(raw_item.get("author_id")),

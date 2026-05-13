@@ -147,17 +147,11 @@ class TimeHorizon(StrEnum):
     UNKNOWN = "unknown"
 
 
-class RecommendationAction(StrEnum):
-    QUALIFIED = "qualified"
-    WATCH = "watch"
-    AVOID = "avoid"
-    NO_TRADE = "no_trade"
-
-
-class RiskProfile(StrEnum):
-    CONSERVATIVE = "conservative"
-    BALANCED = "balanced"
-    EXPLORATORY = "exploratory"
+class PredictionStatus(StrEnum):
+    EVIDENCE_SUPPORTED = "evidence_supported"
+    CONTRADICTED = "contradicted"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    UNAVAILABLE = "unavailable"
 
 
 class AnalysisSignal(StrEnum):
@@ -177,10 +171,9 @@ __all__ = [
     "InstrumentResolutionStatus",
     "InstrumentType",
     "PositionType",
+    "PredictionStatus",
     "ProviderStatus",
-    "RecommendationAction",
     "RetrievalMethod",
-    "RiskProfile",
     "SourceKind",
     "TickerDiscoveryStatus",
     "TimeHorizon",

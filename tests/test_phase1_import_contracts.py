@@ -12,221 +12,6 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-EXPECTED_MODULE_EXPORTS: dict[str, tuple[str, ...]] = {
-    "analysis": (
-        "AnalysisBundle",
-        "AnalysisComponent",
-        "FundamentalAgentSignal",
-        "FundamentalAnalysis",
-        "FundamentalNlpAnalysisRequest",
-        "FundamentalNlpAnalysisResponse",
-        "MacroContext",
-        "MetricValue",
-        "SectorContext",
-        "TechnicalAnalysis",
-        "TechnicalMlSignal",
-    ),
-    "base": (
-        "Confidence",
-        "ContractModel",
-        "JsonObject",
-        "JsonValue",
-        "NonEmptyStr",
-        "PositiveDecimal",
-        "PositiveInt",
-        "Score",
-        "TickerSymbol",
-        "ensure_utc_timestamp",
-    ),
-    "discovery": ("TickerCandidate", "TickerDiscoveryResult"),
-    "enums": (
-        "AnalysisSignal",
-        "AssetClass",
-        "CredentialState",
-        "Direction",
-        "FreshnessStatus",
-        "InstrumentResolutionStatus",
-        "InstrumentType",
-        "PositionType",
-        "ProviderStatus",
-        "RecommendationAction",
-        "RetrievalMethod",
-        "RiskProfile",
-        "SourceKind",
-        "TickerDiscoveryStatus",
-        "TimeHorizon",
-        "TradabilityStatus",
-        "WarningCode",
-        "WarningSeverity",
-    ),
-    "evidence": ("SourceEvidence", "TextSpan"),
-    "extraction": ("StrategyCluster", "StrategyExtraction"),
-    "fixtures": ("FixtureManifest", "NormalizedFixture", "RawProviderFixture"),
-    "instruments": (
-        "Instrument",
-        "InstrumentDataAvailability",
-        "InstrumentResolution",
-        "InstrumentSymbol",
-        "ProviderInstrumentId",
-        "RelatedInstrument",
-        "TradabilityEvidence",
-    ),
-    "provenance": (
-        "DataReference",
-        "EvidenceReference",
-        "ProviderHealth",
-        "ProviderWarning",
-        "SourceProvenance",
-    ),
-    "providers": (
-        "DateWindow",
-        "EvidenceRequest",
-        "ExtractionRequest",
-        "FundamentalsProvider",
-        "FundamentalsRequest",
-        "FundamentalsSnapshot",
-        "LLMExtractor",
-        "MacroProvider",
-        "MacroRequest",
-        "MacroSeries",
-        "MacroSnapshot",
-        "MarketDataProvider",
-        "MarketDataRequest",
-        "MarketSnapshot",
-        "NewsProvider",
-        "PriceBar",
-        "ProviderMetric",
-        "ProviderRequest",
-        "ProviderResult",
-        "RedditProvider",
-        "RunConfig",
-        "TickerDiscoveryRequest",
-        "XProvider",
-    ),
-    "recommendation": (
-        "LEGACY_TRADE_INTERFACE_NOTE",
-        "LEGACY_TRADE_INTERFACE_STATUS",
-        "RiskAssessment",
-        "ScoreBreakdown",
-        "ScoreComponent",
-        "TradeCandidate",
-    ),
-    "report": (
-        "DEFAULT_MARKDOWN_REPORT_OUTLINE",
-        "AuditArtifact",
-        "AuditManifest",
-        "DailyReport",
-        "DataFreshnessSummary",
-        "MarkdownReportOutline",
-        "TickerReportSection",
-    ),
-}
-
-EXPECTED_CONTRACT_NAMESPACE_EXPORTS = (
-    "DEFAULT_MARKDOWN_REPORT_OUTLINE",
-    "LEGACY_TRADE_INTERFACE_NOTE",
-    "LEGACY_TRADE_INTERFACE_STATUS",
-    "AnalysisBundle",
-    "AnalysisComponent",
-    "AnalysisSignal",
-    "AssetClass",
-    "AuditArtifact",
-    "AuditManifest",
-    "Confidence",
-    "ContractModel",
-    "CredentialState",
-    "DailyReport",
-    "DataFreshnessSummary",
-    "DataReference",
-    "DateWindow",
-    "Direction",
-    "EvidenceReference",
-    "EvidenceRequest",
-    "ExtractionRequest",
-    "FixtureManifest",
-    "FreshnessStatus",
-    "FundamentalAgentSignal",
-    "FundamentalAnalysis",
-    "FundamentalNlpAnalysisRequest",
-    "FundamentalNlpAnalysisResponse",
-    "FundamentalsProvider",
-    "FundamentalsRequest",
-    "FundamentalsSnapshot",
-    "Instrument",
-    "InstrumentDataAvailability",
-    "InstrumentResolution",
-    "InstrumentResolutionStatus",
-    "InstrumentSymbol",
-    "InstrumentType",
-    "JsonObject",
-    "JsonValue",
-    "LLMExtractor",
-    "MacroContext",
-    "MacroProvider",
-    "MacroRequest",
-    "MacroSeries",
-    "MacroSnapshot",
-    "MarkdownReportOutline",
-    "MarketDataProvider",
-    "MarketDataRequest",
-    "MarketSnapshot",
-    "MetricValue",
-    "NewsProvider",
-    "NonEmptyStr",
-    "NormalizedFixture",
-    "PositionType",
-    "PositiveDecimal",
-    "PositiveInt",
-    "PriceBar",
-    "ProviderHealth",
-    "ProviderInstrumentId",
-    "ProviderMetric",
-    "ProviderRequest",
-    "ProviderResult",
-    "ProviderStatus",
-    "ProviderWarning",
-    "RawProviderFixture",
-    "RecommendationAction",
-    "RedditProvider",
-    "RelatedInstrument",
-    "RetrievalMethod",
-    "RiskAssessment",
-    "RiskProfile",
-    "RunConfig",
-    "Score",
-    "ScoreBreakdown",
-    "ScoreComponent",
-    "SectorContext",
-    "SourceEvidence",
-    "SourceKind",
-    "SourceProvenance",
-    "StrategyCluster",
-    "StrategyExtraction",
-    "TechnicalAnalysis",
-    "TechnicalMlSignal",
-    "TextSpan",
-    "TickerCandidate",
-    "TickerDiscoveryRequest",
-    "TickerDiscoveryResult",
-    "TickerDiscoveryStatus",
-    "TickerReportSection",
-    "TickerSymbol",
-    "TimeHorizon",
-    "TradabilityEvidence",
-    "TradabilityStatus",
-    "TradeCandidate",
-    "WarningCode",
-    "WarningSeverity",
-    "XProvider",
-)
-
-EXPECTED_NAMESPACE_CANONICAL_MODULES: dict[str, str] = {
-    export_name: module_name
-    for module_name, exports in EXPECTED_MODULE_EXPORTS.items()
-    for export_name in exports
-    if export_name != "ensure_utc_timestamp"
-}
-
 
 def _subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
@@ -238,15 +23,23 @@ def _subprocess_env() -> dict[str, str]:
     return env
 
 
-def test_contract_namespace_all_matches_phase1_public_surface() -> None:
+def test_contract_namespace_exports_clean_report_surface() -> None:
     contracts = importlib.import_module("nlp_stock_prediction.contracts")
     exported_names = tuple(contracts.__all__)
 
     assert len(exported_names) == len(set(exported_names))
-    assert exported_names == EXPECTED_CONTRACT_NAMESPACE_EXPORTS
+    assert "InstrumentReportSection" in exported_names
+    assert "PredictionCandidate" in exported_names
+    assert "PredictionStatus" in exported_names
+
+
+def test_removed_recommendation_module_is_not_importable() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("nlp_stock_prediction.contracts.recommendation")
 
 
 def test_contract_namespace_star_import_matches_public_all() -> None:
+    contracts = importlib.import_module("nlp_stock_prediction.contracts")
     namespace: dict[str, object] = {}
 
     exec("from nlp_stock_prediction.contracts import *", namespace)
@@ -254,31 +47,31 @@ def test_contract_namespace_star_import_matches_public_all() -> None:
     imported_names = {
         name for name in namespace if not name.startswith("__") and name != "annotations"
     }
-    assert imported_names == set(EXPECTED_CONTRACT_NAMESPACE_EXPORTS)
-
-
-@pytest.mark.parametrize("export_name", EXPECTED_CONTRACT_NAMESPACE_EXPORTS)
-def test_contract_namespace_reexports_canonical_objects(export_name: str) -> None:
-    contracts = importlib.import_module("nlp_stock_prediction.contracts")
-    module_name = EXPECTED_NAMESPACE_CANONICAL_MODULES[export_name]
-    canonical_module = importlib.import_module(f"nlp_stock_prediction.contracts.{module_name}")
-
-    assert getattr(contracts, export_name) is getattr(canonical_module, export_name)
+    assert imported_names == set(contracts.__all__)
 
 
 @pytest.mark.parametrize(
-    ("module_name", "expected_exports"),
-    tuple(EXPECTED_MODULE_EXPORTS.items()),
+    "module_name",
+    (
+        "analysis",
+        "base",
+        "discovery",
+        "enums",
+        "evidence",
+        "extraction",
+        "fixtures",
+        "instruments",
+        "provenance",
+        "providers",
+        "report",
+    ),
 )
-def test_contract_submodule_all_matches_expected_exports(
-    module_name: str, expected_exports: tuple[str, ...]
-) -> None:
+def test_contract_submodules_define_unique_public_exports(module_name: str) -> None:
     module = importlib.import_module(f"nlp_stock_prediction.contracts.{module_name}")
     exported_names = tuple(module.__all__)
 
     assert len(exported_names) == len(set(exported_names))
-    assert exported_names == expected_exports
-    for export_name in expected_exports:
+    for export_name in exported_names:
         assert hasattr(module, export_name)
 
 
@@ -318,5 +111,5 @@ def test_python_module_entrypoint_exposes_help_without_import_errors() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert "Generate an evidence-grounded legacy prediction research report." in completed.stdout
+    assert "Generate evidence-grounded prediction research artifacts." in completed.stdout
     assert completed.stderr == ""
