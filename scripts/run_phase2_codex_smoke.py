@@ -41,6 +41,8 @@ def build_codex_prompt(config: CodexSmokeConfig) -> str:
             "You are smoke-testing Phase 2 of nlp-stock-prediction.",
             "Use live web search for 2-3 current sources about the requested symbol.",
             "Use the nlp-stock-prediction MCP tools; do not edit source files.",
+            "Do not import project modules directly or run shell fallbacks for MCP tools.",
+            "If an MCP tool call is unavailable or cancelled, stop and report smoke failure.",
             f"Run date: {config.run_date.isoformat()}",
             f"Symbol: {config.symbol.upper()}",
             f"Output directory: {config.output_dir.as_posix()}",
@@ -72,12 +74,12 @@ def build_codex_command(config: CodexSmokeConfig) -> list[str]:
         "never",
         "--search",
         "-c",
-        f'mcp_servers."nlp-stock-prediction".command={mcp_command}',
+        f"mcp_servers.nlp-stock-prediction.command={mcp_command}",
         "-c",
-        'mcp_servers."nlp-stock-prediction".args=["-m","nlp_stock_prediction.codex_mcp"]',
+        'mcp_servers.nlp-stock-prediction.args=["-m","nlp_stock_prediction.codex_mcp"]',
         "exec",
         "-s",
-        "workspace-write",
+        "danger-full-access",
         "-C",
         str(config.repo_root),
         "--output-last-message",
@@ -97,6 +99,17 @@ def verify_smoke_outputs(config: CodexSmokeConfig, *, require_sqlite: bool = Tru
     for path in (report_path, json_path, audit_manifest_path, final_message_path):
         if not path.exists():
             raise RuntimeError(f"Codex smoke did not create expected file: {path}")
+    final_message = final_message_path.read_text(encoding="utf-8").lower()
+    failure_markers = (
+        "mcp tool call was cancelled",
+        "user cancelled mcp",
+        "not produced",
+        "shell fallback",
+        "fastmcp stdio transport was blocked",
+        "phase2mcpservice",
+    )
+    if any(marker in final_message for marker in failure_markers):
+        raise RuntimeError("Codex smoke final message reported MCP fallback or failure.")
 
     report_payload = json.loads(json_path.read_text(encoding="utf-8"))
     evidence = report_payload.get("evidence_sources")

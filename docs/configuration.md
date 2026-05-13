@@ -35,7 +35,9 @@ NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py 
 
 The smoke command launches `codex --search` against the local
 `python -m nlp_stock_prediction.codex_mcp` server. It may use live web search, but it writes only
-ignored local artifacts.
+ignored local artifacts. On the current Windows Codex CLI, the runner uses `danger-full-access`
+because stdio MCP tool calls are cancelled under `workspace-write`; the MCP service still enforces
+write roots and the runner fails if tracked files change.
 
 ## Local Storage
 

@@ -39,10 +39,11 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
     rendered = " ".join(command)
 
     assert command[:4] == ["codex", "--ask-for-approval", "never", "--search"]
-    assert 'mcp_servers."nlp-stock-prediction".command' in rendered
+    assert "mcp_servers.nlp-stock-prediction.command" in rendered
     assert "nlp_stock_prediction.codex_mcp" in rendered
-    assert "workspace-write" in command
+    assert "danger-full-access" in command
     assert str(config.final_message_path) in command
+    assert "Do not import project modules directly" in command[-1]
     assert "record_codex_search_evidence" in command[-1]
     assert "render_prediction_report" in command[-1]
 
@@ -85,6 +86,28 @@ def test_codex_smoke_output_verification_requires_search_evidence(tmp_path: Path
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="evidence_sources"):
+        smoke.verify_smoke_outputs(config, require_sqlite=False)
+
+    (run_dir / "report.json").write_text(
+        """
+{
+  "evidence_sources": [
+    {
+      "metadata": {"codex_search": true},
+      "provenance": {"provider_name": "codex-web-search"}
+    }
+  ],
+  "prediction_candidates": [{"candidate_id": "candidate-tsla"}]
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    config.final_message_path.write_text(
+        "FastMCP stdio transport was blocked; using Phase2McpService.\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="MCP fallback"):
         smoke.verify_smoke_outputs(config, require_sqlite=False)
 
 
