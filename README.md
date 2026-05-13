@@ -1,135 +1,221 @@
 # nlp-stock-prediction
 
-This repo is being rebuilt into a local, Codex-led prediction research assistant.
+## Short Description
 
-The important boundary: this is not a trading app. It should not place trades, size positions, or
-tell anyone what to buy or sell. The output is a prediction report: what the evidence seems to imply,
-how strong that evidence is, what conflicts with it, and what would change the view.
+`nlp-stock-prediction` is a local Python CLI for generating evidence-backed market prediction
+research reports. It is built for research workflows that need provenance, reproducible artifacts,
+and explicit uncertainty across retail-accessible instruments such as stocks, ETFs, crypto,
+currencies, commodities, futures context, and related proxies.
 
-The rebuild is centered on small research tools, a local SQLite memory layer, and a Codex agent that
-coordinates the work and writes the final Markdown/JSON report.
+This is not a trading application. It does not place trades, size positions, or tell users what to
+buy or sell. Its output is a Markdown and JSON research report that separates source evidence from
+analysis, preserves dissenting context, and explains what would change the prediction.
 
-## Current State
+The project is in active development. The current implementation includes a deterministic offline
+research command, SQLite-backed planning and research storage, fixture-backed orchestration tools,
+and an opt-in Codex MCP smoke path.
 
-This branch contains the Phase 2 Codex Orchestrator scaffolding: deterministic offline orchestration
-and an opt-in real Codex smoke path that validates MCP tool use with live search evidence. The tools
-remain dummy/fixture-backed until the Phase 4 tool-suite work.
+## Contents
 
-What exists now:
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage Examples](#usage-examples)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
+- [Development](#development)
+- [Testing](#testing)
 
-- an offline `research` CLI that writes Markdown, JSON, and audit artifacts;
-- a Phase 2 orchestration runtime with dummy tools, candidate synthesis, and report assembly;
-- a local MCP server for real Codex smoke runs;
-- an opt-in smoke runner that uses live Codex search, records evidence, and verifies ignored
-  artifacts only;
-- provider, evidence, extraction, analysis, reporting, raw TimesFM, and storage modules;
-- SQLite storage under `nlp_stock_prediction.storage`;
-- tests for the clean report contracts, provider attribution, and storage round trips.
+## Installation
 
-What is intentionally not the focus anymore:
+Requirements:
 
-- TimesFM tuning;
-- one-off TimesFM tuning workflows;
-- visual dashboards;
-- trading-language output.
+- Python 3.14.5
+- Git
+- A local shell capable of running Python virtual environments
 
-Raw TimesFM may still be useful later as a cheap technical signal, but only as one input inside a
-broader technical package.
+Clone the repository and create a virtual environment:
 
-## Product Shape
-
-The target app has three moving parts:
-
-1. Independent tools gather evidence or produce artifacts.
-2. SQLite stores planning state in git and runtime research state locally.
-3. Codex decides what to investigate next and writes the prediction report.
-
-The core object is `PredictionCandidate`:
-
-```text
-PredictionCandidate
-- instrument and asset class
-- prediction horizon
-- scenario or outcome being predicted
-- evidence for
-- evidence against
-- source and tool artifacts
-- freshness and uncertainty
-- baseline comparison
-- confidence
-- report status
+```sh
+git clone git@github.com:adamowada/nlp-stock-prediction.git
+cd nlp-stock-prediction
+python -m venv .venv
 ```
 
-The eventual universe should cover whatever a typical retail investor can reasonably research or
-access through retail platforms: stocks, ETFs, crypto, currencies, commodities, futures context, and
-related proxies. Availability changes, so tradability has to be stored with provenance instead of
-hardcoded.
+Activate the environment:
 
-## Useful Files
+```sh
+# Windows PowerShell
+. .\.venv\Scripts\Activate.ps1
 
-- [docs/architecture.md](docs/architecture.md): where the rebuild is headed.
-- [docs/contracts.md](docs/contracts.md): target contracts and invariants.
-- [docs/configuration.md](docs/configuration.md): local setup and storage conventions.
-- [docs/roadmap.md](docs/roadmap.md): phased rebuild plan.
-- [docs/testing-plan.md](docs/testing-plan.md): test strategy.
-- [AGENTS.md](AGENTS.md): operating rules for Codex.
-- [PLANS.md](PLANS.md): SQLite planning schema and usage rules.
+# macOS/Linux
+source .venv/bin/activate
+```
 
-`AGENTS.md` and `PLANS.md` are read-only by default. Change them only when the user specifically asks.
-
-## Local Setup
+Install the project in editable mode with development dependencies:
 
 ```sh
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
+```
+
+Verify the CLI:
+
+```sh
 python -m nlp_stock_prediction --help
 ```
 
-Run the normal checks:
+## Quick Start
+
+Generate a deterministic offline research report:
 
 ```sh
-python -m pytest
+python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
+```
+
+The offline command writes local report artifacts under `reports/` without using network providers
+or live credentials.
+
+## Usage Examples
+
+Show available CLI commands:
+
+```sh
+python -m nlp_stock_prediction --help
+python -m nlp_stock_prediction research --help
+```
+
+Generate an offline report for a specific date:
+
+```sh
+python -m nlp_stock_prediction research \
+  --date 2026-05-12 \
+  --output reports/ \
+  --offline
+```
+
+Run the optional Codex smoke workflow:
+
+```sh
+python -m pip install -e ".[dev,codex-smoke]"
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py \
+  --date 2026-05-13 \
+  --output reports/phase2-codex-smoke \
+  --symbol TSLA
+```
+
+The Codex smoke path starts a local MCP server, exposes fixture-backed research tools, allows Codex
+to collect live-search evidence, and writes ignored artifacts under local output directories.
+
+## Configuration
+
+Local configuration is documented in [docs/configuration.md](docs/configuration.md).
+
+Environment variables are optional for the default offline workflow. Keep secrets in exported shell
+variables or ignored `.env` files.
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | No | Required only for workflows that call OpenAI-backed tooling. |
+| `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE` | No | Set to `1` to opt in to the real Codex smoke path. |
+| `X_BEARER_TOKEN` | No | Token for X/Twitter-backed provider experiments. |
+| `REDDIT_CLIENT_ID` | No | Reddit API client ID for provider experiments. |
+| `REDDIT_CLIENT_SECRET` | No | Reddit API client secret for provider experiments. |
+| `LIVE_PROVIDER_USER_AGENT` | No | User agent for live scraping/provider tests. |
+| `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS` | No | Enables opt-in live test groups when combined with marked tests. |
+| `NLP_STOCK_PREDICTION_ALLOW_LIVE_API_TESTS` | No | Enables live API tests. |
+| `NLP_STOCK_PREDICTION_ALLOW_LIVE_SCRAPING_TESTS` | No | Enables live scraping tests. |
+
+The project uses two SQLite databases:
+
+- `plans/planning.sqlite3`: tracked planning state for plans, decisions, progress, and related
+  metadata.
+- `data/prediction-research.sqlite3`: ignored runtime research state for tool runs, artifacts,
+  evidence, and prediction candidates.
+
+Generated reports, provider cache files, research databases, and raw artifacts are local working
+state by default and are ignored unless explicitly promoted as small test fixtures.
+
+## Project Structure
+
+```text
+src/nlp_stock_prediction/     Application package
+src/nlp_stock_prediction/cli.py
+                              CLI entry point and command wiring
+src/nlp_stock_prediction/contracts/
+                              Pydantic contracts for instruments, evidence, reports, and tools
+src/nlp_stock_prediction/orchestration/
+                              Research runtime, dummy tools, MCP smoke support, and report assembly
+src/nlp_stock_prediction/providers/
+                              Provider adapters and provider-facing contracts
+src/nlp_stock_prediction/reporting/
+                              Markdown, JSON, and audit rendering
+src/nlp_stock_prediction/storage/
+                              SQLite schema initialization and storage helpers
+tests/                        Unit, contract, provider, storage, and orchestration tests
+scripts/                      Maintenance and smoke-test scripts
+docs/                         Architecture, contracts, configuration, roadmap, and testing docs
+plans/planning.sqlite3        Tracked planning database
+data/                         Ignored runtime research databases and generated local state
+reports/                      Ignored generated report output
+artifacts/                    Ignored generated tool and research artifacts
+```
+
+## Development
+
+Use the repository virtual environment for local work:
+
+```sh
+. .\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+```
+
+Run the common development checks:
+
+```sh
 python -m pytest -m "not live_api and not live_scraping"
 ruff check .
 ruff format --check .
 mypy .
 ```
 
-Generate the deterministic offline report:
+Format code with Ruff:
 
 ```sh
-python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
+ruff format .
 ```
 
-Phase 2 also includes an opt-in real Codex smoke path. It exposes the dummy research tools through a
-local MCP server, lets Codex use live web search, and writes only ignored artifacts under `reports/`,
-`artifacts/`, `data/`, or `cache/`:
+Use `python -m nlp_stock_prediction` as the canonical CLI invocation until the project introduces a
+console script.
+
+Source-of-truth documentation lives in `README.md`, `AGENTS.md`, `PLANS.md`, and `docs/`. Active
+planning state belongs in `plans/planning.sqlite3`; do not create ad hoc Markdown plans for routine
+development work.
+
+## Testing
+
+The default test suite is deterministic and offline:
+
+```sh
+python -m pytest
+python -m pytest -m "not live_api and not live_scraping"
+python -m pytest -m "not live_api and not live_scraping and not codex_smoke"
+```
+
+Run focused live groups only when credentials, network access, and explicit opt-in environment
+variables are available:
+
+```sh
+python -m pytest -m live_api
+python -m pytest -m live_scraping
+```
+
+The optional Codex smoke tests require the `codex-smoke` extra and
+`NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1`:
 
 ```sh
 python -m pip install -e ".[dev,codex-smoke]"
-NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py --date 2026-05-13 --output reports/phase2-codex-smoke --symbol TSLA
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python -m pytest -m codex_smoke
 ```
 
-## SQLite
-
-The project uses two local SQLite databases:
-
-- `plans/planning.sqlite3`: tracked in git so planning records are part of project history.
-- `data/prediction-research.sqlite3`: ignored local runtime state for runs, tools, artifacts,
-  evidence, and prediction candidates.
-
-Create or verify them with:
-
-```python
-from pathlib import Path
-
-from nlp_stock_prediction.storage import (
-    initialize_planning_database,
-    initialize_research_database,
-)
-
-planning_store = initialize_planning_database(Path("plans/planning.sqlite3"))
-research_store = initialize_research_database(Path("data/prediction-research.sqlite3"))
-```
-
-Durable source-of-truth docs still stay in Markdown.
+See [docs/testing-plan.md](docs/testing-plan.md) for test layering, negative-case expectations, and
+acceptance criteria.
