@@ -59,8 +59,12 @@ def build_server(repo_root: Path | None = None, database_path: Path | None = Non
         claim: str,
         query: str,
         published_at: str | None = None,
+        stance: str | None = None,
     ) -> dict[str, object]:
-        """Record one live-search source as normalized evidence."""
+        """Record one live-search source as normalized evidence.
+
+        stance may be supports, contradicts, or neutral relative to the candidate thesis.
+        """
 
         return dict(
             service.record_codex_search_evidence(
@@ -71,6 +75,7 @@ def build_server(repo_root: Path | None = None, database_path: Path | None = Non
                 claim=claim,
                 query=query,
                 published_at=published_at,
+                stance=stance,
             )
         )
 

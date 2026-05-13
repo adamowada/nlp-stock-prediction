@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +16,11 @@ from datetime import date
 from pathlib import Path
 
 RUN_CODEX_SMOKE_ENV = "NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE"
+ALLOWED_SMOKE_WRITE_ROOTS = ("reports", "artifacts", "data", "cache")
+RESTRICTED_SCAN_EXCLUDED_DIRS = {".git"}
+MAX_HASHED_RESTRICTED_FILE_BYTES = 5 * 1024 * 1024
+
+type RestrictedPathSnapshot = dict[str, tuple[int, int, str | None]]
 
 
 @dataclass(frozen=True)
@@ -34,8 +42,8 @@ class CodexSmokeConfig:
 
     @property
     def database_arg_path(self) -> Path:
-        normalized_symbol = self.symbol.lower().replace("/", "-")
-        filename = f"phase2-codex-smoke-{self.run_date.isoformat()}-{normalized_symbol}.sqlite3"
+        symbol_slug = _symbol_slug(self.symbol)
+        filename = f"phase2-codex-smoke-{self.run_date.isoformat()}-{symbol_slug}.sqlite3"
         return Path("data") / filename
 
     @property
@@ -60,7 +68,8 @@ def build_codex_prompt(config: CodexSmokeConfig) -> str:
             "Required tool workflow:",
             "1. start_research_run",
             "2. list_research_tool_plan",
-            "3. record_codex_search_evidence for each searched source",
+            "3. record_codex_search_evidence for each searched source, with stance set to "
+            "supports, contradicts, or neutral",
             "4. run_dummy_universe_tool",
             "5. run_dummy_analysis_tool",
             "6. synthesize_prediction_candidates",
@@ -81,6 +90,8 @@ def build_codex_command(config: CodexSmokeConfig) -> list[str]:
         [
             "-m",
             "nlp_stock_prediction.codex_mcp",
+            "--repo-root",
+            str(config.repo_root),
             "--database",
             config.database_arg_path.as_posix(),
         ]
@@ -172,20 +183,29 @@ def run_codex_smoke(config: CodexSmokeConfig) -> None:
         raise RuntimeError(f"Set {RUN_CODEX_SMOKE_ENV}=1 to run the real Codex smoke test.")
     if shutil.which(config.codex_executable) is None:
         raise RuntimeError("Codex CLI is not available on PATH.")
+    if importlib.util.find_spec("mcp") is None:
+        raise RuntimeError(
+            'Install the optional smoke extra first: python -m pip install -e ".[codex-smoke]"'
+        )
 
     _prepare_clean_run_dir(config)
     _prepare_clean_database(config)
     baseline_status = require_clean_tracked_status(config.repo_root)
+    baseline_restricted_paths = snapshot_restricted_paths(config.repo_root)
+    codex_env = os.environ.copy()
+    codex_env["PYTHONDONTWRITEBYTECODE"] = "1"
     completed = subprocess.run(
         build_codex_command(config),
         cwd=config.repo_root,
         check=False,
         text=True,
+        env=codex_env,
     )
     if completed.returncode != 0:
         raise RuntimeError(f"Codex smoke failed with exit code {completed.returncode}.")
     verify_smoke_outputs(config)
     ensure_tracked_status_unchanged(config.repo_root, baseline_status)
+    ensure_restricted_paths_unchanged(config.repo_root, baseline_restricted_paths)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -262,9 +282,7 @@ def _verify_sqlite_run(config: CodexSmokeConfig) -> None:
 
 def _prepare_clean_run_dir(config: CodexSmokeConfig) -> None:
     run_dir = _resolve_repo_path(config, config.run_dir).resolve()
-    allowed_roots = tuple(
-        (config.repo_root / root).resolve() for root in ("reports", "artifacts", "data", "cache")
-    )
+    allowed_roots = tuple((config.repo_root / root).resolve() for root in ALLOWED_SMOKE_WRITE_ROOTS)
     if not any(_is_relative_to(run_dir, root) or run_dir == root for root in allowed_roots):
         roots = ", ".join(root.as_posix() for root in allowed_roots)
         raise RuntimeError(f"Refusing to clean smoke output outside ignored roots: {roots}")
@@ -289,8 +307,7 @@ def _prepare_clean_database(config: CodexSmokeConfig) -> None:
 
 
 def _expected_run_id(config: CodexSmokeConfig) -> str:
-    normalized_symbol = config.symbol.lower().replace("/", "-")
-    return f"codex-smoke-{config.run_date.isoformat()}-{normalized_symbol}"
+    return f"codex-smoke-{config.run_date.isoformat()}-{_symbol_slug(config.symbol)}"
 
 
 def _is_codex_sqlite_evidence(item: object) -> bool:
@@ -315,6 +332,83 @@ def _git_status(repo_root: Path) -> str:
     return completed.stdout
 
 
+def snapshot_restricted_paths(repo_root: Path) -> RestrictedPathSnapshot:
+    """Fingerprint repo files outside the smoke artifact roots."""
+
+    resolved_repo = repo_root.resolve()
+    allowed_roots = tuple((resolved_repo / root).resolve() for root in ALLOWED_SMOKE_WRITE_ROOTS)
+    snapshot: RestrictedPathSnapshot = {}
+    for current_root, dir_names, file_names in os.walk(resolved_repo):
+        current_path = Path(current_root).resolve()
+        dir_names[:] = [
+            dirname
+            for dirname in dir_names
+            if dirname not in RESTRICTED_SCAN_EXCLUDED_DIRS
+            and not _is_allowed_smoke_path((current_path / dirname).resolve(), allowed_roots)
+        ]
+        if _is_allowed_smoke_path(current_path, allowed_roots):
+            dir_names[:] = []
+            continue
+        for file_name in file_names:
+            path = current_path / file_name
+            if _is_allowed_smoke_path(path, allowed_roots):
+                continue
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            snapshot[path.relative_to(resolved_repo).as_posix()] = (
+                stat.st_size,
+                stat.st_mtime_ns,
+                _restricted_file_hash(path, stat.st_size),
+            )
+    return snapshot
+
+
+def ensure_restricted_paths_unchanged(
+    repo_root: Path,
+    expected: RestrictedPathSnapshot,
+) -> None:
+    observed = snapshot_restricted_paths(repo_root)
+    if observed == expected:
+        return
+    added = sorted(set(observed).difference(expected))
+    removed = sorted(set(expected).difference(observed))
+    changed = sorted(
+        path for path in set(expected).intersection(observed) if expected[path] != observed[path]
+    )
+    details = _format_restricted_path_changes(added, removed, changed)
+    raise RuntimeError(
+        "Codex smoke changed files outside allowed artifact roots "
+        f"{ALLOWED_SMOKE_WRITE_ROOTS}.\n{details}"
+    )
+
+
+def _format_restricted_path_changes(
+    added: list[str],
+    removed: list[str],
+    changed: list[str],
+) -> str:
+    parts: list[str] = []
+    if added:
+        parts.append(f"Added: {', '.join(added[:10])}")
+    if removed:
+        parts.append(f"Removed: {', '.join(removed[:10])}")
+    if changed:
+        parts.append(f"Changed: {', '.join(changed[:10])}")
+    return "\n".join(parts) if parts else "Only metadata changed."
+
+
+def _restricted_file_hash(path: Path, size: int) -> str | None:
+    if size > MAX_HASHED_RESTRICTED_FILE_BYTES:
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _is_allowed_smoke_path(path: Path, allowed_roots: tuple[Path, ...]) -> bool:
+    return any(_is_relative_to(path, root) or path == root for root in allowed_roots)
+
+
 def _resolve_repo_path(config: CodexSmokeConfig, path: Path) -> Path:
     return path if path.is_absolute() else config.repo_root / path
 
@@ -329,6 +423,12 @@ def _is_relative_to(path: Path, root: Path) -> bool:
 
 def _toml_string(value: str) -> str:
     return json.dumps(value)
+
+
+def _symbol_slug(symbol: str) -> str:
+    slug = re.sub(r"[^a-z0-9._-]+", "-", symbol.strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-._")
+    return slug or "symbol"
 
 
 if __name__ == "__main__":

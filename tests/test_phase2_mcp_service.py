@@ -79,3 +79,44 @@ def test_phase2_mcp_service_restricts_write_roots(tmp_path: Path) -> None:
             output_dir="../outside",
             symbol="TSLA",
         )
+
+
+@pytest.mark.integration
+def test_phase2_mcp_service_synthesizes_contradictory_evidence(tmp_path: Path) -> None:
+    service = Phase2McpService(repo_root=tmp_path)
+    started = service.start_research_run(
+        run_date="2026-05-13",
+        output_dir="reports/phase2-codex-smoke",
+        symbol="BTC:USD",
+    )
+    run_id = str(started["run_id"])
+
+    service.record_codex_search_evidence(
+        run_id=run_id,
+        symbol="BTC:USD",
+        title="Supportive BTC source",
+        url="https://example.com/btc-support",
+        claim="Example source says BTC liquidity improved.",
+        query="BTC liquidity",
+        stance="supports",
+    )
+    against = service.record_codex_search_evidence(
+        run_id=run_id,
+        symbol="BTC:USD",
+        title="Contradictory BTC source",
+        url="https://example.com/btc-risk",
+        claim="Example source says BTC downside risk increased.",
+        query="BTC downside risk",
+        stance="contradicts",
+    )
+    candidate = service.synthesize_prediction_candidates(run_id=run_id, symbol="BTC:USD")
+    rendered = service.render_prediction_report(run_id=run_id, symbol="BTC:USD")
+
+    payload = json.loads(Path(str(rendered["json_path"])).read_text(encoding="utf-8"))
+    report_candidate = payload["prediction_candidates"][0]
+
+    assert run_id == "codex-smoke-2026-05-13-btc-usd"
+    assert str(candidate["candidate_id"]).startswith("candidate-btc-usd-")
+    assert report_candidate["symbol"] == "BTC:USD"
+    assert report_candidate["status"] == "contradicted"
+    assert report_candidate["evidence_against"][0]["evidence_id"] == against["evidence_id"]

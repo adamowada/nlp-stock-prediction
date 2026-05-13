@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from pydantic import Field
 
@@ -19,8 +19,10 @@ class ToolRunRecord(ContractModel):
 
     tool_id: NonEmptyStr
     stage: NonEmptyStr
+    status: Literal["succeeded", "failed"] = "succeeded"
     updated_keys: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    error_message: str | None = None
     metadata: JsonObject = Field(default_factory=dict)
 
 
@@ -69,6 +71,24 @@ class StagedExecutionResult:
         return tuple(self.state.records)
 
 
+class OrchestrationExecutionError(RuntimeError):
+    """Raised after recording a failed staged tool invocation."""
+
+    def __init__(
+        self,
+        *,
+        tool_id: str,
+        stage: str,
+        original_error: Exception,
+        partial_result: StagedExecutionResult,
+    ) -> None:
+        super().__init__(f"orchestration tool {tool_id!r} failed in stage {stage!r}")
+        self.tool_id = tool_id
+        self.stage = stage
+        self.original_error = original_error
+        self.partial_result = partial_result
+
+
 @dataclass(frozen=True)
 class StagedExecutor:
     """Execute registered tools in stage order, sorted by tool ID within each stage."""
@@ -79,19 +99,38 @@ class StagedExecutor:
     def run(self, context: RunContext) -> StagedExecutionResult:
         state = OrchestrationState()
         for tool in self.registry.ordered_for_stages(self.stage_order):
-            self._validate_inputs(tool.spec.input_keys, state)
-            result = tool.run(context, state)
-            if result.tool_id != tool.spec.tool_id:
-                raise ValueError(f"tool {tool.spec.tool_id} returned result for {result.tool_id}")
-            self._validate_outputs(tool.spec.output_keys, result)
-            record = ToolRunRecord(
-                tool_id=tool.spec.tool_id,
-                stage=tool.spec.stage,
-                updated_keys=tuple(sorted(result.updates)),
-                artifact_ids=tuple(artifact.artifact_id for artifact in result.artifacts),
-                metadata=result.metadata,
-            )
-            state.apply(result, record)
+            try:
+                self._validate_inputs(tool.spec.input_keys, state)
+                result = tool.run(context, state)
+                if result.tool_id != tool.spec.tool_id:
+                    raise ValueError(
+                        f"tool {tool.spec.tool_id} returned result for {result.tool_id}"
+                    )
+                self._validate_outputs(tool.spec.output_keys, result)
+                record = ToolRunRecord(
+                    tool_id=tool.spec.tool_id,
+                    stage=tool.spec.stage,
+                    updated_keys=tuple(sorted(result.updates)),
+                    artifact_ids=tuple(artifact.artifact_id for artifact in result.artifacts),
+                    metadata=result.metadata,
+                )
+                state.apply(result, record)
+            except Exception as exc:
+                state.records.append(
+                    ToolRunRecord(
+                        tool_id=tool.spec.tool_id,
+                        stage=tool.spec.stage,
+                        status="failed",
+                        error_message=str(exc),
+                        metadata={"exception_type": type(exc).__name__},
+                    )
+                )
+                raise OrchestrationExecutionError(
+                    tool_id=tool.spec.tool_id,
+                    stage=tool.spec.stage,
+                    original_error=exc,
+                    partial_result=StagedExecutionResult(state=state),
+                ) from exc
         return StagedExecutionResult(state=state)
 
     @staticmethod
@@ -110,6 +149,7 @@ class StagedExecutor:
 
 
 __all__ = [
+    "OrchestrationExecutionError",
     "OrchestrationState",
     "StagedExecutionResult",
     "StagedExecutor",

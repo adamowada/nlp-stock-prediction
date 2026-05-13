@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -166,12 +167,14 @@ class Phase2McpService:
         claim: str,
         query: str,
         published_at: str | None = None,
+        stance: str | None = None,
     ) -> JsonObject:
         run = self._require_run(run_id)
         run_date = _run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]))
         now = _utc_now()
         normalized_symbol = symbol.strip().upper()
+        normalized_stance = _normalize_evidence_stance(stance, claim)
         digest = _stable_digest("|".join([run_id, normalized_symbol, title, url, claim]))
         evidence_id = f"evidence-codex-search-{digest}"
         tool_run_id = f"tool-codex-search-{digest}"
@@ -194,17 +197,18 @@ class Phase2McpService:
             freshness_status=FreshnessStatus.FRESH,
             provider_metadata={"codex_search": True},
         )
+        source_ticker = _source_evidence_ticker(normalized_symbol)
         evidence = SourceEvidence(
             evidence_id=evidence_id,
             source_kind=source_kind,
-            ticker=normalized_symbol,
+            ticker=source_ticker,
             title=title,
             text=claim,
             created_at=_parse_optional_datetime(published_at),
             permalink=url,
-            matched_tickers=(normalized_symbol,),
+            matched_tickers=((source_ticker,) if source_ticker else ()),
             provenance=provenance,
-            metadata={"codex_search": True},
+            metadata={"codex_search": True, "stance": normalized_stance},
         )
         payload: JsonObject = {
             "schema_version": "codex-search-evidence.v1",
@@ -220,7 +224,12 @@ class Phase2McpService:
                 tool_name="record_codex_search_evidence",
                 tool_version="phase2.v1",
                 status="ok",
-                inputs={"symbol": normalized_symbol, "url": url, "query": query},
+                inputs={
+                    "symbol": normalized_symbol,
+                    "url": url,
+                    "query": query,
+                    "stance": normalized_stance,
+                },
                 started_at=now,
                 completed_at=now,
             )
@@ -269,6 +278,7 @@ class Phase2McpService:
                 provenance_json=cast(JsonObject, provenance.model_dump(mode="json")),
                 metadata={
                     "codex_search": True,
+                    "stance": normalized_stance,
                     "source_evidence": cast(JsonObject, evidence.model_dump(mode="json")),
                 },
             )
@@ -402,14 +412,45 @@ class Phase2McpService:
         instrument_id = f"instrument:codex:{symbol.upper()}"
         if not store.get_instrument(instrument_id):
             self.run_dummy_universe_tool(run_id=run_id, symbol=symbol)
-        evidence_ids = tuple(record.evidence_id for record in evidence)
-        candidate_id = f"candidate-{symbol.lower()}-{_stable_digest(run_id)[:8]}"
+        evidence_for = tuple(
+            record.evidence_id
+            for record in evidence
+            if _evidence_stance_from_record(record) in {"supports", "neutral"}
+        )
+        evidence_against = tuple(
+            record.evidence_id
+            for record in evidence
+            if _evidence_stance_from_record(record) == "contradicts"
+        )
+        evidence_ids = evidence_for + evidence_against
+        symbol_slug = _symbol_slug(symbol)
+        candidate_id = f"candidate-{symbol_slug}-{_stable_digest(run_id)[:8]}"
         scenario = (
-            f"Live-search evidence for {symbol.upper()} is sufficient for a monitored "
-            "prediction scenario, but dummy tools keep confidence conservative."
-            if evidence_ids
+            f"Live-search evidence for {symbol.upper()} is contradictory, so the Phase 2 "
+            "scenario remains contested and conservative."
+            if evidence_for and evidence_against
+            else f"Live-search evidence for {symbol.upper()} is mostly contradictory, so no "
+            "supported directional scenario is produced."
+            if evidence_against
+            else (
+                f"Live-search evidence for {symbol.upper()} is sufficient for a monitored "
+                "prediction scenario, but dummy tools keep confidence conservative."
+            )
+            if evidence_for
             else f"Insufficient evidence for {symbol.upper()} after dummy tool execution."
         )
+        status = (
+            "contradicted"
+            if evidence_against
+            else "moderate_confidence"
+            if evidence_for
+            else "insufficient_evidence"
+        )
+        confidence: float | None = (
+            0.22 if evidence_against and not evidence_for else 0.28 if evidence_against else 0.36
+        )
+        if not evidence_ids:
+            confidence = None
         candidate = PredictionCandidateRecord(
             candidate_id=candidate_id,
             run_id=run_id,
@@ -418,12 +459,13 @@ class Phase2McpService:
             prediction_type="scenario",
             scenario=scenario,
             direction=Direction.MIXED.value,
-            confidence=0.36 if evidence_ids else None,
-            status="moderate_confidence" if evidence_ids else "insufficient_evidence",
-            evidence_for=evidence_ids[:3],
+            confidence=confidence,
+            status=status,
+            evidence_for=evidence_for[:3],
+            evidence_against=evidence_against[:3],
             baseline={"comparison": "no directional edge"},
             uncertainty="Dummy tools are structural validation only.",
-            metadata={"phase2_mcp": True},
+            metadata={"phase2_mcp": True, "symbol": symbol.upper()},
         )
         payload: JsonObject = {
             "schema_version": "phase2-candidate-synthesis.v1",
@@ -433,6 +475,7 @@ class Phase2McpService:
                     "candidate_id": candidate.candidate_id,
                     "scenario": candidate.scenario,
                     "evidence_for": list(candidate.evidence_for),
+                    "evidence_against": list(candidate.evidence_against),
                 }
             ],
         }
@@ -471,6 +514,16 @@ class Phase2McpService:
                     candidate_id=candidate_id,
                     evidence_id=evidence_id,
                     relationship="supports",
+                    metadata={"source": "phase2_mcp_synthesis"},
+                    created_at=now,
+                )
+            )
+        for evidence_id in candidate.evidence_against:
+            store.link_candidate_evidence(
+                CandidateEvidenceLinkRecord(
+                    candidate_id=candidate_id,
+                    evidence_id=evidence_id,
+                    relationship="contradicts",
                     metadata={"source": "phase2_mcp_synthesis"},
                     created_at=now,
                 )
@@ -736,7 +789,10 @@ def _source_evidence_from_record(record: EvidenceRecord) -> SourceEvidence:
     if isinstance(source_evidence, dict):
         return SourceEvidence.model_validate(source_evidence)
     provenance = SourceProvenance.model_validate(record.provenance_json)
-    ticker = record.instruments[0].rsplit(":", 1)[-1] if record.instruments else None
+    raw_ticker = (
+        record.instruments[0].removeprefix("instrument:codex:") if record.instruments else None
+    )
+    ticker = _source_evidence_ticker(raw_ticker) if raw_ticker else None
     return SourceEvidence(
         evidence_id=record.evidence_id,
         source_kind=SourceKind(record.source_type),
@@ -755,7 +811,7 @@ def _report_candidate(
     evidence_sources: tuple[SourceEvidence, ...],
 ) -> PredictionCandidate:
     evidence_by_id = {record.evidence_id: record for record in evidence_sources}
-    evidence_refs = tuple(
+    evidence_for_refs = tuple(
         EvidenceReference(
             evidence_id=evidence_id,
             quote=evidence_by_id[evidence_id].text[:180] if evidence_id in evidence_by_id else None,
@@ -763,22 +819,36 @@ def _report_candidate(
         )
         for evidence_id in candidate.evidence_for
     )
+    evidence_against_refs = tuple(
+        EvidenceReference(
+            evidence_id=evidence_id,
+            quote=evidence_by_id[evidence_id].text[:180] if evidence_id in evidence_by_id else None,
+            relevance=0.76,
+        )
+        for evidence_id in candidate.evidence_against
+    )
     status = (
-        PredictionStatus.EVIDENCE_SUPPORTED
-        if evidence_refs
+        PredictionStatus.CONTRADICTED
+        if evidence_against_refs
+        else PredictionStatus.EVIDENCE_SUPPORTED
+        if evidence_for_refs
         else PredictionStatus.INSUFFICIENT_EVIDENCE
     )
+    symbol = candidate.metadata.get("symbol")
+    if not isinstance(symbol, str) or not symbol.strip():
+        symbol = candidate.instrument_id.rsplit(":", 1)[-1]
     return PredictionCandidate(
         candidate_id=candidate.candidate_id,
         instrument_id=candidate.instrument_id,
-        symbol=candidate.instrument_id.rsplit(":", 1)[-1],
+        symbol=symbol,
         horizon=TimeHorizon.SWING,
         direction=Direction.MIXED,
         status=status,
         thesis=candidate.scenario,
         baseline="No directional edge is assumed; dummy tools only validate orchestration.",
         confidence=candidate.confidence or 0.0,
-        evidence_for=evidence_refs,
+        evidence_for=evidence_for_refs,
+        evidence_against=evidence_against_refs,
         assumptions=("Codex search evidence is source material, not automatically true.",),
         uncertainties=(candidate.uncertainty or "Phase 2 tools are structural dummies.",),
         signal_artifact_ids=candidate.signal_artifacts,
@@ -813,7 +883,70 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
 
 
 def _run_id(run_date: date, symbol: str) -> str:
-    return f"codex-smoke-{run_date.isoformat()}-{symbol.lower().replace('/', '-')}"
+    return f"codex-smoke-{run_date.isoformat()}-{_symbol_slug(symbol)}"
+
+
+def _symbol_slug(symbol: str) -> str:
+    slug = re.sub(r"[^a-z0-9._-]+", "-", symbol.strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-._")
+    return slug or "symbol"
+
+
+def _source_evidence_ticker(symbol: str) -> str | None:
+    normalized = symbol.strip().upper()
+    return normalized if re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}", normalized) else None
+
+
+def _normalize_evidence_stance(stance: str | None, claim: str) -> str:
+    if stance is not None and stance.strip():
+        normalized = stance.strip().lower().replace("_", "-")
+        if normalized in {"support", "supports", "supportive", "for", "bullish", "positive"}:
+            return "supports"
+        if normalized in {
+            "against",
+            "contradict",
+            "contradicts",
+            "contradictory",
+            "conflict",
+            "conflicts",
+            "bearish",
+            "negative",
+        }:
+            return "contradicts"
+        if normalized in {"neutral", "mixed", "unclear", "context"}:
+            return "neutral"
+        raise ValueError("stance must be supports, contradicts, or neutral")
+    lowered = claim.lower()
+    contradiction_terms = (
+        "contradict",
+        "conflict",
+        "risk",
+        "miss",
+        "decline",
+        "pressure",
+        "weaker",
+        "negative",
+        "bearish",
+    )
+    return "contradicts" if any(term in lowered for term in contradiction_terms) else "supports"
+
+
+def _evidence_stance_from_record(record: EvidenceRecord) -> str:
+    stance = record.metadata.get("stance")
+    if isinstance(stance, str) and stance in {"supports", "contradicts", "neutral"}:
+        return stance
+    source_evidence = record.metadata.get("source_evidence")
+    if isinstance(source_evidence, dict):
+        metadata = source_evidence.get("metadata")
+        if isinstance(metadata, dict):
+            nested_stance = metadata.get("stance")
+            if isinstance(nested_stance, str) and nested_stance in {
+                "supports",
+                "contradicts",
+                "neutral",
+            }:
+                return nested_stance
+    return _normalize_evidence_stance(None, record.claim)
 
 
 def _run_date_from_run(run: ResearchRunRecord) -> date:

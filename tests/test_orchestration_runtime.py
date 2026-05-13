@@ -11,8 +11,13 @@ from nlp_stock_prediction.contracts import AuditManifest, DailyReport, JsonObjec
 from nlp_stock_prediction.orchestration import (
     DEFAULT_STAGE_ORDER,
     ArtifactWriter,
+    OrchestrationExecutionError,
+    OrchestrationState,
     RunContext,
     StagedExecutor,
+    ToolRegistry,
+    ToolRunResult,
+    ToolSpec,
     build_dummy_tool_registry,
     deterministic_generated_at,
     generate_dummy_report_bundle,
@@ -105,6 +110,34 @@ def test_staged_executor_runs_dummy_tools_and_records_artifacts(tmp_path: Path) 
     assert all(Path(artifact.path).exists() for artifact in result.artifacts)
     assert isinstance(report.audit_manifest, AuditManifest)
     assert report.audit_manifest.prediction_trace_ids == ("prediction-tsla-dummy-volatility",)
+
+
+@pytest.mark.unit
+def test_staged_executor_records_failed_tool_before_raising(tmp_path: Path) -> None:
+    class FailingTool:
+        @property
+        def spec(self) -> ToolSpec:
+            return ToolSpec(
+                tool_id="dummy.failing-tool",
+                stage="fail",
+                description="Raise a deterministic failure.",
+            )
+
+        def run(self, _context: RunContext, _state: OrchestrationState) -> ToolRunResult:
+            raise ValueError("deterministic failure")
+
+    context = RunContext.from_config(_config(tmp_path))
+
+    with pytest.raises(OrchestrationExecutionError) as exc_info:
+        StagedExecutor(
+            registry=ToolRegistry((FailingTool(),)),
+            stage_order=("fail",),
+        ).run(context)
+
+    assert isinstance(exc_info.value.original_error, ValueError)
+    assert exc_info.value.tool_id == "dummy.failing-tool"
+    assert exc_info.value.partial_result.tool_records[-1].status == "failed"
+    assert exc_info.value.partial_result.tool_records[-1].error_message == "deterministic failure"
 
 
 @pytest.mark.unit

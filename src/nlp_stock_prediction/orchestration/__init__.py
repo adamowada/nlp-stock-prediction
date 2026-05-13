@@ -11,6 +11,7 @@ from nlp_stock_prediction.orchestration.dummy import (
 )
 from nlp_stock_prediction.orchestration.phase2_service import Phase2McpService
 from nlp_stock_prediction.orchestration.runtime import (
+    OrchestrationExecutionError,
     OrchestrationState,
     StagedExecutionResult,
     StagedExecutor,
@@ -28,6 +29,7 @@ __all__ = [
     "DUMMY_ORCHESTRATION_DISABLED_MESSAGE",
     "ArtifactType",
     "ArtifactWriter",
+    "OrchestrationExecutionError",
     "OrchestrationState",
     "OrchestrationTool",
     "Phase2McpService",
