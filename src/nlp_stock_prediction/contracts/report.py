@@ -23,7 +23,11 @@ from nlp_stock_prediction.contracts.base import (
 from nlp_stock_prediction.contracts.enums import Direction, PredictionStatus, TimeHorizon
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.extraction import StrategyCluster
-from nlp_stock_prediction.contracts.instruments import Instrument, InstrumentSymbol
+from nlp_stock_prediction.contracts.instruments import (
+    Instrument,
+    InstrumentResolution,
+    InstrumentSymbol,
+)
 from nlp_stock_prediction.contracts.provenance import (
     DataReference,
     EvidenceReference,
@@ -105,6 +109,7 @@ class AuditArtifact(ContractModel):
         "json_report",
         "provider_result",
         "ml_forecast",
+        "instrument_universe",
     ]
     path: NonEmptyStr
     created_at: AwareDatetime
@@ -198,6 +203,7 @@ class DailyReport(ContractModel):
     data_freshness: DataFreshnessSummary
     provider_health: tuple[ProviderHealth, ...] = Field(default_factory=tuple)
     evidence_sources: tuple[SourceEvidence, ...] = Field(default_factory=tuple)
+    instrument_resolutions: tuple[InstrumentResolution, ...] = Field(default_factory=tuple)
     instrument_sections: tuple[InstrumentReportSection, ...]
     prediction_candidates: tuple[PredictionCandidate, ...] = Field(default_factory=tuple)
     insufficient_evidence_summary: str | None = None
@@ -231,10 +237,26 @@ class DailyReport(ContractModel):
         if len(set(source_evidence_ids)) != len(source_evidence_ids):
             raise ValueError("report evidence_sources ids must be unique")
 
+        selected_resolution_ids = {
+            resolution.selected_instrument_id
+            for resolution in self.instrument_resolutions
+            if resolution.selected_instrument_id is not None
+        }
+        if selected_resolution_ids.difference(instrument_ids):
+            raise ValueError(
+                "instrument_resolutions selected ids must reference report instruments"
+            )
+
         candidate_by_id = {
             candidate.candidate_id: candidate for candidate in self.prediction_candidates
         }
         cited_evidence_ids: set[str] = set()
+        related_instrument_evidence_ids: set[str] = set()
+        for instrument in self.instruments:
+            for related_instrument in instrument.related_instruments:
+                related_instrument_evidence_ids.update(related_instrument.evidence_ids)
+        cited_evidence_ids.update(related_instrument_evidence_ids)
+
         section_references: dict[str, str] = {}
         for section in self.instrument_sections:
             cited_evidence_ids.update(reference.evidence_id for reference in section.evidence)
@@ -276,6 +298,13 @@ class DailyReport(ContractModel):
 
         missing_evidence_ids = cited_evidence_ids.difference(source_evidence_ids)
         if missing_evidence_ids:
+            missing_related_evidence_ids = related_instrument_evidence_ids.difference(
+                source_evidence_ids
+            )
+            if missing_related_evidence_ids:
+                raise ValueError(
+                    "report evidence_sources must include related instrument evidence_ids"
+                )
             raise ValueError("report evidence_sources must include every cited evidence_id")
         return self
 

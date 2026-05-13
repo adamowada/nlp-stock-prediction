@@ -14,8 +14,11 @@ from nlp_stock_prediction.contracts import (
     FreshnessStatus,
     Instrument,
     InstrumentReportSection,
+    InstrumentResolution,
+    InstrumentResolutionStatus,
     PredictionCandidate,
     PredictionStatus,
+    RelatedInstrument,
     RetrievalMethod,
     SourceEvidence,
     SourceKind,
@@ -91,6 +94,14 @@ def _report(*, include_sources: bool = True) -> DailyReport:
         instruments=(_instrument(),),
         data_freshness=DataFreshnessSummary(as_of=_now(), summary="fresh fixture"),
         evidence_sources=(evidence,) if include_sources else (),
+        instrument_resolutions=(
+            InstrumentResolution(
+                query="TSLA",
+                status=InstrumentResolutionStatus.RESOLVED,
+                matches=(_instrument(),),
+                selected_instrument_id="instrument:equity:us:tsla",
+            ),
+        ),
         instrument_sections=(
             InstrumentReportSection(
                 instrument_id="instrument:equity:us:tsla",
@@ -149,3 +160,54 @@ def test_daily_report_without_candidates_requires_insufficient_evidence_summary(
     assert candidate_free.insufficient_evidence_summary is None
     with pytest.raises(ValidationError, match="insufficient_evidence_summary"):
         DailyReport.model_validate(candidate_free.model_dump(mode="python"))
+
+
+@pytest.mark.schema
+def test_daily_report_validates_related_instrument_evidence_ids() -> None:
+    report = _report().model_copy(
+        update={
+            "instruments": (
+                _instrument().model_copy(
+                    update={
+                        "related_instruments": (
+                            RelatedInstrument(
+                                instrument_id="instrument:sector:consumer-discretionary",
+                                relationship="sector_proxy",
+                                rationale="Sector proxy used for context.",
+                                evidence_ids=("missing-sector-evidence",),
+                            ),
+                        )
+                    }
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(ValidationError, match="related instrument evidence_ids"):
+        DailyReport.model_validate(report.model_dump(mode="python"))
+
+
+@pytest.mark.schema
+def test_daily_report_validates_resolution_selected_ids_against_report_instruments() -> None:
+    report = _report().model_copy(
+        update={
+            "instrument_resolutions": (
+                InstrumentResolution(
+                    query="NVDA",
+                    status=InstrumentResolutionStatus.RESOLVED,
+                    matches=(
+                        Instrument(
+                            instrument_id="instrument:equity:us:nvda",
+                            symbol="NVDA",
+                            display_name="NVIDIA Corp.",
+                            asset_class=AssetClass.STOCK,
+                        ),
+                    ),
+                    selected_instrument_id="instrument:equity:us:nvda",
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(ValidationError, match="instrument_resolutions"):
+        DailyReport.model_validate(report.model_dump(mode="python"))
