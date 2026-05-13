@@ -15,7 +15,7 @@ def build_server(repo_root: Path | None = None) -> Any:
     """
 
     try:
-        from mcp.server.fastmcp import FastMCP  # type: ignore[import-not-found]
+        from mcp.server.fastmcp import FastMCP  # type: ignore[import-not-found, unused-ignore]
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without optional extra
         raise RuntimeError(
             "The Phase 2 Codex MCP server requires the optional `codex-smoke` extra: "
