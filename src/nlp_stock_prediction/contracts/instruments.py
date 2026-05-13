@@ -1,4 +1,4 @@
-"""Instrument-universe contracts for the Phase 2 rebuild.
+"""Instrument-universe contracts for the Phase 3 rebuild.
 
 These models are intentionally broader than ticker-only contracts. They describe what the
 assistant is allowed to research, which provider identifiers point at it, and what evidence supports

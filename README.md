@@ -11,7 +11,7 @@ coordinates the work and writes the final Markdown/JSON report.
 
 ## Current State
 
-This branch is ready for Phase 2 work on instrument universe depth.
+This branch is ready for Phase 2 work on Codex orchestration and agentic report workflows.
 
 What exists now:
 

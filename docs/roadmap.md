@@ -1,6 +1,8 @@
 # Roadmap
 
-This roadmap describes the Codex-led prediction research assistant rebuild.
+This roadmap describes the Codex-led prediction research assistant rebuild. The implementation
+sequence is agentic-first: Codex orchestration comes before deeper universe and tool-suite expansion
+so the new direction develops around the assistant workflow from the start.
 
 ## Phase 0: Documentation Reset
 
@@ -39,7 +41,27 @@ Acceptance:
 - artifacts remain file-backed with hashes and paths in SQLite;
 - planning state can be created, updated, queried, and closed.
 
-## Phase 2: Instrument Universe
+## Phase 2: Codex Orchestrator
+
+Goal: make Codex the disciplined prediction research assistant.
+
+Build:
+
+- objective parsing;
+- tool selection;
+- cheap-screen-before-deep-dive workflow;
+- internet search evidence capture;
+- candidate synthesis;
+- contradiction handling;
+- report assembly.
+
+Acceptance:
+
+- Codex can run a daily report workflow;
+- Codex can run an on-demand prompt workflow;
+- every report candidate traces to evidence and artifacts.
+
+## Phase 3: Instrument Universe
 
 Goal: support a broad retail-accessible universe.
 
@@ -59,7 +81,7 @@ Acceptance:
 - ambiguous symbols require explicit resolution;
 - universe discovery can write instrument records.
 
-## Phase 3: Tool Suite
+## Phase 4: Tool Suite
 
 Goal: convert research capabilities into first-class independent tools.
 
@@ -80,26 +102,6 @@ Acceptance:
 - every tool writes typed artifacts;
 - every tool run is indexed in SQLite;
 - tool failures are recoverable and visible.
-
-## Phase 4: Codex Orchestrator
-
-Goal: make Codex the disciplined prediction research assistant.
-
-Build:
-
-- objective parsing;
-- tool selection;
-- cheap-screen-before-deep-dive workflow;
-- internet search evidence capture;
-- candidate synthesis;
-- contradiction handling;
-- report assembly.
-
-Acceptance:
-
-- Codex can run a daily report workflow;
-- Codex can run an on-demand prompt workflow;
-- every report candidate traces to evidence and artifacts.
 
 ## Phase 5: Prediction Reports
 

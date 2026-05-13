@@ -74,7 +74,7 @@ def _instrument(
                 provider_identifier="TSLA",
             ),
         ),
-        metadata={"phase": "phase2"},
+        metadata={"phase": "phase3"},
     )
 
 
