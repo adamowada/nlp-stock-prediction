@@ -12,8 +12,8 @@ buy or sell. Its output is a Markdown and JSON research report that separates so
 analysis, preserves dissenting context, and explains what would change the prediction.
 
 The project is in active development. The current implementation includes a deterministic offline
-research command, SQLite-backed planning and research storage, fixture-backed orchestration tools,
-and an opt-in Codex MCP smoke path.
+research command, SQLite-backed planning and research storage, Phase 3 instrument-universe
+contracts/storage, fixture-backed orchestration tools, and an opt-in Codex MCP smoke path.
 
 ## Contents
 
@@ -106,6 +106,24 @@ NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py 
 The Codex smoke path starts a local MCP server, exposes fixture-backed research tools, allows Codex
 to collect live-search evidence, and writes ignored artifacts under local output directories.
 
+## Current Instrument Universe
+
+Phase 3 adds the durable instrument-universe layer that reports and storage can share. The
+implemented contracts and SQLite helpers represent broad retail-accessible research targets:
+stocks, ETFs, crypto pairs, currency and commodity exposure, futures context, funds, indexes, and
+related proxies. Instrument records carry canonical IDs, symbols, display names, asset classes,
+venues, aliases, provider-specific IDs, related instruments, data availability, and
+tradability/access evidence.
+
+Resolution is explicit. A query can be `resolved`, `ambiguous`, `unsupported`, or `unavailable`;
+ambiguous symbols such as `AI` must keep multiple matches instead of silently choosing one.
+Watchlists are represented as named collections of instrument queries in contracts and as
+instrument-linked lists in SQLite.
+
+This layer is fixture-backed today. The default offline report and Phase 2 Codex smoke path can write
+instrument artifacts and registry rows without live universe providers. First-class live universe
+discovery tools and provider adapters remain future Phase 4 work.
+
 ## Configuration
 
 Local configuration is documented in [docs/configuration.md](docs/configuration.md).
@@ -152,6 +170,8 @@ src/nlp_stock_prediction/reporting/
 src/nlp_stock_prediction/storage/
                               SQLite schema initialization and storage helpers
 tests/                        Unit, contract, provider, storage, and orchestration tests
+tests/fixtures/tools/universe_discovery/
+                              Small Phase 3 instrument-universe fixture contracts
 scripts/                      Maintenance and smoke-test scripts
 docs/                         Architecture, contracts, configuration, roadmap, and testing docs
 plans/planning.sqlite3        Tracked planning database
@@ -218,4 +238,5 @@ NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python -m pytest -m codex_smoke
 ```
 
 See [docs/testing-plan.md](docs/testing-plan.md) for test layering, negative-case expectations, and
-acceptance criteria.
+acceptance criteria. Phase 3 fixture scenarios live under
+`tests/fixtures/tools/universe_discovery/`.
