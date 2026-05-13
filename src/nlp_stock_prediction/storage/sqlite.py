@@ -397,9 +397,7 @@ class SQLiteStore:
             ).fetchall()
         return tuple(_instrument_from_row(row) for row in rows)
 
-    def append_tradability_evidence(
-        self, record: InstrumentTradabilityEvidenceRecord
-    ) -> None:
+    def append_tradability_evidence(self, record: InstrumentTradabilityEvidenceRecord) -> None:
         _validate_required(record.instrument_id, "instrument_id")
         _validate_required(record.provider, "provider")
         _validate_required(record.status, "status")
@@ -1692,14 +1690,14 @@ def _load_json_object_tuple(value: str) -> tuple[JsonObject, ...]:
 
 
 def _json_required_text(value: JsonObject, key: str) -> str:
-    raw_value = value.get(key)
+    raw_value: object = value.get(key)
     if not isinstance(raw_value, str) or not raw_value.strip():
         raise ValueError(f"{key} must be a non-empty string")
     return raw_value
 
 
 def _json_optional_text(value: JsonObject, key: str) -> str | None:
-    raw_value = value.get(key)
+    raw_value: object = value.get(key)
     if raw_value is None:
         return None
     if not isinstance(raw_value, str):
@@ -1708,7 +1706,7 @@ def _json_optional_text(value: JsonObject, key: str) -> str | None:
 
 
 def _json_optional_float(value: JsonObject, key: str) -> float | None:
-    raw_value = value.get(key)
+    raw_value: object = value.get(key)
     if raw_value is None:
         return None
     if not isinstance(raw_value, int | float):
@@ -1717,7 +1715,7 @@ def _json_optional_float(value: JsonObject, key: str) -> float | None:
 
 
 def _json_optional_datetime(value: JsonObject, key: str) -> datetime | None:
-    raw_value = value.get(key)
+    raw_value: object = value.get(key)
     if raw_value is None:
         return None
     if isinstance(raw_value, datetime):

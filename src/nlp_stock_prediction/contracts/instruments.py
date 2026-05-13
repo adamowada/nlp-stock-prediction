@@ -259,7 +259,7 @@ class InstrumentUniverse(ContractModel):
     warnings: tuple[str, ...] = Field(default_factory=tuple)
     metadata: JsonObject = Field(default_factory=dict)
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def instrument_ids(self) -> tuple[str, ...]:
         return tuple(instrument.instrument_id for instrument in self.instruments)

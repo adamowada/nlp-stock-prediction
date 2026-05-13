@@ -48,10 +48,11 @@ def test_phase2_mcp_service_records_search_evidence_and_renders_report(tmp_path:
     assert str(evidence["evidence_id"]).startswith("evidence-codex-search-")
     assert str(universe["tool_run_id"]) == f"tool-dummy-universe-{run_id}"
     assert str(universe["universe_id"]).startswith("phase3-fixture-universe-")
-    assert "instrument:codex:TSLA" in universe["instrument_ids"]
-    assert "instrument:etf:us:spy" in universe["instrument_ids"]
-    assert "instrument:crypto:btc-usd" in universe["instrument_ids"]
-    assert "instrument:futures:cme:esm6" in universe["instrument_ids"]
+    instrument_ids = cast(list[str], universe["instrument_ids"])
+    assert "instrument:codex:TSLA" in instrument_ids
+    assert "instrument:etf:us:spy" in instrument_ids
+    assert "instrument:crypto:btc-usd" in instrument_ids
+    assert "instrument:futures:cme:esm6" in instrument_ids
     assert universe["warnings"]
     assert str(analysis["artifact_id"]).startswith("artifact-dummy-analysis-")
     assert str(candidate["candidate_id"]).startswith("candidate-tsla-")

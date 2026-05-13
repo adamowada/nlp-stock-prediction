@@ -121,7 +121,7 @@ class InstrumentRegistry:
             provider=provider_id.provider,
             namespace=provider_id.namespace,
             identifier=provider_id.identifier,
-            require_namespace=True,
+            require_namespace=provider_id.namespace is not None,
         )
 
     def resolve(self, query: InstrumentQuery) -> InstrumentResolution:

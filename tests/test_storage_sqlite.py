@@ -580,9 +580,7 @@ def test_instrument_registry_tables_round_trip_and_query_helpers(tmp_path: Path)
         item.instrument_id for item in store.find_instruments_by_symbol_or_alias("common-alias")
     ) == ("crypto:BTC", "equity:NASDAQ:TSLA")
     tesla_matches = store.find_instruments_by_symbol_or_alias("tesla")
-    assert tuple(item.instrument_id for item in tesla_matches) == (
-        "equity:NASDAQ:TSLA",
-    )
+    assert tuple(item.instrument_id for item in tesla_matches) == ("equity:NASDAQ:TSLA",)
     assert store.find_instrument_by_provider_id(
         "examplemarket", "ticker", "TSLA"
     ) == store.get_instrument("equity:NASDAQ:TSLA")
@@ -640,13 +638,12 @@ def test_instrument_upsert_replaces_normalized_children_idempotently(tmp_path: P
         )
     )
 
-    assert tuple(
-        item.instrument_id for item in store.find_instruments_by_symbol_or_alias("SPY ETF")
-    ) == ()
-    spy_trust_matches = store.find_instruments_by_symbol_or_alias("SPY Trust")
-    assert tuple(item.instrument_id for item in spy_trust_matches) == (
-        "etf:NYSEARCA:SPY",
+    assert (
+        tuple(item.instrument_id for item in store.find_instruments_by_symbol_or_alias("SPY ETF"))
+        == ()
     )
+    spy_trust_matches = store.find_instruments_by_symbol_or_alias("SPY Trust")
+    assert tuple(item.instrument_id for item in spy_trust_matches) == ("etf:NYSEARCA:SPY",)
     with store.connect() as connection:
         assert connection.execute("SELECT count(*) FROM instrument_aliases").fetchone()[0] == 1
         assert connection.execute("SELECT count(*) FROM instrument_provider_ids").fetchone()[0] == 1

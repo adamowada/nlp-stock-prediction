@@ -187,9 +187,7 @@ def _render_instrument_identity(instrument: Instrument) -> list[str]:
         for provider_id in instrument.provider_ids:
             namespace = f"/{provider_id.namespace}" if provider_id.namespace else ""
             url = f"; URL: {provider_id.url}" if provider_id.url else ""
-            lines.append(
-                f"  - {provider_id.provider}{namespace}: `{provider_id.identifier}`{url}"
-            )
+            lines.append(f"  - {provider_id.provider}{namespace}: `{provider_id.identifier}`{url}")
     else:
         lines.append("  - none")
 
@@ -363,8 +361,7 @@ def _format_optional_datetime(value: datetime | None) -> str:
 
 def _format_resolution_matches(matches: tuple[Instrument, ...]) -> str:
     return ", ".join(
-        f"`{match.instrument_id}` {match.symbol} ({match.asset_class.value})"
-        for match in matches
+        f"`{match.instrument_id}` {match.symbol} ({match.asset_class.value})" for match in matches
     )
 
 

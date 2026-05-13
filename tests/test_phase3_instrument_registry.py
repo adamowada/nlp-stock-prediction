@@ -111,6 +111,7 @@ def test_registry_upsert_get_and_lookup_round_trip_contract_instrument(tmp_path:
     assert stored == expected
     assert registry.find_by_symbol_or_alias("Tesla") == (stored,)
     assert registry.find_by_provider_id("ALPHA-VANTAGE", "symbol", "TSLA") == (stored,)
+    assert registry.find_by_provider_id("ALPHA-VANTAGE", None, "TSLA") == (stored,)
 
 
 def test_resolve_returns_ambiguity_and_uses_hints_to_disambiguate(tmp_path: Path) -> None:
