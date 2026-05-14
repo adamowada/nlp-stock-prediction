@@ -19,6 +19,10 @@ from nlp_stock_prediction.contracts.report import (
     DailyReport,
     DataFreshnessSummary,
     InstrumentReportSection,
+    InsufficientEvidenceReport,
+    MaterialClaimTrace,
+    PriorOutcomeReview,
+    ReportSourceReference,
 )
 from nlp_stock_prediction.instruments.repository import instrument_from_record
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex, ArtifactType
@@ -125,6 +129,28 @@ def render_phase2_prediction_report(
         _audit_artifact_from_record(record, repo_root)
         for record in store.list_artifacts_for_run(run.run_id)
     )
+    source_references = _report_source_references(
+        evidence_sources=evidence_sources,
+        prediction_candidates=prediction_candidates,
+        audit_artifacts=audit_artifacts,
+    )
+    material_claim_traces = _material_claim_traces(
+        prediction_candidates=prediction_candidates,
+        source_references=source_references,
+    )
+    prior_outcome_reviews = _prior_outcome_reviews(prediction_candidates)
+    provider_name = "phase4-fixture-tools" if is_phase4_report else "codex-web-search"
+    insufficient_evidence = (
+        None
+        if prediction_candidates
+        else InsufficientEvidenceReport(
+            summary=insufficient_evidence_summary or "No candidate could be synthesized.",
+            blocking_reasons=(
+                insufficient_evidence_summary or "No candidate could be synthesized.",
+            ),
+            provider_names=(provider_name,),
+        )
+    )
     has_codex_search_evidence = bool(evidence_sources)
     stale_provider_names = _stale_provider_names(evidence_sources)
     provider_status = (
@@ -134,7 +160,6 @@ def render_phase2_prediction_report(
         if has_codex_search_evidence
         else ProviderStatus.EMPTY
     )
-    provider_name = "phase4-fixture-tools" if is_phase4_report else "codex-web-search"
     report = DailyReport(
         schema_version="daily-report.v2",
         run_id=run.run_id,
@@ -162,9 +187,13 @@ def render_phase2_prediction_report(
         evidence_sources=evidence_sources,
         instrument_sections=(instrument_section,),
         prediction_candidates=prediction_candidates,
+        insufficient_evidence=insufficient_evidence,
         insufficient_evidence_summary=None
         if prediction_candidates
         else insufficient_evidence_summary or "No candidate could be synthesized.",
+        source_references=source_references,
+        material_claim_traces=material_claim_traces,
+        prior_outcome_reviews=prior_outcome_reviews,
         audit_manifest=AuditManifest(
             run_id=run.run_id,
             schema_version="audit-manifest.v2",
@@ -252,6 +281,115 @@ def render_phase2_prediction_report(
         "json_path": paths.json_path.as_posix(),
         "audit_manifest_path": paths.audit_manifest_path.as_posix(),
     }
+
+
+def _report_source_references(
+    *,
+    evidence_sources: tuple[object, ...],
+    prediction_candidates: tuple[object, ...],
+    audit_artifacts: tuple[AuditArtifact, ...],
+) -> tuple[ReportSourceReference, ...]:
+    references: list[ReportSourceReference] = []
+    candidate_ids = tuple(
+        candidate_id
+        for candidate_id in (
+            getattr(candidate, "candidate_id", None) for candidate in prediction_candidates
+        )
+        if isinstance(candidate_id, str) and candidate_id
+    )
+    for evidence in evidence_sources[:5]:
+        evidence_id = getattr(evidence, "evidence_id", None)
+        if not isinstance(evidence_id, str) or not evidence_id:
+            continue
+        references.append(
+            ReportSourceReference(
+                reference_id=f"source-ref-{evidence_id}",
+                label=f"Source evidence {evidence_id}",
+                reference_type="source_evidence",
+                evidence_ids=(evidence_id,),
+                candidate_ids=candidate_ids,
+            )
+        )
+    for artifact in audit_artifacts:
+        if artifact.artifact_type not in {"prediction_evaluation", "technical_package"}:
+            continue
+        references.append(
+            ReportSourceReference(
+                reference_id=f"source-ref-{artifact.artifact_id}",
+                label=f"Artifact {artifact.artifact_id}",
+                reference_type=(
+                    "prediction_evaluation"
+                    if artifact.artifact_type == "prediction_evaluation"
+                    else "tool_artifact"
+                ),
+                artifact_ids=(artifact.artifact_id,),
+                candidate_ids=candidate_ids,
+            )
+        )
+    return tuple(references)
+
+
+def _material_claim_traces(
+    *,
+    prediction_candidates: tuple[object, ...],
+    source_references: tuple[ReportSourceReference, ...],
+) -> tuple[MaterialClaimTrace, ...]:
+    if not prediction_candidates:
+        return ()
+    source_reference_ids = tuple(reference.reference_id for reference in source_references)
+    traces: list[MaterialClaimTrace] = []
+    for candidate in prediction_candidates:
+        candidate_id = getattr(candidate, "candidate_id", None)
+        thesis = getattr(candidate, "thesis", None)
+        evidence_for = getattr(candidate, "evidence_for", ())
+        evidence_against = getattr(candidate, "evidence_against", ())
+        signal_artifact_ids = getattr(candidate, "signal_artifact_ids", ())
+        if not isinstance(candidate_id, str) or not isinstance(thesis, str):
+            continue
+        has_trace_references = bool(
+            evidence_for or evidence_against or signal_artifact_ids or source_reference_ids
+        )
+        traces.append(
+            MaterialClaimTrace(
+                claim_id=f"claim-{candidate_id}",
+                claim=thesis,
+                claim_type="analysis" if has_trace_references else "labeled_inference",
+                evidence=tuple(evidence_for) + tuple(evidence_against),
+                artifact_ids=tuple(signal_artifact_ids),
+                source_reference_ids=source_reference_ids,
+                candidate_ids=(candidate_id,),
+                rationale=(
+                    None
+                    if has_trace_references
+                    else "Candidate is carried as structured insufficient-evidence context."
+                ),
+            )
+        )
+    return tuple(traces)
+
+
+def _prior_outcome_reviews(
+    prediction_candidates: tuple[object, ...],
+) -> tuple[PriorOutcomeReview, ...]:
+    reviews: list[PriorOutcomeReview] = []
+    for candidate in prediction_candidates:
+        candidate_id = getattr(candidate, "candidate_id", None)
+        prior_ids = getattr(candidate, "prior_outcome_review_ids", ())
+        if not isinstance(candidate_id, str):
+            continue
+        for review_id in prior_ids:
+            if not isinstance(review_id, str) or not review_id:
+                continue
+            reviews.append(
+                PriorOutcomeReview(
+                    review_id=review_id,
+                    status="not_available",
+                    summary="No prior outcome review is available for this run.",
+                    candidate_id=candidate_id,
+                    limitations=("No stored prior outcome artifact was linked to this candidate.",),
+                )
+            )
+    return tuple(reviews)
 
 
 def _primary_instrument(

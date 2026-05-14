@@ -25,6 +25,7 @@ from nlp_stock_prediction.contracts import (
     MacroSeries,
     MacroSnapshot,
     PredictionCandidate,
+    PredictionChangeTrigger,
     PredictionStatus,
     ProviderHealth,
     ProviderMetric,
@@ -442,6 +443,16 @@ def _real_tool_candidate(
         signal_artifact_ids=(signal_artifact_id,),
         assumptions=("Fixture providers are deterministic and offline.",),
         uncertainties=("Provider fixtures do not represent live market conditions.",),
+        change_triggers=(
+            PredictionChangeTrigger(
+                trigger_id="change-phase4-real-tool-live-evidence",
+                summary="Fresh live provider evidence would change the fixture scenario support.",
+                trigger_type="provider_refresh",
+                evidence=(EvidenceReference(evidence_id=evidence_id),),
+                artifact_ids=(signal_artifact_id,),
+                rationale="The Phase 4 gate uses controlled fixture providers.",
+            ),
+        ),
         metadata={"symbol": "TSLA", "gate": "phase4-real-tool-suite"},
     )
 

@@ -16,18 +16,24 @@ from nlp_stock_prediction.contracts import (
     DailyReport,
     DataFreshnessSummary,
     Direction,
+    DissentingEvidence,
     EvidenceReference,
     Instrument,
     InstrumentReportSection,
     InstrumentResolution,
     JsonObject,
+    MaterialClaimTrace,
     PredictionCandidate,
+    PredictionChangeTrigger,
     PredictionStatus,
+    PriorOutcomeReview,
     ProviderHealth,
+    ReportSourceReference,
     RunConfig,
     SourceEvidence,
     TechnicalAnalysis,
     TimeHorizon,
+    UncertaintyDriver,
 )
 from nlp_stock_prediction.orchestration.context import RunContext
 from nlp_stock_prediction.orchestration.dummy_fixtures import (
@@ -221,11 +227,38 @@ class DummyPredictionTool:
                 confidence=0.37,
                 evidence_for=(evidence_refs["dummy-news-tsla-001"],),
                 evidence_against=(evidence_refs["dummy-market-spy-001"],),
+                dissenting_evidence=(
+                    DissentingEvidence(
+                        summary="Broad-market dummy evidence limits the single-name scenario.",
+                        evidence=(evidence_refs["dummy-market-spy-001"],),
+                    ),
+                ),
                 assumptions=("Dummy tools emit deterministic fixture-like research artifacts.",),
                 uncertainties=(
                     "Dummy evidence is not live provider evidence.",
                     "The scenario is research context and not a buy or sell instruction.",
                 ),
+                uncertainty_drivers=(
+                    UncertaintyDriver(
+                        driver_id="uncertainty-dummy-live-coverage",
+                        summary="Dummy evidence cannot establish live provider freshness.",
+                        severity="high",
+                        evidence=(evidence_refs["dummy-news-tsla-001"],),
+                    ),
+                ),
+                change_triggers=(
+                    PredictionChangeTrigger(
+                        trigger_id="change-dummy-live-sources",
+                        summary="Live source evidence would be needed to change dummy support.",
+                        trigger_type="provider_refresh",
+                        evidence=(
+                            evidence_refs["dummy-news-tsla-001"],
+                            evidence_refs["dummy-market-spy-001"],
+                        ),
+                        rationale="The dummy path is structural validation only.",
+                    ),
+                ),
+                prior_outcome_review_ids=("prior-outcome-dummy-unavailable",),
             ),
         )
         data_freshness = DataFreshnessSummary(
@@ -303,6 +336,7 @@ class DummyReportAssemblyTool:
             command_args=context.command_args,
             prediction_trace_ids=tuple(candidate.candidate_id for candidate in predictions),
         )
+        first_prediction = predictions[0]
         universe_summary = universe_metadata.get("summary")
         report = DailyReport(
             schema_version="daily-report.v2",
@@ -324,6 +358,40 @@ class DummyReportAssemblyTool:
             instrument_resolutions=resolutions,
             instrument_sections=sections,
             prediction_candidates=predictions,
+            source_references=(
+                ReportSourceReference(
+                    reference_id="source-ref-dummy-support",
+                    label="Dummy supporting evidence",
+                    reference_type="source_evidence",
+                    evidence_ids=("dummy-news-tsla-001",),
+                    candidate_ids=(first_prediction.candidate_id,),
+                ),
+                ReportSourceReference(
+                    reference_id="source-ref-dummy-dissent",
+                    label="Dummy dissenting evidence",
+                    reference_type="source_evidence",
+                    evidence_ids=("dummy-market-spy-001",),
+                    candidate_ids=(first_prediction.candidate_id,),
+                ),
+            ),
+            material_claim_traces=(
+                MaterialClaimTrace(
+                    claim_id="claim-dummy-headline-sensitivity",
+                    claim=first_prediction.thesis,
+                    claim_type="analysis",
+                    evidence=first_prediction.evidence_for,
+                    source_reference_ids=("source-ref-dummy-support",),
+                    candidate_ids=(first_prediction.candidate_id,),
+                ),
+            ),
+            prior_outcome_reviews=(
+                PriorOutcomeReview(
+                    review_id="prior-outcome-dummy-unavailable",
+                    status="not_available",
+                    summary="No prior outcome review exists for the dummy report path.",
+                    limitations=("Dummy reports do not track prior live outcomes.",),
+                ),
+            ),
             audit_manifest=manifest,
         )
         return ToolRunResult(tool_id=self.spec.tool_id, updates={"daily_report": report})

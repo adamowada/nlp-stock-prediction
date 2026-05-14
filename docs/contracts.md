@@ -190,6 +190,15 @@ referenced instruments, and requires evidence-reference quotes/spans to match th
 evidence text. Markdown rendering includes published/created timestamps, data-quality metadata,
 strategy cluster summaries when present, and audit manifest references or artifact entries.
 
+Phase 5 report contracts add first-class structures for dissenting evidence, uncertainty drivers,
+prediction change triggers, prior-outcome reviews, structured insufficient-evidence outcomes,
+report-level source references, and material claim traces. Reports with candidates must include
+material claim traces covering every candidate, and each cited source reference, prior review,
+evidence ID, and audit artifact ID must resolve inside the report bundle. Report source references
+must point to source evidence, tool artifacts, provider context, or prior outcomes rather than only
+to a candidate. Candidate records must either include specific change triggers or an explicit
+limitation explaining why the report cannot define them yet.
+
 ## Planning State
 
 Active plans belong in the tracked planning SQLite database. Planning contracts include:

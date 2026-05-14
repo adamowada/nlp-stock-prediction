@@ -16,7 +16,13 @@ from nlp_stock_prediction.contracts.analysis import (
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.instruments import Instrument, InstrumentResolution
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
-from nlp_stock_prediction.contracts.report import DailyReport, PredictionCandidate
+from nlp_stock_prediction.contracts.report import (
+    DailyReport,
+    MaterialClaimTrace,
+    PredictionCandidate,
+    PriorOutcomeReview,
+    ReportSourceReference,
+)
 from nlp_stock_prediction.reporting.view import ReportView
 
 
@@ -147,13 +153,31 @@ def render_markdown_report(report: DailyReport) -> str:
         for candidate in report.prediction_candidates:
             lines.extend(_render_candidate(candidate))
     else:
-        lines.extend(
-            [
-                _markdown_text(report.insufficient_evidence_summary)
-                or "No prediction scenarios have enough evidence for this report.",
-                "",
-            ]
-        )
+        lines.extend(_render_insufficient_evidence(report))
+
+    lines.extend(["## Prior-Outcome Review", ""])
+    if report.prior_outcome_reviews:
+        for review in report.prior_outcome_reviews:
+            lines.extend(_render_prior_outcome_review(review))
+    else:
+        lines.append("- No prior-outcome review records available.")
+    lines.append("")
+
+    lines.extend(["## Material Claim Traceability", ""])
+    if report.material_claim_traces:
+        for trace in report.material_claim_traces:
+            lines.extend(_render_material_claim_trace(trace))
+    else:
+        lines.append("- No material claim trace records available.")
+    lines.append("")
+
+    lines.extend(["## Report Source References", ""])
+    if report.source_references:
+        for source_reference in report.source_references:
+            lines.extend(_render_source_reference(source_reference))
+    else:
+        lines.append("- No report source references available.")
+    lines.append("")
 
     lines.extend(["## Evidence Ledger", ""])
     if report.evidence_sources:
@@ -175,12 +199,14 @@ def render_markdown_report(report: DailyReport) -> str:
                 f"{_markdown_text(artifact.path)}{count}{digest}"
             )
     elif view.audit_reference is not None:
-        reference = view.audit_reference
-        digest = f", sha256 `{_markdown_code(reference.sha256)}`" if reference.sha256 else ""
-        path = f", path {_markdown_text(reference.path)}" if reference.path else ""
+        audit_reference = view.audit_reference
+        digest = (
+            f", sha256 `{_markdown_code(audit_reference.sha256)}`" if audit_reference.sha256 else ""
+        )
+        path = f", path {_markdown_text(audit_reference.path)}" if audit_reference.path else ""
         lines.append(
-            f"- `{_markdown_code(reference.reference_id)}` "
-            f"({_markdown_text(reference.reference_type)}){path}{digest}"
+            f"- `{_markdown_code(audit_reference.reference_id)}` "
+            f"({_markdown_text(audit_reference.reference_type)}){path}{digest}"
         )
     else:
         lines.append("- Audit manifest unavailable.")
@@ -287,8 +313,13 @@ def _render_candidate(candidate: PredictionCandidate) -> list[str]:
         f"  - Baseline: {_markdown_text(candidate.baseline)}",
         f"  - Evidence for: {_format_evidence_ids(candidate.evidence_for)}",
         f"  - Evidence against: {_format_evidence_ids(candidate.evidence_against)}",
+        f"  - Dissenting evidence: {_format_dissenting_evidence(candidate)}",
         f"  - Assumptions: {_format_list(candidate.assumptions)}",
         f"  - Uncertainties: {_format_list(candidate.uncertainties)}",
+        f"  - Uncertainty drivers: {_format_uncertainty_drivers(candidate)}",
+        f"  - What would change: {_format_change_triggers(candidate)}",
+        f"  - Change trigger limitations: {_format_list(candidate.change_trigger_limitations)}",
+        f"  - Prior outcome reviews: {_format_code_list(candidate.prior_outcome_review_ids)}",
     ]
     if candidate.signal_artifact_ids:
         lines.append(f"  - Signal artifacts: {_format_code_list(candidate.signal_artifact_ids)}")
@@ -318,6 +349,68 @@ def _render_candidate_evaluation_metadata(candidate: PredictionCandidate) -> lis
     if isinstance(artifact_id, str) and artifact_id.strip():
         line = f"{line}; artifact `{_markdown_code(artifact_id)}`"
     return [line]
+
+
+def _render_insufficient_evidence(report: DailyReport) -> list[str]:
+    if report.insufficient_evidence is None:
+        return [
+            _markdown_text(report.insufficient_evidence_summary)
+            or "No prediction scenarios have enough evidence for this report.",
+            "",
+        ]
+    insufficient = report.insufficient_evidence
+    lines = [
+        _markdown_text(insufficient.summary),
+        "",
+        f"- Blocking reasons: {_format_list(insufficient.blocking_reasons)}",
+        f"- Missing evidence types: {_format_list(insufficient.missing_evidence_types)}",
+        f"- Providers: {_format_code_list(insufficient.provider_names)}",
+        f"- Evidence: {_format_evidence_ids(insufficient.evidence)}",
+        f"- Artifacts: {_format_code_list(insufficient.artifact_ids)}",
+        "",
+    ]
+    return lines
+
+
+def _render_prior_outcome_review(review: PriorOutcomeReview) -> list[str]:
+    return [
+        f"- `{_markdown_code(review.review_id)}` "
+        f"{_markdown_text(review.status)}: "
+        f"{_markdown_text(review.summary)}",
+        f"  - Candidate: {_format_optional_code(review.candidate_id)}",
+        f"  - Instrument: {_format_optional_code(review.instrument_id)}",
+        f"  - Reviewed at: {_format_optional_datetime(review.reviewed_at)}",
+        f"  - Outcome evidence: {_format_evidence_ids(review.outcome_evidence)}",
+        f"  - Artifacts: {_format_code_list(review.artifact_ids)}",
+        f"  - Limitations: {_format_list(review.limitations)}",
+    ]
+
+
+def _render_material_claim_trace(trace: MaterialClaimTrace) -> list[str]:
+    return [
+        f"- `{_markdown_code(trace.claim_id)}` "
+        f"{_markdown_text(trace.claim_type)}: "
+        f"{_markdown_text(trace.claim)}",
+        f"  - Evidence: {_format_evidence_ids(trace.evidence)}",
+        f"  - Artifacts: {_format_code_list(trace.artifact_ids)}",
+        f"  - Source references: {_format_code_list(trace.source_reference_ids)}",
+        f"  - Candidates: {_format_code_list(trace.candidate_ids)}",
+        (f"  - Prior outcome reviews: {_format_code_list(trace.prior_outcome_review_ids)}"),
+        f"  - Providers: {_format_code_list(trace.provider_names)}",
+    ]
+
+
+def _render_source_reference(reference: ReportSourceReference) -> list[str]:
+    return [
+        f"- `{_markdown_code(reference.reference_id)}` "
+        f"{_markdown_text(reference.reference_type)}: "
+        f"{_markdown_text(reference.label)}",
+        f"  - Evidence IDs: {_format_code_list(reference.evidence_ids)}",
+        f"  - Artifact IDs: {_format_code_list(reference.artifact_ids)}",
+        f"  - Providers: {_format_code_list(reference.provider_names)}",
+        f"  - Candidates: {_format_code_list(reference.candidate_ids)}",
+        (f"  - Prior outcome reviews: {_format_code_list(reference.prior_outcome_review_ids)}"),
+    ]
 
 
 def _render_evidence_ledger(evidence_sources: tuple[SourceEvidence, ...]) -> list[str]:
@@ -399,6 +492,37 @@ def _format_evidence_ids(evidence: tuple[EvidenceReference, ...]) -> str:
     if not evidence:
         return "none"
     return ", ".join(f"`{_markdown_code(reference.evidence_id)}`" for reference in evidence)
+
+
+def _format_dissenting_evidence(candidate: PredictionCandidate) -> str:
+    if not candidate.dissenting_evidence:
+        return "none"
+    parts = []
+    for dissent in candidate.dissenting_evidence:
+        parts.append(
+            f"{dissent.impact}: {_markdown_text(dissent.summary)} "
+            f"({_format_evidence_ids(dissent.evidence)})"
+        )
+    return "; ".join(parts)
+
+
+def _format_uncertainty_drivers(candidate: PredictionCandidate) -> str:
+    if not candidate.uncertainty_drivers:
+        return "none"
+    return "; ".join(
+        f"`{_markdown_code(driver.driver_id)}` {driver.severity}: {_markdown_text(driver.summary)}"
+        for driver in candidate.uncertainty_drivers
+    )
+
+
+def _format_change_triggers(candidate: PredictionCandidate) -> str:
+    if not candidate.change_triggers:
+        return "none"
+    return "; ".join(
+        f"`{_markdown_code(trigger.trigger_id)}` {trigger.trigger_type}: "
+        f"{_markdown_text(trigger.summary)}"
+        for trigger in candidate.change_triggers
+    )
 
 
 def _format_list(values: tuple[str, ...]) -> str:

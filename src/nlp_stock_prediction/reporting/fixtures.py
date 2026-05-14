@@ -13,6 +13,7 @@ from nlp_stock_prediction.contracts import (
     DailyReport,
     DataFreshnessSummary,
     Direction,
+    DissentingEvidence,
     EvidenceReference,
     FreshnessStatus,
     Instrument,
@@ -20,10 +21,14 @@ from nlp_stock_prediction.contracts import (
     InstrumentResolution,
     InstrumentResolutionStatus,
     JsonObject,
+    MaterialClaimTrace,
     PredictionCandidate,
+    PredictionChangeTrigger,
     PredictionStatus,
+    PriorOutcomeReview,
     ProviderHealth,
     RelatedInstrument,
+    ReportSourceReference,
     RetrievalMethod,
     RunConfig,
     SourceEvidence,
@@ -32,6 +37,7 @@ from nlp_stock_prediction.contracts import (
     TechnicalAnalysis,
     TimeHorizon,
     TradabilityStatus,
+    UncertaintyDriver,
 )
 from nlp_stock_prediction.contracts.instruments import (
     InstrumentDataAvailability,
@@ -141,11 +147,50 @@ def build_offline_fixture_bundle(config: RunConfig) -> OfflineFixtureBundle:
         confidence=0.41,
         evidence_for=(evidence_refs["fixture-news-tsla-001"],),
         evidence_against=(evidence_refs["fixture-market-spy-001"],),
+        dissenting_evidence=(
+            DissentingEvidence(
+                summary="Broad-index regime evidence could dominate single-name headline effects.",
+                evidence=(evidence_refs["fixture-market-spy-001"],),
+                impact="limits",
+            ),
+        ),
         assumptions=("Offline fixtures are a deterministic contract exercise.",),
         uncertainties=(
             "Synthetic fixture evidence cannot substitute for live provider freshness.",
             "Market-wide regime changes could dominate issuer-specific evidence.",
         ),
+        uncertainty_drivers=(
+            UncertaintyDriver(
+                driver_id="uncertainty-tsla-fixture-freshness",
+                summary="The fixture packet is deterministic and not a live provider refresh.",
+                severity="high",
+                evidence=(evidence_refs["fixture-news-tsla-001"],),
+            ),
+        ),
+        change_triggers=(
+            PredictionChangeTrigger(
+                trigger_id="change-tsla-live-provider-refresh",
+                summary=(
+                    "A live provider refresh with fresh delivery, margin, or market-regime "
+                    "evidence would change the scenario support."
+                ),
+                trigger_type="provider_refresh",
+                evidence=(
+                    evidence_refs["fixture-news-tsla-001"],
+                    evidence_refs["fixture-market-spy-001"],
+                ),
+                rationale=(
+                    "The fixture packet marks the scenario as context rather than live support."
+                ),
+            ),
+        ),
+        prior_outcome_review_ids=("prior-outcome-tsla-unavailable",),
+    )
+    prior_review = PriorOutcomeReview(
+        review_id="prior-outcome-tsla-unavailable",
+        status="not_available",
+        summary="No prior prediction outcome is available in this offline fixture report.",
+        limitations=("The fixture report does not include a prior stored candidate outcome.",),
     )
     report = DailyReport(
         schema_version="daily-report.v2",
@@ -173,6 +218,44 @@ def build_offline_fixture_bundle(config: RunConfig) -> OfflineFixtureBundle:
         instrument_resolutions=_instrument_resolutions(instruments),
         instrument_sections=sections,
         prediction_candidates=(candidate,),
+        source_references=(
+            ReportSourceReference(
+                reference_id="source-ref-tsla-news",
+                label="TSLA headline sensitivity source evidence",
+                reference_type="source_evidence",
+                evidence_ids=("fixture-news-tsla-001",),
+                candidate_ids=(candidate.candidate_id,),
+            ),
+            ReportSourceReference(
+                reference_id="source-ref-spy-regime",
+                label="SPY broad-market regime context",
+                reference_type="source_evidence",
+                evidence_ids=("fixture-market-spy-001",),
+                candidate_ids=(candidate.candidate_id,),
+            ),
+        ),
+        material_claim_traces=(
+            MaterialClaimTrace(
+                claim_id="claim-tsla-headline-sensitivity",
+                claim=(
+                    "TSLA may remain unusually sensitive to delivery, margin, and autonomy "
+                    "headlines over the short swing horizon."
+                ),
+                claim_type="analysis",
+                evidence=(evidence_refs["fixture-news-tsla-001"],),
+                source_reference_ids=("source-ref-tsla-news",),
+                candidate_ids=(candidate.candidate_id,),
+            ),
+            MaterialClaimTrace(
+                claim_id="claim-tsla-market-regime-dissent",
+                claim="Broad-index regime evidence may limit the TSLA scenario support.",
+                claim_type="source_observation",
+                evidence=(evidence_refs["fixture-market-spy-001"],),
+                source_reference_ids=("source-ref-spy-regime",),
+                candidate_ids=(candidate.candidate_id,),
+            ),
+        ),
+        prior_outcome_reviews=(prior_review,),
         audit_manifest=AuditManifest(
             run_id=f"research-{config.run_date.isoformat()}",
             schema_version="audit-manifest.v2",

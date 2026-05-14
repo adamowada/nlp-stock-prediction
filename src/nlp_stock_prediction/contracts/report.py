@@ -50,6 +50,201 @@ class DataFreshnessSummary(ContractModel):
         return self
 
 
+class DissentingEvidence(ContractModel):
+    """Source-backed evidence that weakens, limits, or contradicts a candidate."""
+
+    summary: NonEmptyStr
+    evidence: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
+    artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    impact: Literal["weakens", "contradicts", "limits", "neutral_context"] = "limits"
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_dissenting_evidence(self) -> DissentingEvidence:
+        if not (self.evidence or self.artifact_ids):
+            raise ValueError("dissenting evidence requires evidence or artifact references")
+        _validate_report_authored_language(self.summary)
+        return self
+
+
+class UncertaintyDriver(ContractModel):
+    """One explicit driver of uncertainty in a prediction scenario."""
+
+    driver_id: NonEmptyStr
+    summary: NonEmptyStr
+    severity: Literal["low", "medium", "high"] = "medium"
+    evidence: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
+    artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_uncertainty_language(self) -> UncertaintyDriver:
+        _validate_report_authored_language(self.summary)
+        return self
+
+
+class PredictionChangeTrigger(ContractModel):
+    """Condition or new evidence that would materially change a prediction."""
+
+    trigger_id: NonEmptyStr
+    summary: NonEmptyStr
+    trigger_type: Literal[
+        "new_source_evidence",
+        "provider_refresh",
+        "dissent_resolved",
+        "baseline_change",
+        "outcome_data",
+        "data_quality",
+        "instrument_resolution",
+    ]
+    evidence: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
+    artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    rationale: str | None = None
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_change_trigger(self) -> PredictionChangeTrigger:
+        if not (self.evidence or self.artifact_ids or self.rationale):
+            raise ValueError("prediction change triggers require evidence, artifacts, or rationale")
+        _validate_report_authored_language(self.summary, self.rationale)
+        return self
+
+
+class PriorOutcomeReview(ContractModel):
+    """Review of a prior prediction scenario using later available evidence."""
+
+    review_id: NonEmptyStr
+    status: Literal["available", "not_available", "pending", "stale", "unavailable"]
+    summary: NonEmptyStr
+    candidate_id: str | None = None
+    instrument_id: str | None = None
+    original_report_date: date | None = None
+    reviewed_at: AwareDatetime | None = None
+    horizon: TimeHorizon = TimeHorizon.UNKNOWN
+    outcome_evidence: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
+    artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_prior_outcome_review(self) -> PriorOutcomeReview:
+        if self.status == "available" and not (
+            self.candidate_id and (self.outcome_evidence or self.artifact_ids)
+        ):
+            raise ValueError(
+                "available prior outcome reviews require a candidate and outcome references"
+            )
+        if self.status != "available" and not self.limitations:
+            raise ValueError("unavailable prior outcome reviews require limitations")
+        _validate_report_authored_language(self.summary, *self.limitations)
+        return self
+
+
+class InsufficientEvidenceReport(ContractModel):
+    """Structured no-candidate report outcome."""
+
+    status: Literal["insufficient_evidence"] = "insufficient_evidence"
+    summary: NonEmptyStr
+    blocking_reasons: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    missing_evidence_types: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    provider_names: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    evidence: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
+    artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_insufficient_evidence(self) -> InsufficientEvidenceReport:
+        if not (self.blocking_reasons or self.missing_evidence_types or self.provider_names):
+            raise ValueError(
+                "insufficient-evidence reports require reasons, missing evidence types, "
+                "or provider names"
+            )
+        _validate_report_authored_language(
+            self.summary,
+            *self.blocking_reasons,
+            *self.missing_evidence_types,
+        )
+        return self
+
+
+class ReportSourceReference(ContractModel):
+    """Report-level reference to source evidence, artifacts, providers, or prior reviews."""
+
+    reference_id: NonEmptyStr
+    label: NonEmptyStr
+    reference_type: Literal[
+        "source_evidence",
+        "tool_artifact",
+        "baseline",
+        "prediction_evaluation",
+        "prior_outcome",
+        "provider_health",
+        "instrument_resolution",
+    ]
+    evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    provider_names: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    candidate_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    prior_outcome_review_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_reference_targets(self) -> ReportSourceReference:
+        if not (
+            self.evidence_ids
+            or self.artifact_ids
+            or self.provider_names
+            or self.prior_outcome_review_ids
+        ):
+            raise ValueError("report source references require at least one source target")
+        _validate_report_authored_language(self.label)
+        return self
+
+
+class MaterialClaimTrace(ContractModel):
+    """Trace for one material report-authored claim."""
+
+    claim_id: NonEmptyStr
+    claim: NonEmptyStr
+    claim_type: Literal[
+        "source_observation",
+        "analysis",
+        "baseline",
+        "prediction_evaluation",
+        "prior_outcome",
+        "provider_health",
+        "instrument_resolution",
+        "labeled_inference",
+        "risk_policy",
+    ]
+    evidence: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
+    artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    source_reference_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    candidate_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    prior_outcome_review_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    provider_names: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    rationale: str | None = None
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_claim_trace(self) -> MaterialClaimTrace:
+        has_references = bool(
+            self.evidence
+            or self.artifact_ids
+            or self.source_reference_ids
+            or self.candidate_ids
+            or self.prior_outcome_review_ids
+            or self.provider_names
+        )
+        if self.claim_type == "labeled_inference":
+            if not self.rationale:
+                raise ValueError("labeled inference claim traces require rationale")
+        elif not has_references:
+            raise ValueError("material claim traces require trace references")
+        _validate_report_authored_language(self.claim, self.rationale)
+        return self
+
+
 class PredictionCandidate(ContractModel):
     """Evidence-backed prediction scenario, not a trade instruction."""
 
@@ -64,8 +259,13 @@ class PredictionCandidate(ContractModel):
     confidence: Confidence
     evidence_for: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
     evidence_against: tuple[EvidenceReference, ...] = Field(default_factory=tuple)
+    dissenting_evidence: tuple[DissentingEvidence, ...] = Field(default_factory=tuple)
     assumptions: tuple[str, ...] = Field(default_factory=tuple)
     uncertainties: tuple[str, ...] = Field(default_factory=tuple)
+    uncertainty_drivers: tuple[UncertaintyDriver, ...] = Field(default_factory=tuple)
+    change_triggers: tuple[PredictionChangeTrigger, ...] = Field(default_factory=tuple)
+    change_trigger_limitations: tuple[str, ...] = Field(default_factory=tuple)
+    prior_outcome_review_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     signal_artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
     metadata: JsonObject = Field(default_factory=dict)
 
@@ -77,13 +277,34 @@ class PredictionCandidate(ContractModel):
             PredictionStatus.CONTRADICTED,
             PredictionStatus.INSUFFICIENT_EVIDENCE,
             PredictionStatus.UNAVAILABLE,
-        } and not (self.evidence_for or self.evidence_against or self.uncertainties):
+        } and not (
+            self.evidence_for
+            or self.evidence_against
+            or self.dissenting_evidence
+            or self.uncertainties
+            or self.uncertainty_drivers
+        ):
             raise ValueError("non-supported predictions require evidence or uncertainty context")
+        if not (
+            self.evidence_for
+            or self.evidence_against
+            or self.dissenting_evidence
+            or self.uncertainties
+            or self.uncertainty_drivers
+        ):
+            raise ValueError(
+                "prediction candidates require supporting/dissenting context or uncertainty"
+            )
+        if not (self.change_triggers or self.change_trigger_limitations):
+            raise ValueError(
+                "prediction candidates require change triggers or change trigger limitations"
+            )
         _validate_report_authored_language(
             self.thesis,
             self.baseline,
             *self.assumptions,
             *self.uncertainties,
+            *self.change_trigger_limitations,
         )
         return self
 
@@ -194,6 +415,10 @@ DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
         "Provider Warnings",
         "Instrument Sections",
         "Prediction Scenarios Or Insufficient-Evidence Summary",
+        "Prior-Outcome Review",
+        "Material Claim Traceability",
+        "Report Source References",
+        "Evidence Ledger",
         "Audit Artifacts",
     ),
     instrument_section_heading_template="{symbol}",
@@ -206,6 +431,9 @@ DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
     final_section_headings=(
         "Prediction Scenarios",
         "Insufficient-Evidence Summary",
+        "Prior-Outcome Review",
+        "Material Claim Traceability",
+        "Report Source References",
     ),
     required_footer_headings=("Audit Artifacts",),
 )
@@ -232,7 +460,11 @@ class DailyReport(ContractModel):
     instrument_resolutions: tuple[InstrumentResolution, ...] = Field(default_factory=tuple)
     instrument_sections: tuple[InstrumentReportSection, ...]
     prediction_candidates: tuple[PredictionCandidate, ...] = Field(default_factory=tuple)
+    insufficient_evidence: InsufficientEvidenceReport | None = None
     insufficient_evidence_summary: str | None = None
+    source_references: tuple[ReportSourceReference, ...] = Field(default_factory=tuple)
+    material_claim_traces: tuple[MaterialClaimTrace, ...] = Field(default_factory=tuple)
+    prior_outcome_reviews: tuple[PriorOutcomeReview, ...] = Field(default_factory=tuple)
     audit_manifest: AuditManifest | DataReference | None = None
 
     @model_validator(mode="after")
@@ -265,15 +497,19 @@ class DailyReport(ContractModel):
         candidate_ids = tuple(candidate.candidate_id for candidate in self.prediction_candidates)
         if len(set(candidate_ids)) != len(candidate_ids):
             raise ValueError("prediction candidate ids must be unique")
-        if not self.prediction_candidates and not self.insufficient_evidence_summary:
+        if not self.prediction_candidates and self.insufficient_evidence is None:
             raise ValueError(
-                "reports without prediction candidates require insufficient_evidence_summary"
+                "reports without prediction candidates require structured insufficient_evidence"
             )
+        if self.prediction_candidates and not self.material_claim_traces:
+            raise ValueError("reports with prediction candidates require material_claim_traces")
 
         source_evidence_ids = tuple(evidence.evidence_id for evidence in self.evidence_sources)
         if len(set(source_evidence_ids)) != len(source_evidence_ids):
             raise ValueError("report evidence_sources ids must be unique")
         evidence_by_id = {evidence.evidence_id: evidence for evidence in self.evidence_sources}
+        artifact_ids = _audit_artifact_ids(self.audit_manifest)
+        referenced_artifact_ids: set[str] = set()
 
         selected_resolution_ids = {
             resolution.selected_instrument_id
@@ -288,6 +524,16 @@ class DailyReport(ContractModel):
         candidate_by_id = {
             candidate.candidate_id: candidate for candidate in self.prediction_candidates
         }
+        source_reference_ids = tuple(reference.reference_id for reference in self.source_references)
+        if len(set(source_reference_ids)) != len(source_reference_ids):
+            raise ValueError("report source reference ids must be unique")
+        prior_outcome_review_ids = tuple(review.review_id for review in self.prior_outcome_reviews)
+        if len(set(prior_outcome_review_ids)) != len(prior_outcome_review_ids):
+            raise ValueError("prior outcome review ids must be unique")
+        claim_trace_ids = tuple(trace.claim_id for trace in self.material_claim_traces)
+        if len(set(claim_trace_ids)) != len(claim_trace_ids):
+            raise ValueError("material claim trace ids must be unique")
+
         cited_evidence_ids: set[str] = set()
         related_instrument_evidence_ids: set[str] = set()
         for instrument in self.instruments:
@@ -334,6 +580,65 @@ class DailyReport(ContractModel):
             cited_evidence_ids.update(
                 reference.evidence_id for reference in candidate.evidence_against
             )
+            for dissent in candidate.dissenting_evidence:
+                cited_evidence_ids.update(reference.evidence_id for reference in dissent.evidence)
+                referenced_artifact_ids.update(dissent.artifact_ids)
+            for driver in candidate.uncertainty_drivers:
+                cited_evidence_ids.update(reference.evidence_id for reference in driver.evidence)
+                referenced_artifact_ids.update(driver.artifact_ids)
+            for trigger in candidate.change_triggers:
+                cited_evidence_ids.update(reference.evidence_id for reference in trigger.evidence)
+                referenced_artifact_ids.update(trigger.artifact_ids)
+            missing_prior_ids = set(candidate.prior_outcome_review_ids).difference(
+                prior_outcome_review_ids
+            )
+            if missing_prior_ids:
+                raise ValueError("candidate prior_outcome_review_ids must reference report reviews")
+
+        for source_reference in self.source_references:
+            cited_evidence_ids.update(source_reference.evidence_ids)
+            referenced_artifact_ids.update(source_reference.artifact_ids)
+            if set(source_reference.candidate_ids).difference(candidate_ids):
+                raise ValueError("source reference candidate_ids must reference candidates")
+            if set(source_reference.prior_outcome_review_ids).difference(prior_outcome_review_ids):
+                raise ValueError(
+                    "source reference prior_outcome_review_ids must reference report reviews"
+                )
+
+        for review in self.prior_outcome_reviews:
+            cited_evidence_ids.update(
+                reference.evidence_id for reference in review.outcome_evidence
+            )
+            referenced_artifact_ids.update(review.artifact_ids)
+            if review.instrument_id and review.instrument_id not in valid_instrument_ids:
+                raise ValueError("prior outcome instrument_id must reference report instruments")
+
+        if self.insufficient_evidence is not None:
+            cited_evidence_ids.update(
+                reference.evidence_id for reference in self.insufficient_evidence.evidence
+            )
+            referenced_artifact_ids.update(self.insufficient_evidence.artifact_ids)
+
+        for trace in self.material_claim_traces:
+            cited_evidence_ids.update(reference.evidence_id for reference in trace.evidence)
+            referenced_artifact_ids.update(trace.artifact_ids)
+            if set(trace.source_reference_ids).difference(source_reference_ids):
+                raise ValueError(
+                    "material claim trace source_reference_ids must reference source_references"
+                )
+            if set(trace.candidate_ids).difference(candidate_ids):
+                raise ValueError("material claim trace candidate_ids must reference candidates")
+            if set(trace.prior_outcome_review_ids).difference(prior_outcome_review_ids):
+                raise ValueError(
+                    "material claim trace prior_outcome_review_ids must reference report reviews"
+                )
+        traced_candidate_ids = {
+            candidate_id
+            for trace in self.material_claim_traces
+            for candidate_id in trace.candidate_ids
+        }
+        if set(candidate_ids).difference(traced_candidate_ids):
+            raise ValueError("every prediction candidate must have a material claim trace")
 
         missing_evidence_ids = cited_evidence_ids.difference(source_evidence_ids)
         if missing_evidence_ids:
@@ -345,6 +650,8 @@ class DailyReport(ContractModel):
                     "report evidence_sources must include related instrument evidence_ids"
                 )
             raise ValueError("report evidence_sources must include every cited evidence_id")
+        if artifact_ids and referenced_artifact_ids.difference(artifact_ids):
+            raise ValueError("report audit artifacts must include every cited artifact_id")
         _validate_evidence_references_against_sources(self, evidence_by_id)
         return self
 
@@ -375,6 +682,12 @@ def _validate_evidence_references_against_sources(
                 raise ValueError("evidence reference span must match source evidence text")
 
 
+def _audit_artifact_ids(manifest: AuditManifest | DataReference | None) -> set[str]:
+    if not isinstance(manifest, AuditManifest):
+        return set()
+    return {artifact.artifact_id for artifact in manifest.artifacts}
+
+
 def _iter_report_evidence_references(report: DailyReport) -> tuple[EvidenceReference, ...]:
     references: list[EvidenceReference] = []
     for section in report.instrument_sections:
@@ -392,6 +705,18 @@ def _iter_report_evidence_references(report: DailyReport) -> tuple[EvidenceRefer
     for candidate in report.prediction_candidates:
         references.extend(candidate.evidence_for)
         references.extend(candidate.evidence_against)
+        for dissent in candidate.dissenting_evidence:
+            references.extend(dissent.evidence)
+        for driver in candidate.uncertainty_drivers:
+            references.extend(driver.evidence)
+        for trigger in candidate.change_triggers:
+            references.extend(trigger.evidence)
+    if report.insufficient_evidence is not None:
+        references.extend(report.insufficient_evidence.evidence)
+    for review in report.prior_outcome_reviews:
+        references.extend(review.outcome_evidence)
+    for trace in report.material_claim_traces:
+        references.extend(trace.evidence)
     return tuple(references)
 
 
@@ -449,7 +774,14 @@ __all__ = [
     "AuditManifest",
     "DailyReport",
     "DataFreshnessSummary",
+    "DissentingEvidence",
     "InstrumentReportSection",
+    "InsufficientEvidenceReport",
     "MarkdownReportOutline",
+    "MaterialClaimTrace",
     "PredictionCandidate",
+    "PredictionChangeTrigger",
+    "PriorOutcomeReview",
+    "ReportSourceReference",
+    "UncertaintyDriver",
 ]

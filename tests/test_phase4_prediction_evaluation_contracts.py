@@ -12,6 +12,7 @@ from nlp_stock_prediction.contracts import (
     EvidenceReference,
     FreshnessStatus,
     PredictionCandidate,
+    PredictionChangeTrigger,
     PredictionEvaluation,
     PredictionStatus,
     RetrievalMethod,
@@ -90,6 +91,15 @@ def _candidate(
         evidence_against=evidence_against,
         signal_artifact_ids=signal_artifact_ids,
         uncertainties=("Fixture sources are deterministic test inputs.",),
+        change_triggers=(
+            PredictionChangeTrigger(
+                trigger_id="change-tsla-evaluation-source-refresh",
+                summary="Fresh source evidence would change the evaluation support.",
+                trigger_type="provider_refresh",
+                evidence=(*evidence_for, *evidence_against),
+                rationale="The evaluation contract uses bounded fixture source evidence.",
+            ),
+        ),
         metadata=(
             {
                 "baseline": {

@@ -10,15 +10,20 @@ from nlp_stock_prediction.contracts import (
     DailyReport,
     DataFreshnessSummary,
     Direction,
+    DissentingEvidence,
     EvidenceReference,
     FreshnessStatus,
     Instrument,
     InstrumentReportSection,
     InstrumentResolution,
     InstrumentResolutionStatus,
+    InsufficientEvidenceReport,
+    MaterialClaimTrace,
     PredictionCandidate,
+    PredictionChangeTrigger,
     PredictionStatus,
     RelatedInstrument,
+    ReportSourceReference,
     RetrievalMethod,
     SourceEvidence,
     SourceKind,
@@ -77,6 +82,15 @@ def _candidate() -> PredictionCandidate:
         confidence=0.4,
         evidence_for=(EvidenceReference(evidence_id="evidence-tsla-1"),),
         uncertainties=("Fixture evidence is not live evidence.",),
+        change_triggers=(
+            PredictionChangeTrigger(
+                trigger_id="change-tsla-fresh-sources",
+                summary="Fresh source evidence would change the confidence context.",
+                trigger_type="provider_refresh",
+                evidence=(EvidenceReference(evidence_id="evidence-tsla-1"),),
+                rationale="The candidate is based on one fixture source.",
+            ),
+        ),
     )
 
 
@@ -111,6 +125,25 @@ def _report(*, include_sources: bool = True) -> DailyReport:
             ),
         ),
         prediction_candidates=(candidate,),
+        source_references=(
+            ReportSourceReference(
+                reference_id="source-ref-tsla-1",
+                label="TSLA unit-test evidence",
+                reference_type="source_evidence",
+                evidence_ids=("evidence-tsla-1",),
+                candidate_ids=(candidate.candidate_id,),
+            ),
+        ),
+        material_claim_traces=(
+            MaterialClaimTrace(
+                claim_id="claim-tsla-headline-sensitive",
+                claim="TSLA may remain headline-sensitive over the swing horizon.",
+                claim_type="analysis",
+                evidence=(EvidenceReference(evidence_id="evidence-tsla-1"),),
+                source_reference_ids=("source-ref-tsla-1",),
+                candidate_ids=(candidate.candidate_id,),
+            ),
+        ),
     )
 
 
@@ -125,6 +158,9 @@ def test_prediction_candidate_requires_evidence_for_supported_status() -> None:
             thesis="TSLA may remain headline-sensitive.",
             baseline="No directional edge is assumed.",
             confidence=0.4,
+            change_trigger_limitations=(
+                "No evidence exists, so change triggers cannot be defined.",
+            ),
         )
 
 
@@ -143,10 +179,11 @@ def test_daily_report_requires_every_cited_evidence_source_even_when_sources_emp
 
 
 @pytest.mark.schema
-def test_daily_report_without_candidates_requires_insufficient_evidence_summary() -> None:
+def test_daily_report_without_candidates_requires_structured_insufficient_evidence() -> None:
     candidate_free = _report().model_copy(
         update={
             "prediction_candidates": (),
+            "material_claim_traces": (),
             "instrument_sections": (
                 InstrumentReportSection(
                     instrument_id="instrument:equity:us:tsla",
@@ -157,9 +194,96 @@ def test_daily_report_without_candidates_requires_insufficient_evidence_summary(
         }
     )
 
-    assert candidate_free.insufficient_evidence_summary is None
-    with pytest.raises(ValidationError, match="insufficient_evidence_summary"):
+    assert candidate_free.insufficient_evidence is None
+    with pytest.raises(ValidationError, match="structured insufficient_evidence"):
         DailyReport.model_validate(candidate_free.model_dump(mode="python"))
+
+
+@pytest.mark.schema
+def test_daily_report_accepts_structured_insufficient_evidence_without_candidates() -> None:
+    candidate_free = _report().model_copy(
+        update={
+            "prediction_candidates": (),
+            "material_claim_traces": (),
+            "instrument_sections": (
+                InstrumentReportSection(
+                    instrument_id="instrument:equity:us:tsla",
+                    symbol="TSLA",
+                    evidence=(EvidenceReference(evidence_id="evidence-tsla-1"),),
+                ),
+            ),
+            "source_references": (
+                ReportSourceReference(
+                    reference_id="source-ref-tsla-1",
+                    label="TSLA unit-test evidence",
+                    reference_type="source_evidence",
+                    evidence_ids=("evidence-tsla-1",),
+                ),
+            ),
+            "insufficient_evidence": InsufficientEvidenceReport(
+                summary="No supported candidate is available.",
+                blocking_reasons=("Only one fixture evidence source is present.",),
+                evidence=(EvidenceReference(evidence_id="evidence-tsla-1"),),
+            ),
+        }
+    )
+
+    assert DailyReport.model_validate(candidate_free.model_dump(mode="python"))
+
+
+@pytest.mark.schema
+def test_prediction_candidate_requires_change_trigger_context() -> None:
+    payload = _candidate().model_dump(mode="python")
+    payload["change_triggers"] = []
+
+    with pytest.raises(ValidationError, match="change triggers"):
+        PredictionCandidate.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_daily_report_requires_material_claim_traces_for_candidates() -> None:
+    payload = _report().model_dump(mode="python")
+    payload["material_claim_traces"] = []
+
+    with pytest.raises(ValidationError, match="material_claim_traces"):
+        DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_daily_report_validates_material_claim_trace_source_reference_ids() -> None:
+    payload = _report().model_dump(mode="python")
+    payload["material_claim_traces"][0]["source_reference_ids"] = ["missing-source-ref"]
+
+    with pytest.raises(ValidationError, match="source_reference_ids"):
+        DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_daily_report_requires_each_candidate_to_have_material_claim_trace() -> None:
+    payload = _report().model_dump(mode="python")
+    payload["material_claim_traces"][0]["candidate_ids"] = []
+
+    with pytest.raises(ValidationError, match="every prediction candidate"):
+        DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_report_source_reference_requires_source_target() -> None:
+    candidate = _candidate()
+
+    with pytest.raises(ValidationError, match="source target"):
+        ReportSourceReference(
+            reference_id="source-ref-candidate-only",
+            label="Candidate-only reference is not source provenance.",
+            reference_type="source_evidence",
+            candidate_ids=(candidate.candidate_id,),
+        )
+
+
+@pytest.mark.schema
+def test_dissenting_evidence_requires_source_or_artifact_reference() -> None:
+    with pytest.raises(ValidationError, match="dissenting evidence"):
+        DissentingEvidence(summary="Dissent without a trace is not reportable.")
 
 
 @pytest.mark.schema

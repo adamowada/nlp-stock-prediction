@@ -61,6 +61,9 @@ def prediction_candidate_from_record(
         evidence_against=evidence_against_refs,
         assumptions=("Source evidence is observed material, not automatically true.",),
         uncertainties=(uncertainty,),
+        change_trigger_limitations=(
+            "Stored candidate records do not yet include structured change-trigger inputs.",
+        ),
         signal_artifact_ids=candidate.signal_artifacts,
         metadata=candidate.metadata,
     )

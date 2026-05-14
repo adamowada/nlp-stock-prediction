@@ -96,8 +96,17 @@ def test_candidate_rendering_preserves_context_without_advice_labels(tmp_path: P
 
     assert "Evidence for: `fixture-news-tsla-001`" in markdown
     assert "Evidence against: `fixture-market-spy-001`" in markdown
+    assert "Dissenting evidence: limits: Broad-index regime evidence" in markdown
     assert "Assumptions: Offline fixtures are a deterministic contract exercise." in markdown
     assert "Uncertainties: Synthetic fixture evidence cannot substitute" in markdown
+    assert "Uncertainty drivers: `uncertainty-tsla-fixture-freshness` high" in markdown
+    assert "What would change: `change-tsla-live-provider-refresh` provider_refresh" in markdown
+    assert "## Prior-Outcome Review" in markdown
+    assert "`prior-outcome-tsla-unavailable` not_available" in markdown
+    assert "## Material Claim Traceability" in markdown
+    assert "`claim-tsla-headline-sensitivity` analysis" in markdown
+    assert "## Report Source References" in markdown
+    assert "`source-ref-tsla-news` source_evidence" in markdown
     assert "Recommendation:" not in markdown
     assert "Trade instruction:" not in markdown
 
@@ -119,3 +128,8 @@ def test_json_renderer_preserves_phase3_report_fields(tmp_path: Path) -> None:
     assert payload["evidence_sources"][0]["provenance"]["raw_snapshot_id"] == (
         "raw-fixture-news-tsla-001"
     )
+    assert payload["prediction_candidates"][0]["change_triggers"][0]["trigger_id"] == (
+        "change-tsla-live-provider-refresh"
+    )
+    assert payload["prior_outcome_reviews"][0]["status"] == "not_available"
+    assert payload["material_claim_traces"][0]["source_reference_ids"] == ["source-ref-tsla-news"]

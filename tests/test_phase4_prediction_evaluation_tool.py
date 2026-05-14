@@ -18,8 +18,11 @@ from nlp_stock_prediction.contracts import (
     FreshnessStatus,
     Instrument,
     InstrumentReportSection,
+    MaterialClaimTrace,
     PredictionCandidate,
+    PredictionChangeTrigger,
     PredictionStatus,
+    ReportSourceReference,
     RetrievalMethod,
     SourceEvidence,
     SourceKind,
@@ -135,6 +138,15 @@ def _candidate() -> PredictionCandidate:
         confidence=0.62,
         evidence_for=(EvidenceReference(evidence_id="evidence-support"),),
         uncertainties=("Fixture sources are deterministic test inputs.",),
+        change_triggers=(
+            PredictionChangeTrigger(
+                trigger_id="change-tsla-quality-fresh-evidence",
+                summary="Fresh contradictory or confirming evidence would change support.",
+                trigger_type="new_source_evidence",
+                evidence=(EvidenceReference(evidence_id="evidence-support"),),
+                rationale="The test candidate has one attributed source.",
+            ),
+        ),
         metadata={
             "baseline": {
                 "baseline_id": "no_directional_edge",
@@ -180,6 +192,36 @@ def _report(
             ),
         ),
         prediction_candidates=(candidate,),
+        source_references=(
+            ReportSourceReference(
+                reference_id="source-ref-evidence-support",
+                label="Evaluation test source evidence",
+                reference_type="source_evidence",
+                evidence_ids=(source.evidence_id,),
+                candidate_ids=(candidate.candidate_id,),
+            ),
+            ReportSourceReference(
+                reference_id=f"source-ref-{artifact.artifact_id}",
+                label="Prediction evaluation artifact",
+                reference_type="prediction_evaluation",
+                artifact_ids=(artifact.artifact_id,),
+                candidate_ids=(candidate.candidate_id,),
+            ),
+        ),
+        material_claim_traces=(
+            MaterialClaimTrace(
+                claim_id="claim-candidate-tsla-quality",
+                claim=candidate.thesis,
+                claim_type="prediction_evaluation",
+                evidence=candidate.evidence_for,
+                artifact_ids=(artifact.artifact_id,),
+                source_reference_ids=(
+                    "source-ref-evidence-support",
+                    f"source-ref-{artifact.artifact_id}",
+                ),
+                candidate_ids=(candidate.candidate_id,),
+            ),
+        ),
         audit_manifest=AuditManifest(
             run_id=RUN_ID,
             schema_version="audit-manifest.v2",
