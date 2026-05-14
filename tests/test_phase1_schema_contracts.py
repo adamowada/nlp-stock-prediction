@@ -153,6 +153,24 @@ def _report(*, include_sources: bool = True) -> DailyReport:
 
 
 @pytest.mark.schema
+def test_external_source_provenance_accepts_explicit_unknown_freshness() -> None:
+    provenance = SourceProvenance(
+        provider_name="fixture-news",
+        source_kind=SourceKind.NEWS_ARTICLE,
+        retrieval_method=RetrievalMethod.FIXTURE,
+        fetched_at=_now(),
+        observed_at=datetime(2026, 5, 12, 18, 0, tzinfo=UTC),
+        source_url="https://example.com/future-timestamp",
+        permalink="https://example.com/future-timestamp",
+        raw_identifier="fixture-future-timestamp",
+        raw_snapshot_id="raw-fixture-future-timestamp",
+        freshness_status=FreshnessStatus.UNKNOWN,
+    )
+
+    assert provenance.freshness_status == FreshnessStatus.UNKNOWN
+
+
+@pytest.mark.schema
 def test_prediction_candidate_requires_evidence_for_supported_status() -> None:
     with pytest.raises(ValidationError, match="evidence_for"):
         PredictionCandidate(

@@ -54,8 +54,10 @@ part of the product workflow.
 SQLite is split into two local databases:
 
 - `plans/planning.sqlite3`: tracked planning state for plans, decisions, progress, and links.
-- `data/prediction-research.sqlite3`: ignored runtime research state for runs, artifacts, evidence,
-  and prediction candidates.
+- `data/prediction-research.sqlite3`: ignored default research state for service/tool runs that do
+  not choose a per-run database.
+- `data/phase4-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3`: ignored CLI
+  research state for isolated Phase 4/5 report invocations.
 
 Together they provide local operational memory:
 
@@ -105,6 +107,8 @@ Implemented hardening currently enforces that normalized source match spans and 
 reference quotes point back into the stored evidence text. External evidence provenance must remain
 traceable even when a record is derived from another source, and neutral context is preserved as
 context rather than counted as positive support for a prediction.
+Freshness is explicit provenance: fresh, stale, missing, and unknown states remain visible in
+provider results and report inputs instead of being coerced into support.
 
 ## Failure And Artifact Discipline
 

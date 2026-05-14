@@ -114,8 +114,9 @@ Evidence must support deduplication across repeated searches and providers.
 
 Implemented validation requires source match spans to stay inside the stored evidence text and match
 the exact referenced substring. Derived external records still need source URL/permalink, raw
-identifier, raw snapshot ID, and freshness status; only internal analysis can omit external source
-traceability.
+identifier, and raw snapshot ID; only internal analysis can omit external source traceability.
+Freshness status is always carried, but `unknown` is a valid explicit state for malformed, future,
+or otherwise not-point-in-time-checkable source timestamps.
 
 ## Prediction Candidate
 
@@ -225,7 +226,8 @@ Report inputs and outputs carry typed data-mode provenance. `report_data_mode`, 
 and `input_data_mode` identify whether stored records were produced by live providers, offline
 fixtures, dummy smoke, or Codex smoke paths. Live report assembly treats fixture, dummy, and smoke
 markers as boundary violations; string-marker scanning is a backstop for legacy or malformed
-metadata, not the primary contract shape.
+metadata, not the primary contract shape. Phase 4/5 report runs must stamp data-mode metadata on the
+run and tool records; generic Phase 4 run names are not enough to infer offline fixture mode.
 
 Phase 6 outcome tracking begins with `PredictionOutcome` and `PredictionOutcomeEvaluation`.
 `PredictionOutcome` records the evaluated candidate, instrument, prediction type, horizon,

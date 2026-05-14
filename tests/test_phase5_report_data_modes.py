@@ -40,6 +40,7 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
     ReportInputProvenance,
     enforce_live_report_input_boundary,
     find_non_live_report_input_violations,
+    report_data_mode_from_run,
     report_data_mode_metadata,
 )
 from nlp_stock_prediction.pipeline import (
@@ -51,7 +52,12 @@ from nlp_stock_prediction.providers._base import (
     missing_credentials_result,
     no_data_result,
 )
-from nlp_stock_prediction.storage import InstrumentRecord, PredictionCandidateRecord, ToolRunRecord
+from nlp_stock_prediction.storage import (
+    InstrumentRecord,
+    PredictionCandidateRecord,
+    ResearchRunRecord,
+    ToolRunRecord,
+)
 
 RUN_DATE = date(2026, 5, 13)
 NOW = datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
@@ -122,6 +128,21 @@ def test_report_input_provenance_reads_stamped_modes() -> None:
         "provider_mode",
         "input_data_mode",
     }
+
+
+@pytest.mark.unit
+def test_phase4_run_kind_does_not_infer_fixture_mode_without_metadata() -> None:
+    run = ResearchRunRecord(
+        run_id="phase4-2026-05-13-tsla",
+        run_kind="phase4_tool_suite",
+        objective="Missing data-mode metadata must fail closed.",
+        status="running",
+        started_at=NOW,
+        metadata={},
+    )
+
+    with pytest.raises(ValueError, match="missing report_data_mode"):
+        report_data_mode_from_run(run)
 
 
 @pytest.mark.unit

@@ -171,6 +171,23 @@ SQLite tool-run/evidence/candidate indexing, rendered Markdown/JSON reports, aud
 coverage, prediction-quality evaluation artifacts, Phase 4 artifact type alignment, and visible
 recovery from partial tool failure.
 
+### Phase 5 Report Gates
+
+Run these when report contracts, report data modes, prior-outcome review, report artifact indexing,
+or candidate/evidence/artifact link behavior changes:
+
+```sh
+python -m pytest tests/test_phase5_report_assembly.py tests/test_phase5_report_data_modes.py
+python -m pytest tests/test_phase5_prior_outcomes.py tests/test_phase5_json_report_index.py
+python -m pytest tests/test_reporting_markdown.py tests/test_phase1_schema_contracts.py -k "report or provenance"
+```
+
+These gates must stay offline. They should verify Markdown/JSON parity, report artifact ledger/index
+consistency, typed signal artifact references, explicit live/offline data-mode boundaries,
+candidate-evidence and candidate-artifact link tables, prior report hash validation, and explicit
+insufficient-evidence or contradicted outcomes when sources are missing, stale, unknown, malformed,
+or conflicting.
+
 ### Cross-Cutting Integrity Gates
 
 Run these when contracts, providers, orchestration, reporting, storage, or local ML behavior changes:

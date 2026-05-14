@@ -31,6 +31,8 @@ from nlp_stock_prediction.orchestration.signal_artifacts import (
 )
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
+    CandidateArtifactLinkRecord,
+    CandidateEvidenceLinkRecord,
     EvidenceRecord,
     InstrumentRecord,
     PredictionCandidateRecord,
@@ -159,6 +161,107 @@ def test_report_assembly_traces_candidates_to_stored_evidence_and_artifacts(
         artifact_id in traces[f"claim-{candidate_id}"]["artifact_ids"]
         for artifact_id in prediction_input_ids
     )
+
+
+@pytest.mark.integration
+def test_report_assembly_uses_explicit_candidate_link_tables(
+    tmp_path: Path,
+) -> None:
+    service, run_id = _service_with_started_run(tmp_path)
+    evidence = _source_evidence(
+        "evidence-linked-support",
+        text="A linked source claims Tesla deliveries improved sequentially.",
+        freshness_status=FreshnessStatus.FRESH,
+    )
+    _record_evidence(service, run_id=run_id, evidence=evidence)
+    linked_artifact_path = tmp_path / "artifacts" / "linked-prediction-input.json"
+    linked_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    linked_artifact_path.write_text('{"linked": true}', encoding="utf-8")
+    service.store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-linked-prediction-input",
+            run_id=run_id,
+            tool_name="phase5_link_table_test",
+            tool_version="test.v1",
+            status="successful",
+            started_at=NOW,
+            completed_at=NOW,
+            inputs={"symbol": "TSLA"},
+        )
+    )
+    service.store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-linked-prediction-input",
+            artifact_type="prediction_input",
+            path=linked_artifact_path.relative_to(tmp_path),
+            sha256=hashlib.sha256(linked_artifact_path.read_bytes()).hexdigest(),
+            schema_version="prediction-input.test.v1",
+            tool_run_id="tool-linked-prediction-input",
+            produced_by="phase5_link_table_test",
+            metadata={"symbol": "TSLA"},
+            created_at=NOW,
+        )
+    )
+    candidate_id = "candidate-linked-evidence"
+    service.store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            candidate_id=candidate_id,
+            run_id=run_id,
+            instrument_id="instrument:equity:us:tsla",
+            prediction_horizon="swing",
+            prediction_type="directional",
+            scenario="TSLA has a linked support case from durable candidate link tables.",
+            status="evidence_supported",
+            confidence=0.44,
+            direction="mixed",
+            baseline={"summary": "No directional edge is assumed without source-backed evidence."},
+            uncertainty="Candidate support depends on explicit link-table evidence.",
+            metadata={"symbol": "TSLA"},
+        )
+    )
+    service.store.link_candidate_evidence(
+        CandidateEvidenceLinkRecord(
+            candidate_id=candidate_id,
+            evidence_id=evidence.evidence_id,
+            relationship="supports",
+            metadata={"source": "explicit-link-test"},
+        )
+    )
+    service.store.link_candidate_artifact(
+        CandidateArtifactLinkRecord(
+            candidate_id=candidate_id,
+            artifact_id="artifact-linked-prediction-input",
+            relationship="source_artifact",
+            metadata={"source": "explicit-link-test"},
+        )
+    )
+
+    rendered = service.render_prediction_report(run_id=run_id, symbol="TSLA")
+
+    payload = _read_report_payload(rendered)
+    candidate = cast(list[dict[str, Any]], payload["prediction_candidates"])[0]
+    assert candidate["candidate_id"] == candidate_id
+    assert candidate["evidence_for"][0]["evidence_id"] == evidence.evidence_id
+    source_references = cast(list[dict[str, Any]], payload["source_references"])
+    assert any(
+        reference["reference_type"] == "source_evidence"
+        and reference["evidence_ids"] == [evidence.evidence_id]
+        and reference["candidate_ids"] == [candidate_id]
+        for reference in source_references
+    )
+    assert any(
+        reference["reference_type"] == "tool_artifact"
+        and reference["artifact_ids"] == ["artifact-linked-prediction-input"]
+        and reference["candidate_ids"] == [candidate_id]
+        for reference in source_references
+    )
+    audit_artifacts = cast(list[dict[str, Any]], payload["audit_manifest"]["artifacts"])
+    linked_audit_artifact = next(
+        artifact
+        for artifact in audit_artifacts
+        if artifact["artifact_id"] == "artifact-linked-prediction-input"
+    )
+    assert linked_audit_artifact["metadata"]["assembly_required"] is True
 
 
 @pytest.mark.integration
