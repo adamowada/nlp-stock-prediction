@@ -23,19 +23,21 @@ context; tuning and promotion workflows are outside the product workflow.
 Generate the deterministic offline report:
 
 ```sh
-python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
+python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --offline
 ```
 
-Run the optional Phase 2 real-Codex smoke after installing the MCP extra:
+Reports are written under `<output>/<YYYY-MM-DD>/<symbol-slug>/`.
+
+Run the optional Phase 4 real-Codex smoke after installing the MCP extra:
 
 ```sh
 python -m pip install -e ".[dev,codex-smoke]"
-NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py --date 2026-05-13 --output reports/phase2-codex-smoke --symbol TSLA
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py --date 2026-05-13 --output reports/phase4-codex-smoke --symbol TSLA
 ```
 
 The smoke command launches `codex --search` against the local
 `python -B -m nlp_stock_prediction.codex_mcp` server so the MCP process does not write bytecode
-caches outside artifact roots. It may use live web search, but it writes only ignored local
+caches outside artifact roots. It drives the Phase 4 MCP tool suite and writes only ignored local
 artifacts. On the current Windows Codex CLI, the runner uses `danger-full-access` because stdio MCP
 tool calls are cancelled under `workspace-write`; the MCP service still enforces write roots and the
 runner fails if tracked files or restricted ignored repo files change. Each smoke run uses a
@@ -132,7 +134,7 @@ regular reports.
 
 The implemented Phase 3 universe layer is contract and storage infrastructure. It does not introduce
 a new CLI command or a live universe provider. The current command surface remains the offline
-`research` command and the optional Phase 2 Codex smoke runner above.
+`research` command and the legacy-named optional Phase 4 Codex smoke runner above.
 
 The target universe is retail-accessible instruments, including:
 

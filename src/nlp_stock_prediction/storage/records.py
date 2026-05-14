@@ -87,6 +87,8 @@ class ArtifactRecord:
     sha256: str
     schema_version: str
     tool_run_id: str | None = None
+    produced_by: str | None = None
+    record_count: int | None = None
     metadata: JsonObject = field(default_factory=dict)
     created_at: datetime | None = None
 

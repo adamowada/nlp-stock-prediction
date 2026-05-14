@@ -9,12 +9,8 @@ from typing import cast
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.enums import (
     CredentialState,
-    Direction,
-    PredictionStatus,
     ProviderStatus,
-    TimeHorizon,
 )
-from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.instruments import Instrument
 from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderHealth
 from nlp_stock_prediction.contracts.report import (
@@ -23,7 +19,6 @@ from nlp_stock_prediction.contracts.report import (
     DailyReport,
     DataFreshnessSummary,
     InstrumentReportSection,
-    PredictionCandidate,
 )
 from nlp_stock_prediction.instruments.repository import instrument_from_record
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex, ArtifactType
@@ -34,11 +29,11 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     utc_now,
 )
 from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
+from nlp_stock_prediction.orchestration.report_candidates import prediction_candidate_from_record
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
-    PredictionCandidateRecord,
     ResearchRunRecord,
     ToolRunRecord,
 )
@@ -53,14 +48,29 @@ def render_phase2_prediction_report(
     paths: Phase2RunPaths,
     run_date: date,
     symbol: str,
+    tool_run_id: str | None = None,
+    record_tool_run: bool = True,
+    tool_name: str = "render_prediction_report",
+    tool_version: str = "phase2.v1",
+    tool_status: str = "ok",
+    tool_warnings: tuple[str, ...] = (),
+    produced_by: str = "render_prediction_report",
+    artifact_schema_version: str = "phase2-report.v1",
+    insufficient_evidence_summary: str | None = None,
 ) -> JsonObject:
     now = utc_now()
+    is_phase4_report = artifact_schema_version.startswith("phase4")
     evidence_records = store.list_evidence_for_run(run.run_id)
     evidence_sources = tuple(source_evidence_from_record(record) for record in evidence_records)
     instrument = _primary_instrument(store, symbol=symbol, fallback_generated_at=now)
     candidates = store.list_prediction_candidates_for_run(run.run_id)
     prediction_candidates = tuple(
-        _report_candidate(candidate, evidence_sources) for candidate in candidates
+        prediction_candidate_from_record(
+            candidate,
+            evidence_sources,
+            prefer_evaluated_references=True,
+        )
+        for candidate in candidates
     )
     section_refs = tuple(
         EvidenceReference(
@@ -70,18 +80,41 @@ def render_phase2_prediction_report(
         )
         for record in evidence_sources[:5]
     )
+    if is_phase4_report:
+        observed_discussion_summary = (
+            "Phase 4 fixture-backed research tools imported evidence and context."
+        )
+        analysis_summary = (
+            "Phase 4 report rendering consumes stored tool evidence, analysis artifacts, "
+            "prediction candidates, and prediction-quality evaluations."
+        )
+        universe_summary = f"Phase 4 fixture-backed research universe for {symbol.upper()}"
+        freshness_summary = (
+            "Phase 4 used deterministic fixture-backed tool outputs."
+            if evidence_sources
+            else "Phase 4 has no imported evidence for this run."
+        )
+    else:
+        observed_discussion_summary = (
+            "Codex live search evidence was imported through MCP and combined with "
+            "dummy structural tools."
+        )
+        analysis_summary = (
+            "Phase 2 validates orchestration and provenance; dummy tools keep the "
+            "prediction conservative."
+        )
+        universe_summary = f"Phase 2 Codex smoke universe for {symbol.upper()}"
+        freshness_summary = (
+            "Codex smoke used live web search plus deterministic dummy tools."
+            if evidence_sources
+            else "Codex smoke has no imported live-search evidence for this run."
+        )
     instrument_section = InstrumentReportSection(
         instrument_id=instrument.instrument_id,
         symbol=instrument.symbol,
         display_name=instrument.display_name,
-        observed_discussion_summary=(
-            "Codex live search evidence was imported through MCP and combined with "
-            "dummy structural tools."
-        ),
-        analysis_summary=(
-            "Phase 2 validates orchestration and provenance; dummy tools keep the "
-            "prediction conservative."
-        ),
+        observed_discussion_summary=observed_discussion_summary,
+        analysis_summary=analysis_summary,
         prediction_candidate_ids=tuple(
             candidate.candidate_id for candidate in prediction_candidates
         ),
@@ -93,7 +126,15 @@ def render_phase2_prediction_report(
         for record in store.list_artifacts_for_run(run.run_id)
     )
     has_codex_search_evidence = bool(evidence_sources)
-    provider_status = ProviderStatus.OK if has_codex_search_evidence else ProviderStatus.EMPTY
+    stale_provider_names = _stale_provider_names(evidence_sources)
+    provider_status = (
+        ProviderStatus.STALE
+        if stale_provider_names and has_codex_search_evidence
+        else ProviderStatus.OK
+        if has_codex_search_evidence
+        else ProviderStatus.EMPTY
+    )
+    provider_name = "phase4-fixture-tools" if is_phase4_report else "codex-web-search"
     report = DailyReport(
         schema_version="daily-report.v2",
         run_id=run.run_id,
@@ -101,21 +142,18 @@ def render_phase2_prediction_report(
         generated_at=now,
         timezone="UTC",
         objective=run.objective,
-        universe=f"Phase 2 Codex smoke universe for {symbol.upper()}",
+        universe=universe_summary,
         command_args={"run_id": run.run_id, "symbol": symbol.upper()},
         instruments=(instrument,),
         data_freshness=DataFreshnessSummary(
             as_of=now,
-            summary=(
-                "Codex smoke used live web search plus deterministic dummy tools."
-                if has_codex_search_evidence
-                else "Codex smoke has no imported live-search evidence for this run."
-            ),
-            missing_provider_names=() if has_codex_search_evidence else ("codex-web-search",),
+            summary=freshness_summary,
+            stale_provider_names=stale_provider_names,
+            missing_provider_names=() if has_codex_search_evidence else (provider_name,),
         ),
         provider_health=(
             ProviderHealth(
-                provider_name="codex-web-search",
+                provider_name=provider_name,
                 status=provider_status,
                 checked_at=now,
                 credential_state=CredentialState.NOT_REQUIRED,
@@ -126,7 +164,7 @@ def render_phase2_prediction_report(
         prediction_candidates=prediction_candidates,
         insufficient_evidence_summary=None
         if prediction_candidates
-        else "No candidate could be synthesized.",
+        else insufficient_evidence_summary or "No candidate could be synthesized.",
         audit_manifest=AuditManifest(
             run_id=run.run_id,
             schema_version="audit-manifest.v2",
@@ -141,27 +179,29 @@ def render_phase2_prediction_report(
     manifest = report.audit_manifest
     if not isinstance(manifest, AuditManifest):
         raise TypeError("Codex smoke reports must include an audit manifest")
-    report_tool_run_id = f"tool-render-report-{run.run_id}"
-    store.record_tool_run(
-        ToolRunRecord(
-            tool_run_id=report_tool_run_id,
-            run_id=run.run_id,
-            tool_name="render_prediction_report",
-            tool_version="phase2.v1",
-            status="ok",
-            started_at=now,
-            completed_at=now,
-            inputs={"symbol": symbol},
+    report_tool_run_id = tool_run_id or f"tool-render-report-{run.run_id}"
+    if record_tool_run:
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=report_tool_run_id,
+                run_id=run.run_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                status=tool_status,
+                started_at=now,
+                completed_at=now,
+                inputs={"symbol": symbol},
+                warnings=tool_warnings,
+            )
         )
-    )
     report_index = ArtifactIndex.for_directory(
         store=store,
         repo_root=repo_root,
         base_dir=paths.run_dir,
         created_at=now,
-        produced_by="render_prediction_report",
+        produced_by=produced_by,
         tool_run_id=report_tool_run_id,
-        schema_version="phase2-report.v1",
+        schema_version=artifact_schema_version,
     )
     markdown_artifact = report_index.write_text(
         artifact_id=f"artifact-report-md-{stable_digest(run.run_id)}",
@@ -185,9 +225,9 @@ def render_phase2_prediction_report(
         repo_root=repo_root,
         base_dir=paths.audit_dir,
         created_at=now,
-        produced_by="render_prediction_report",
+        produced_by=produced_by,
         tool_run_id=report_tool_run_id,
-        schema_version="phase2-report.v1",
+        schema_version=artifact_schema_version,
     ).write_json(
         artifact_id=f"artifact-audit-manifest-{stable_digest(run.run_id)}",
         artifact_type="audit_manifest",
@@ -224,57 +264,10 @@ def _primary_instrument(
     record = store.get_instrument(instrument_id)
     if record is not None:
         return instrument_from_record(record)
+    discovered = store.find_instruments_by_symbol_or_alias(symbol.upper())
+    if discovered:
+        return instrument_from_record(discovered[0])
     return phase2_instrument(symbol.upper(), fallback_generated_at)
-
-
-def _report_candidate(
-    candidate: PredictionCandidateRecord,
-    evidence_sources: tuple[SourceEvidence, ...],
-) -> PredictionCandidate:
-    evidence_by_id = {record.evidence_id: record for record in evidence_sources}
-    evidence_for_refs = tuple(
-        EvidenceReference(
-            evidence_id=evidence_id,
-            quote=evidence_by_id[evidence_id].text[:180] if evidence_id in evidence_by_id else None,
-            relevance=0.76,
-        )
-        for evidence_id in candidate.evidence_for
-    )
-    evidence_against_refs = tuple(
-        EvidenceReference(
-            evidence_id=evidence_id,
-            quote=evidence_by_id[evidence_id].text[:180] if evidence_id in evidence_by_id else None,
-            relevance=0.76,
-        )
-        for evidence_id in candidate.evidence_against
-    )
-    status = (
-        PredictionStatus.CONTRADICTED
-        if evidence_against_refs
-        else PredictionStatus.EVIDENCE_SUPPORTED
-        if evidence_for_refs
-        else PredictionStatus.INSUFFICIENT_EVIDENCE
-    )
-    symbol = candidate.metadata.get("symbol")
-    if not isinstance(symbol, str) or not symbol.strip():
-        symbol = candidate.instrument_id.rsplit(":", 1)[-1]
-    return PredictionCandidate(
-        candidate_id=candidate.candidate_id,
-        instrument_id=candidate.instrument_id,
-        symbol=symbol,
-        horizon=TimeHorizon.SWING,
-        direction=Direction.MIXED,
-        status=status,
-        thesis=candidate.scenario,
-        baseline="No directional edge is assumed; dummy tools only validate orchestration.",
-        confidence=candidate.confidence or 0.0,
-        evidence_for=evidence_for_refs,
-        evidence_against=evidence_against_refs,
-        assumptions=("Codex search evidence is source material, not automatically true.",),
-        uncertainties=(candidate.uncertainty or "Phase 2 tools are structural dummies.",),
-        signal_artifact_ids=candidate.signal_artifacts,
-        metadata=candidate.metadata,
-    )
 
 
 def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> AuditArtifact:
@@ -289,8 +282,11 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
         "markdown_report",
         "json_report",
         "provider_result",
+        "market_data",
+        "technical_package",
         "ml_forecast",
         "instrument_universe",
+        "prediction_evaluation",
         "audit_manifest",
     }:
         raise ValueError(f"unknown artifact type: {artifact_type}")
@@ -299,10 +295,24 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
         artifact_type=cast(ArtifactType, artifact_type),
         path=path.as_posix(),
         created_at=record.created_at or utc_now(),
-        produced_by="phase2-mcp",
+        produced_by=record.produced_by or "phase2-mcp",
         sha256=record.sha256,
+        record_count=record.record_count,
         metadata=record.metadata,
     )
+
+
+def _stale_provider_names(evidence_sources: tuple[object, ...]) -> tuple[str, ...]:
+    provider_names: list[str] = []
+    for evidence in evidence_sources:
+        provenance = getattr(evidence, "provenance", None)
+        freshness_status = getattr(provenance, "freshness_status", None)
+        if getattr(freshness_status, "value", freshness_status) != "stale":
+            continue
+        provider_name = getattr(provenance, "provider_name", None)
+        if isinstance(provider_name, str) and provider_name:
+            provider_names.append(provider_name)
+    return tuple(dict.fromkeys(provider_names))
 
 
 __all__ = ["render_phase2_prediction_report"]

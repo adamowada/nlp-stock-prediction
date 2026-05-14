@@ -150,6 +150,25 @@ python -m pytest tests/test_phase1_schema_contracts.py -k "resolution or report"
 These gates are offline. They should not require live market-data providers, live scraping, OpenAI
 credentials, optional GPU packages, or a new CLI command.
 
+### Phase 4 QA Gates
+
+The Phase 4 gate is deterministic and fixture-backed, and it exercises the real public tool
+modules and Phase 4 service path. The production-gate E2E
+starts a Phase 4 run, executes universe discovery, market data, technical package, social evidence,
+news/catalysts, fundamentals, sector/macro context, candidate synthesis, prediction evaluation, and
+final report rendering with fixture providers, then asserts SQLite run-graph rows, typed artifacts,
+report output, and no trading-instruction language.
+
+```sh
+python -m pytest tests/test_phase4_tool_suite_e2e.py
+python -m pytest tests/test_phase4_tool_suite_e2e.py tests/test_phase4_public_wiring.py tests/test_phase4_service.py
+```
+
+The gate must stay offline and should verify mixed-asset universe discovery, typed artifacts,
+SQLite tool-run/evidence/candidate indexing, rendered Markdown/JSON reports, audit manifest
+coverage, prediction-quality evaluation artifacts, Phase 4 artifact type alignment, and visible
+recovery from partial tool failure.
+
 ### Cross-Cutting Integrity Gates
 
 Run these when contracts, providers, orchestration, reporting, storage, or local ML behavior changes:
@@ -166,11 +185,13 @@ semantics, report artifact manifests, neutral/contradictory synthesis, and ML le
 
 ### Codex Smoke
 
-The Phase 2 Codex smoke is opt-in because it launches the real Codex CLI and may use live web
-search. Mark tests with `codex_smoke` and skip unless `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1` and
-the `codex-smoke` extra is installed. The smoke path must write only ignored artifacts and must not
-modify tracked source files. The runner also fingerprints restricted ignored paths before and after
-the run, and launches the MCP Python process with bytecode writes disabled.
+The Phase 4 Codex smoke is opt-in because it launches the real Codex CLI and may use live web
+search. The script is still named `scripts/run_phase2_codex_smoke.py` for compatibility, but it
+drives the Phase 4 MCP tool suite. Mark tests with `codex_smoke` and skip unless
+`NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1` and the `codex-smoke` extra is installed. The smoke path
+must write only ignored artifacts and must not modify tracked source files. The runner also
+fingerprints restricted ignored paths before and after the run, and launches the MCP Python process
+with bytecode writes disabled.
 
 ## Negative Cases
 

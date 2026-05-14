@@ -13,7 +13,7 @@ analysis, preserves dissenting context, and explains what would change the predi
 
 The project is in active development. The current implementation includes a deterministic offline
 research command, SQLite-backed planning and research storage, Phase 3 instrument-universe
-contracts/storage, fixture-backed orchestration tools, and an opt-in Codex MCP smoke path.
+contracts/storage, fixture-backed Phase 4 research tools, and an opt-in Codex MCP smoke path.
 
 ## Contents
 
@@ -69,11 +69,11 @@ python -m nlp_stock_prediction --help
 Generate a deterministic offline research report:
 
 ```sh
-python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
+python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --offline
 ```
 
-The offline command writes local report artifacts under `reports/` without using network providers
-or live credentials.
+The offline command writes local report artifacts under
+`reports/<YYYY-MM-DD>/<symbol-slug>/` without using network providers or live credentials.
 
 ## Usage Examples
 
@@ -89,22 +89,23 @@ Generate an offline report for a specific date:
 ```sh
 python -m nlp_stock_prediction research \
   --date 2026-05-12 \
+  --symbol TSLA \
   --output reports/ \
   --offline
 ```
 
-Run the optional Codex smoke workflow:
+Run the optional Phase 4 Codex smoke workflow:
 
 ```sh
 python -m pip install -e ".[dev,codex-smoke]"
 NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py \
   --date 2026-05-13 \
-  --output reports/phase2-codex-smoke \
+  --output reports/phase4-codex-smoke \
   --symbol TSLA
 ```
 
-The Codex smoke path starts a local MCP server, exposes fixture-backed research tools, allows Codex
-to collect live-search evidence, and writes ignored artifacts under local output directories.
+The legacy-named smoke script starts a local MCP server, exposes the Phase 4 fixture-backed research
+tool suite to Codex, and writes ignored artifacts under local output directories.
 
 ## Current Instrument Universe
 
@@ -120,9 +121,17 @@ ambiguous symbols such as `AI` must keep multiple matches instead of silently ch
 Watchlists are represented as named collections of instrument queries in contracts and as
 instrument-linked lists in SQLite.
 
-This layer is fixture-backed today. The default offline report and Phase 2 Codex smoke path can write
-instrument artifacts and registry rows without live universe providers. First-class live universe
-discovery tools and provider adapters remain future Phase 4 work.
+This layer is fixture-backed today. The default offline report, optional Phase 4 Codex smoke path,
+and first-class Phase 4 universe discovery tool can write instrument artifacts and registry rows
+without live universe providers. Broader live universe-discovery adapters remain future hardening.
+
+## Current Phase 4 Tool Suite
+
+The fixture-backed Phase 4 suite now includes universe discovery, market data, technical packages,
+social evidence, news/catalysts, fundamentals, sector/macro context, prediction-quality evaluation,
+conservative candidate synthesis, and final Markdown/JSON/audit report rendering. These tools write
+typed artifacts and SQLite run-graph rows while preserving provider/source provenance. Live providers
+remain opt-in and incremental; deterministic fixtures are the default QA and offline path.
 
 ## Configuration
 
@@ -162,7 +171,7 @@ src/nlp_stock_prediction/cli.py
 src/nlp_stock_prediction/contracts/
                               Pydantic contracts for instruments, evidence, reports, and tools
 src/nlp_stock_prediction/orchestration/
-                              Research runtime, dummy tools, MCP smoke support, and report assembly
+                              Research runtime, Phase 4 tools, MCP smoke support, and report assembly
 src/nlp_stock_prediction/providers/
                               Provider adapters and provider-facing contracts
 src/nlp_stock_prediction/reporting/
@@ -239,4 +248,5 @@ NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python -m pytest -m codex_smoke
 
 See [docs/testing-plan.md](docs/testing-plan.md) for test layering, negative-case expectations, and
 acceptance criteria. Phase 3 fixture scenarios live under
-`tests/fixtures/tools/universe_discovery/`.
+`tests/fixtures/tools/universe_discovery/`; the Phase 4 production gate lives in
+`tests/test_phase4_tool_suite_e2e.py`.

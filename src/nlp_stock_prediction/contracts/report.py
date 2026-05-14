@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Literal
 
@@ -43,6 +44,11 @@ class DataFreshnessSummary(ContractModel):
     stale_provider_names: tuple[str, ...] = Field(default_factory=tuple)
     missing_provider_names: tuple[str, ...] = Field(default_factory=tuple)
 
+    @model_validator(mode="after")
+    def validate_report_authored_language(self) -> DataFreshnessSummary:
+        _validate_report_authored_language(self.summary)
+        return self
+
 
 class PredictionCandidate(ContractModel):
     """Evidence-backed prediction scenario, not a trade instruction."""
@@ -73,6 +79,12 @@ class PredictionCandidate(ContractModel):
             PredictionStatus.UNAVAILABLE,
         } and not (self.evidence_for or self.evidence_against or self.uncertainties):
             raise ValueError("non-supported predictions require evidence or uncertainty context")
+        _validate_report_authored_language(
+            self.thesis,
+            self.baseline,
+            *self.assumptions,
+            *self.uncertainties,
+        )
         return self
 
 
@@ -95,6 +107,15 @@ class InstrumentReportSection(ContractModel):
     warning_ids: tuple[str, ...] = Field(default_factory=tuple)
     data_quality: JsonObject = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def validate_report_authored_language(self) -> InstrumentReportSection:
+        _validate_report_authored_language(
+            self.observed_discussion_summary,
+            self.social_news_summary,
+            self.analysis_summary,
+        )
+        return self
+
 
 class AuditArtifact(ContractModel):
     """One file written to the report audit directory."""
@@ -109,8 +130,11 @@ class AuditArtifact(ContractModel):
         "markdown_report",
         "json_report",
         "provider_result",
+        "market_data",
+        "technical_package",
         "ml_forecast",
         "instrument_universe",
+        "prediction_evaluation",
         "audit_manifest",
     ]
     path: NonEmptyStr
@@ -213,6 +237,11 @@ class DailyReport(ContractModel):
 
     @model_validator(mode="after")
     def validate_report_shape(self) -> DailyReport:
+        _validate_report_authored_language(
+            self.objective,
+            self.universe,
+            self.insufficient_evidence_summary,
+        )
         instrument_ids = tuple(instrument.instrument_id for instrument in self.instruments)
         if not instrument_ids:
             raise ValueError("daily reports require at least one instrument")
@@ -296,6 +325,7 @@ class DailyReport(ContractModel):
                 raise ValueError("prediction candidates must reference report instruments")
             if candidate.symbol != symbol_by_instrument_id[candidate.instrument_id]:
                 raise ValueError("prediction candidate symbol must match report instrument symbol")
+            _validate_candidate_evaluation_metadata(candidate)
             if section_references.get(candidate.candidate_id) != candidate.instrument_id:
                 raise ValueError(
                     "instrument section prediction_candidate_ids must match candidate instrument_id"
@@ -363,6 +393,54 @@ def _iter_report_evidence_references(report: DailyReport) -> tuple[EvidenceRefer
         references.extend(candidate.evidence_for)
         references.extend(candidate.evidence_against)
     return tuple(references)
+
+
+_TRADING_INSTRUCTION_PATTERNS = (
+    r"\b(buy|sell)\s+(?!or\b|instruction\b|guidance\b|language\b)"
+    r"(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"\b(buy|sell|short)\s+the\s+(stock|shares?|coin|token|etf|contract|instrument)\b",
+    r"\b(should|must|need to|time to)\s+(buy|sell|short|go long|go short)\b",
+    r"\b(you|we|investors?|traders?)\s+"
+    r"(should|must|need to|ought to)\s+(buy|sell|short|go long|go short|enter|exit)\b",
+    r"\b(recommend|recommendation|advice)\s+(to\s+)?(buy|sell|short|go long|go short)\b",
+    r"\brecommendation\s*:\s*(buy|sell|short|hold)\b",
+    r"\b(go|stay)\s+(long|short)\b",
+    r"\b(enter|exit|open|close)\s+(a\s+)?(long|short\s+)?position\b",
+    r"\b(set|use)\s+(a\s+)?stop[-\s]?loss\b",
+    r"\bposition\s+sizing?\b",
+    r"\b(take\s+profits?|profit\s+target)\b",
+)
+
+
+def _validate_report_authored_language(*values: str | None) -> None:
+    for value in values:
+        if value is None:
+            continue
+        normalized = " ".join(value.split())
+        for pattern in _TRADING_INSTRUCTION_PATTERNS:
+            if re.search(pattern, normalized, flags=re.IGNORECASE):
+                raise ValueError(
+                    "report-authored fields must not contain imperative trading language "
+                    "or trading instructions"
+                )
+
+
+def _validate_candidate_evaluation_metadata(candidate: PredictionCandidate) -> None:
+    metadata = candidate.metadata.get("prediction_evaluation")
+    if not isinstance(metadata, dict):
+        return
+    status = metadata.get("status")
+    if isinstance(status, str) and status != candidate.status.value:
+        raise ValueError("prediction evaluation status must match rendered candidate status")
+    candidate_id = metadata.get("candidate_id")
+    if isinstance(candidate_id, str) and candidate_id != candidate.candidate_id:
+        raise ValueError("prediction evaluation candidate_id must match candidate_id")
+    instrument_id = metadata.get("instrument_id")
+    if isinstance(instrument_id, str) and instrument_id != candidate.instrument_id:
+        raise ValueError("prediction evaluation instrument_id must match candidate instrument_id")
+    symbol = metadata.get("symbol")
+    if isinstance(symbol, str) and symbol.upper() != candidate.symbol.upper():
+        raise ValueError("prediction evaluation symbol must match candidate symbol")
 
 
 __all__ = [

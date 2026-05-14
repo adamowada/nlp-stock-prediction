@@ -15,7 +15,8 @@ from nlp_stock_prediction.pipeline import generate_daily_report
 
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 _CLI_EPILOG = """Examples:
-  python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
+  python -m nlp_stock_prediction research \\
+    --date 2026-05-12 --symbol TSLA --output reports/ --offline
 
 Configuration:
   Offline runs are deterministic and do not use network providers.
@@ -48,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate a prediction research report.",
         description=(
             "Generate one Markdown report, one JSON report, and audit artifacts under "
-            "<output>/<YYYY-MM-DD>/."
+            "<output>/<YYYY-MM-DD>/<symbol>/."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_CLI_EPILOG,
@@ -65,7 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="output_dir",
         required=True,
         type=Path,
-        help="Base output directory; files are written under <output>/<YYYY-MM-DD>/.",
+        help="Base output directory; files are written under <output>/<YYYY-MM-DD>/<symbol>/.",
+    )
+    research_parser.add_argument(
+        "--symbol",
+        default="TSLA",
+        help="Instrument symbol or pair to research, for example TSLA or BTC-USD.",
     )
     research_parser.add_argument(
         "--fixture-dir",
@@ -90,6 +96,7 @@ def build_research_config(args: argparse.Namespace) -> RunConfig:
     return RunConfig(
         run_date=args.run_date,
         output_dir=args.output_dir,
+        symbol=args.symbol,
         fixture_dir=args.fixture_dir,
         cache_dir=args.cache_dir,
         offline=args.offline,

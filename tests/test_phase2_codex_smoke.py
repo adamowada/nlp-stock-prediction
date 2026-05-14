@@ -56,16 +56,17 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
     assert "nlp_stock_prediction.codex_mcp" in rendered
     assert "--repo-root" in rendered
     assert "--database" in rendered
-    assert "phase2-codex-smoke-2026-05-13-tsla.sqlite3" in rendered
+    assert "phase4-codex-smoke-2026-05-13-tsla.sqlite3" in rendered
     assert _option_value(command, "--output-last-message") == str(config.final_message_path)
     assert "Do not import project modules directly" in command[-1]
-    assert "record_codex_search_evidence" in command[-1]
-    assert "stance set to" in command[-1]
+    assert "phase4_universe_discovery" in command[-1]
+    assert "phase4_candidate_synthesis" in command[-1]
+    assert "phase4_prediction_evaluation" in command[-1]
     assert "render_prediction_report" in command[-1]
 
 
 @pytest.mark.unit
-def test_codex_smoke_output_verification_requires_search_evidence(tmp_path: Path) -> None:
+def test_codex_smoke_output_verification_requires_source_evidence(tmp_path: Path) -> None:
     smoke = codex_smoke
     config = smoke.CodexSmokeConfig(
         run_date=date(2026, 5, 13),
@@ -189,8 +190,9 @@ def test_codex_smoke_uses_safe_symbol_slug_for_database_and_run_id(tmp_path: Pat
         python_executable=Path("python"),
     )
 
-    assert config.database_arg_path == Path("data/phase2-codex-smoke-2026-05-13-btc-usd.sqlite3")
-    assert smoke.expected_run_id(config) == "codex-smoke-2026-05-13-btc-usd"
+    assert config.run_dir == config.output_dir / "2026-05-13" / "btc-usd"
+    assert config.database_arg_path == Path("data/phase4-codex-smoke-2026-05-13-btc-usd.sqlite3")
+    assert smoke.expected_run_id(config) == "phase4-2026-05-13-btc-usd"
 
 
 @pytest.mark.unit
@@ -255,7 +257,7 @@ def test_codex_smoke_disables_bytecode_writes_for_subprocess(
 
 
 @pytest.mark.codex_smoke
-def test_phase2_real_codex_smoke_runner_is_opt_in() -> None:
+def test_phase4_real_codex_smoke_runner_is_opt_in() -> None:
     if os.environ.get("NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE") != "1":
         pytest.skip("Set NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 to run real Codex smoke.")
     if shutil.which("codex") is None:
@@ -269,7 +271,7 @@ def test_phase2_real_codex_smoke_runner_is_opt_in() -> None:
             "--date",
             "2026-05-13",
             "--output",
-            "reports/phase2-codex-smoke-pytest",
+            "reports/phase4-codex-smoke-pytest",
             "--symbol",
             "TSLA",
             "--repo-root",

@@ -21,7 +21,7 @@ Acceptance:
 Goal: add local SQLite as the operational memory.
 
 Status: initial foundation implemented. The schema, repository wrappers, tracked planning database,
-and ignored research database exist; future phases will connect orchestration and tools to them.
+and ignored research database exist and are used by orchestration and Phase 4 tools.
 
 Build:
 
@@ -45,13 +45,10 @@ Acceptance:
 
 Goal: make Codex the disciplined prediction research assistant.
 
-Status: initial orchestrator implemented. The deterministic offline `research` command runs through
-dummy tools, and an opt-in real Codex smoke path exposes Phase 2 tools through local MCP, records
-live-search evidence, writes ignored artifacts, and renders Markdown/JSON reports. The research tools
-themselves remain dummy/fixture-backed until Phase 4. The smoke service now rejects duplicate
-deterministic run starts, preserves neutral evidence as insufficient context unless supporting or
-contradictory evidence is present, writes report artifacts into the audit manifest, and removes newly
-written files when a transactional tool step fails.
+Status: initial orchestrator implemented and retained for legacy MCP smoke coverage. The default
+offline `research` command now routes through the Phase 4 fixture-backed tool suite. The Phase 2 MCP
+service remains available for focused orchestration tests that pin deterministic run IDs, duplicate
+run rejection, neutral-evidence handling, audit-manifest report artifacts, and transactional cleanup.
 
 Build:
 
@@ -99,18 +96,21 @@ Acceptance status:
 - stocks, ETFs, crypto, currency/commodity exposure, and futures context can be represented in
   contracts and registry storage;
 - ambiguous symbols require explicit resolution and cannot select an instrument silently;
-- fixture/dummy universe paths can write instrument records and artifacts;
-- first-class live universe discovery remains Phase 4 work.
+- fixture-backed universe paths can write instrument records and artifacts;
+- first-class fixture-backed universe discovery is implemented in Phase 4; broader live provider
+  discovery remains future hardening.
 
 ## Phase 4: Tool Suite
 
 Goal: convert research capabilities into first-class independent tools.
 
-Status: provider and tool contract hardening has started ahead of the full tool-suite expansion.
-Shared provider fetch helpers retry retryable failures, avoid caching known error payloads, validate
-stored source spans, and degrade malformed/missing provider data into explicit warning results.
+Status: fixture-backed first-class tools are implemented for universe discovery, market data,
+technical packages, social evidence, news/catalysts, fundamentals, sector/macro context, prediction
+candidate synthesis, prediction evaluation, and final report rendering. Tool runs write typed
+artifacts, index SQLite run-graph rows, and expose recoverable failures as visible warning/error
+results. Live provider coverage remains opt-in and incremental.
 
-Build:
+Built:
 
 - universe discovery tool over the Phase 3 contracts and registry;
 - market data tool;
@@ -119,6 +119,7 @@ Build:
 - news/catalyst tool;
 - fundamentals tool;
 - sector/macro tool;
+- conservative prediction candidate synthesis tool;
 - prediction evaluation tool;
 - report tool.
 

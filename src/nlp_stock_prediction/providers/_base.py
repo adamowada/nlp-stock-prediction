@@ -638,7 +638,10 @@ def freshness_status(
 ) -> tuple[FreshnessStatus, int]:
     observed = ensure_aware_utc(observed_at)
     fetched = ensure_aware_utc(fetched_at)
-    seconds = max(0, int((fetched - observed).total_seconds()))
+    raw_seconds = int((fetched - observed).total_seconds())
+    if raw_seconds < -300:
+        return FreshnessStatus.UNKNOWN, 0
+    seconds = max(0, raw_seconds)
     status = FreshnessStatus.STALE if seconds > stale_after_seconds else FreshnessStatus.FRESH
     return status, seconds
 

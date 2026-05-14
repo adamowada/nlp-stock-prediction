@@ -125,6 +125,7 @@ class DataReference(ContractModel):
         "extraction",
         "analysis",
         "scoring_input",
+        "prediction_evaluation",
         "report",
         "audit_artifact",
     ]

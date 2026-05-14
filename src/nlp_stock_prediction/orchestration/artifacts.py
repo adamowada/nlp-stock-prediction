@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -23,8 +24,11 @@ ArtifactType = Literal[
     "markdown_report",
     "json_report",
     "provider_result",
+    "market_data",
+    "technical_package",
     "ml_forecast",
     "instrument_universe",
+    "prediction_evaluation",
     "audit_manifest",
 ]
 
@@ -214,8 +218,64 @@ class ArtifactIndex:
                 schema_version=self.schema_version,
                 metadata=artifact.metadata,
                 created_at=artifact.created_at,
+                produced_by=artifact.produced_by,
+                record_count=artifact.record_count,
             )
         )
 
 
-__all__ = ["ArtifactIndex", "ArtifactType", "ArtifactWriter"]
+@dataclass(frozen=True)
+class ArtifactFileTransaction:
+    """Track files present before a tool run and restore the tree after rollback."""
+
+    root: Path
+    files_before: frozenset[Path]
+    file_snapshots: dict[Path, bytes]
+
+    @classmethod
+    def begin(cls, root: Path) -> ArtifactFileTransaction:
+        resolved_root = root.resolve()
+        snapshots = _existing_file_snapshots(resolved_root)
+        return cls(
+            root=resolved_root,
+            files_before=frozenset(snapshots),
+            file_snapshots=snapshots,
+        )
+
+    def rollback_new_files(self) -> None:
+        if not self.root.exists():
+            for path, content in self.file_snapshots.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            return
+        for path in sorted(
+            (candidate for candidate in self.root.rglob("*") if candidate.is_file()),
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            resolved = path.resolve()
+            if resolved not in self.files_before:
+                path.unlink(missing_ok=True)
+        for path, content in self.file_snapshots.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        for directory in sorted(
+            (candidate for candidate in self.root.rglob("*") if candidate.is_dir()),
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            with suppress(OSError):
+                directory.rmdir()
+
+
+def _existing_files(root: Path) -> frozenset[Path]:
+    if not root.exists():
+        return frozenset()
+    return frozenset(path.resolve() for path in root.rglob("*") if path.is_file())
+
+
+def _existing_file_snapshots(root: Path) -> dict[Path, bytes]:
+    return {path: path.read_bytes() for path in _existing_files(root)}
+
+
+__all__ = ["ArtifactFileTransaction", "ArtifactIndex", "ArtifactType", "ArtifactWriter"]

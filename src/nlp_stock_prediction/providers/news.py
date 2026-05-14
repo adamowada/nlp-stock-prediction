@@ -296,6 +296,7 @@ class PublicNewsProvider:
                             "source_name": source_name,
                             "author": raw_article.get("author"),
                             "cache_hit": fetched.cache_hit,
+                            "source_query_url": source_url,
                         },
                     ),
                     metadata={"source_name": source_name},

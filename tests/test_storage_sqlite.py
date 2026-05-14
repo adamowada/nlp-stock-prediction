@@ -236,6 +236,7 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
         "source_query_id",
         "provenance_json",
     }.issubset(_column_names(store, "evidence_items"))
+    assert {"produced_by", "record_count"}.issubset(_column_names(store, "artifacts"))
     assert {
         "candidate_artifact_links",
         "candidate_evidence_links",
@@ -363,6 +364,8 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
             path=Path("artifacts/tools/technical-package/tsla.json"),
             sha256="a" * 64,
             schema_version="technical_package.v1",
+            produced_by="technical_package",
+            record_count=3,
             metadata={"latest_bar": "2026-05-12"},
             created_at=_timestamp(),
         )
@@ -464,6 +467,8 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
     assert instrument.metadata["sector"] == "consumer_discretionary"
     assert artifact is not None
     assert artifact.path == Path("artifacts/tools/technical-package/tsla.json")
+    assert artifact.produced_by == "technical_package"
+    assert artifact.record_count == 3
     assert artifact.metadata["latest_bar"] == "2026-05-12"
     assert evidence is not None
     assert evidence.tool_run_id == "tool-technical-tsla"
@@ -499,6 +504,65 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
             created_at=_timestamp(),
         ),
     )
+
+
+@pytest.mark.unit
+def test_record_artifact_rejects_absolute_and_parent_traversal_paths(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+
+    with pytest.raises(ValueError, match="relative"):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id="artifact-invalid-path-absolute",
+                artifact_type="provider_result",
+                path=tmp_path / "absolute.json",
+                sha256="b" * 64,
+                schema_version="unit.v1",
+            )
+        )
+    with pytest.raises(ValueError, match="parent traversal"):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id="artifact-invalid-path-traversal",
+                artifact_type="provider_result",
+                path=Path("artifacts/../leak.json"),
+                sha256="b" * 64,
+                schema_version="unit.v1",
+            )
+        )
+
+
+@pytest.mark.unit
+def test_artifact_upsert_refreshes_created_at_for_run_graph_ordering(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    earlier = _timestamp()
+    later = earlier.replace(hour=13)
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-refresh",
+            artifact_type="provider_result",
+            path=Path("artifacts/refresh.json"),
+            sha256="c" * 64,
+            schema_version="unit.v1",
+            created_at=earlier,
+        )
+    )
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-refresh",
+            artifact_type="provider_result",
+            path=Path("artifacts/refresh.json"),
+            sha256="d" * 64,
+            schema_version="unit.v1",
+            created_at=later,
+        )
+    )
+
+    artifact = store.get_artifact("artifact-refresh")
+    assert artifact is not None
+    assert artifact.created_at == later
 
 
 @pytest.mark.unit

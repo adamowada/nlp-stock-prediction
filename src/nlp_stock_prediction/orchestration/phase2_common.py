@@ -35,6 +35,7 @@ class Phase2WritePolicy:
 
     repo_root: Path
     allowed_roots: tuple[str, ...] = ALLOWED_WRITE_ROOTS
+    extra_allowed_roots: tuple[Path, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "repo_root", self.repo_root.resolve())
@@ -42,15 +43,26 @@ class Phase2WritePolicy:
     def resolve(self, path: Path) -> Path:
         resolved = path if path.is_absolute() else self.repo_root / path
         resolved = resolved.resolve()
-        allowed = tuple((self.repo_root / root).resolve() for root in self.allowed_roots)
+        allowed = (
+            *((self.repo_root / root).resolve() for root in self.allowed_roots),
+            *(root.resolve() for root in self.extra_allowed_roots),
+        )
         if not any(is_relative_to(resolved, root) or resolved == root for root in allowed):
             roots = ", ".join(root.as_posix() for root in allowed)
-            raise ValueError(f"Phase 2 MCP writes are limited to: {roots}")
+            raise ValueError(f"Research artifact writes are limited to: {roots}")
         return resolved
 
-    def run_paths(self, run_date: date, output_dir: str) -> Phase2RunPaths:
+    def run_paths(
+        self,
+        run_date: date,
+        output_dir: str,
+        *,
+        symbol: str | None = None,
+    ) -> Phase2RunPaths:
         output_path = self.resolve(Path(output_dir))
         run_dir = output_path / run_date.isoformat()
+        if symbol is not None:
+            run_dir = run_dir / symbol_slug(symbol)
         audit_dir = run_dir / "audit"
         return Phase2RunPaths(
             output_dir=output_path,

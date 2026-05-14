@@ -8,10 +8,12 @@ import pytest
 from nlp_stock_prediction.contracts import (
     CredentialState,
     EvidenceRequest,
+    FreshnessStatus,
     ProviderStatus,
     WarningCode,
     WarningSeverity,
 )
+from nlp_stock_prediction.providers._base import freshness_status
 from nlp_stock_prediction.reliability import (
     ProviderConfigurationError,
     ProviderRateLimitError,
@@ -57,6 +59,17 @@ def test_retry_call_uses_deterministic_exponential_backoff() -> None:
     assert value == "ok"
     assert attempts == 3
     assert sleeps == [0.25, 0.5]
+
+
+def test_freshness_status_marks_future_observations_unknown() -> None:
+    status, seconds = freshness_status(
+        observed_at=FETCHED_AT + timedelta(minutes=10),
+        fetched_at=FETCHED_AT,
+        stale_after_seconds=60,
+    )
+
+    assert status == FreshnessStatus.UNKNOWN
+    assert seconds == 0
 
 
 def test_retry_call_does_not_retry_non_retryable_provider_errors() -> None:

@@ -115,6 +115,7 @@ class RunConfig(ContractModel):
 
     run_date: date
     output_dir: Path
+    symbol: NonEmptyStr = "TSLA"
     fixture_dir: Path | None = None
     cache_dir: Path | None = None
     offline: bool = False

@@ -245,6 +245,7 @@ def test_cli_research_contract_parses_canonical_options_and_generates_report(
     )
 
     assert args.run_date == date(2026, 5, 11)
+    assert args.symbol == "TSLA"
     exit_code = main(
         [
             "research",
@@ -260,5 +261,5 @@ def test_cli_research_contract_parses_canonical_options_and_generates_report(
     assert exit_code == 0
     assert "report.md" in captured.out
     assert captured.err == ""
-    assert (output_dir / "2026-05-11" / "report.md").exists()
-    assert (output_dir / "2026-05-11" / "report.json").exists()
+    assert (output_dir / "2026-05-11" / "tsla" / "report.md").exists()
+    assert (output_dir / "2026-05-11" / "tsla" / "report.json").exists()

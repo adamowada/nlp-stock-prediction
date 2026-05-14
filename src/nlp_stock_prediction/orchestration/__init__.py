@@ -1,6 +1,11 @@
 """Deterministic orchestration runtime."""
 
-from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex, ArtifactType, ArtifactWriter
+from nlp_stock_prediction.orchestration.artifacts import (
+    ArtifactFileTransaction,
+    ArtifactIndex,
+    ArtifactType,
+    ArtifactWriter,
+)
 from nlp_stock_prediction.orchestration.context import RunContext, deterministic_generated_at
 from nlp_stock_prediction.orchestration.dummy import (
     DEFAULT_STAGE_ORDER,
@@ -10,6 +15,49 @@ from nlp_stock_prediction.orchestration.dummy import (
     generate_dummy_report_bundle,
 )
 from nlp_stock_prediction.orchestration.phase2_service import Phase2McpService
+from nlp_stock_prediction.orchestration.phase4_common import Phase4ToolResult
+from nlp_stock_prediction.orchestration.phase4_fundamentals import (
+    Phase4FundamentalsTool,
+    run_phase4_fundamentals_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_market_data import (
+    MarketDataToolResult,
+    Phase4MarketDataArtifact,
+    Phase4MarketDataTool,
+)
+from nlp_stock_prediction.orchestration.phase4_news import (
+    Phase4NewsCatalystTool,
+    run_phase4_news_catalyst_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_sector_macro import (
+    Phase4SectorMacroTool,
+    run_phase4_sector_macro_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_service import (
+    PHASE4_STAGE_ORDER,
+    Phase4Service,
+    Phase4ToolExecutionError,
+    Phase4ToolMetadata,
+    Phase4ToolRegistry,
+    Phase4ToolRunContext,
+    Phase4ToolRunOutcome,
+    build_phase4_tool_registry,
+    execute_phase4_tool,
+    phase4_research_tool_plan,
+)
+from nlp_stock_prediction.orchestration.phase4_social import (
+    Phase4SocialEvidenceTool,
+    run_phase4_social_evidence_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_technical_package import (
+    Phase4TechnicalPackageArtifact,
+    Phase4TechnicalPackageTool,
+    TechnicalPackageToolResult,
+)
+from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
+    Phase4UniverseDiscoveryTool,
+    Phase4UniverseDiscoveryToolResult,
+)
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationExecutionError,
     OrchestrationState,
@@ -27,22 +75,50 @@ from nlp_stock_prediction.orchestration.tools import (
 __all__ = [
     "DEFAULT_STAGE_ORDER",
     "DUMMY_ORCHESTRATION_DISABLED_MESSAGE",
+    "PHASE4_STAGE_ORDER",
+    "ArtifactFileTransaction",
     "ArtifactIndex",
     "ArtifactType",
     "ArtifactWriter",
+    "MarketDataToolResult",
     "OrchestrationExecutionError",
     "OrchestrationState",
     "OrchestrationTool",
     "Phase2McpService",
+    "Phase4FundamentalsTool",
+    "Phase4MarketDataArtifact",
+    "Phase4MarketDataTool",
+    "Phase4NewsCatalystTool",
+    "Phase4SectorMacroTool",
+    "Phase4Service",
+    "Phase4SocialEvidenceTool",
+    "Phase4TechnicalPackageArtifact",
+    "Phase4TechnicalPackageTool",
+    "Phase4ToolExecutionError",
+    "Phase4ToolMetadata",
+    "Phase4ToolRegistry",
+    "Phase4ToolResult",
+    "Phase4ToolRunContext",
+    "Phase4ToolRunOutcome",
+    "Phase4UniverseDiscoveryTool",
+    "Phase4UniverseDiscoveryToolResult",
     "ReportBundle",
     "RunContext",
     "StagedExecutionResult",
     "StagedExecutor",
+    "TechnicalPackageToolResult",
     "ToolRegistry",
     "ToolRunRecord",
     "ToolRunResult",
     "ToolSpec",
     "build_dummy_tool_registry",
+    "build_phase4_tool_registry",
     "deterministic_generated_at",
+    "execute_phase4_tool",
     "generate_dummy_report_bundle",
+    "phase4_research_tool_plan",
+    "run_phase4_fundamentals_tool",
+    "run_phase4_news_catalyst_tool",
+    "run_phase4_sector_macro_tool",
+    "run_phase4_social_evidence_tool",
 ]

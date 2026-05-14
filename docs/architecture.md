@@ -42,6 +42,7 @@ First-class tools should be independently callable and should emit typed artifac
 - news and catalyst evidence;
 - fundamentals;
 - sector and macro context;
+- prediction candidate synthesis;
 - prediction evaluation and calibration;
 - report generation.
 
@@ -113,8 +114,9 @@ provider error payloads, and surface malformed provider payloads without droppin
 
 Report bundles write Markdown, JSON, and audit-manifest artifacts. The final audit manifest includes
 the rendered report artifacts and their hashes, while SQLite run-graph queries include artifacts and
-source queries reachable through evidence and candidate links. Phase 2 smoke runs use deterministic
-run IDs, reject duplicate starts, and remove newly written files if a transactional tool step fails.
+source queries reachable through evidence and candidate links. Phase 2 smoke and Phase 4 tool-suite
+runs use deterministic run IDs, reject duplicate starts where applicable, and preserve prior
+successful outputs if a later transactional tool retry fails.
 
 ## ML Signal Discipline
 

@@ -37,7 +37,7 @@ def _normalize_non_empty(value: object) -> str:
 type TickerSymbol = Annotated[
     str,
     BeforeValidator(_normalize_ticker),
-    StringConstraints(pattern=r"^[A-Z][A-Z0-9.\-]{0,9}$", min_length=1, max_length=10),
+    StringConstraints(pattern=r"^[A-Z0-9][A-Z0-9./:_-]{0,31}$", min_length=1, max_length=32),
 ]
 type NonEmptyStr = Annotated[
     str,

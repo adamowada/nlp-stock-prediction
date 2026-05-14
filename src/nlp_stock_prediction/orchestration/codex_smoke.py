@@ -1,4 +1,4 @@
-"""Implementation for the opt-in Phase 2 real Codex MCP smoke test."""
+"""Implementation for the opt-in Phase 4 real Codex MCP smoke test."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class CodexSmokeConfig:
 
     @property
     def run_dir(self) -> Path:
-        return self.output_dir / self.run_date.isoformat()
+        return self.output_dir / self.run_date.isoformat() / symbol_slug(self.symbol)
 
     @property
     def final_message_path(self) -> Path:
@@ -46,7 +46,7 @@ class CodexSmokeConfig:
     @property
     def database_arg_path(self) -> Path:
         filename = (
-            f"phase2-codex-smoke-{self.run_date.isoformat()}-{symbol_slug(self.symbol)}.sqlite3"
+            f"phase4-codex-smoke-{self.run_date.isoformat()}-{symbol_slug(self.symbol)}.sqlite3"
         )
         return Path("data") / filename
 
@@ -60,9 +60,8 @@ def build_codex_prompt(config: CodexSmokeConfig) -> str:
 
     return "\n".join(
         [
-            "You are smoke-testing Phase 2 of nlp-stock-prediction.",
-            "Use live web search for 2-3 current sources about the requested symbol.",
-            "Use the nlp-stock-prediction MCP tools; do not edit source files.",
+            "You are smoke-testing Phase 4 of nlp-stock-prediction.",
+            "Use the nlp-stock-prediction Phase 4 MCP tools; do not edit source files.",
             "Do not import project modules directly or run shell fallbacks for MCP tools.",
             "If an MCP tool call is unavailable or cancelled, stop and report smoke failure.",
             f"Run date: {config.run_date.isoformat()}",
@@ -72,16 +71,20 @@ def build_codex_prompt(config: CodexSmokeConfig) -> str:
             "Required tool workflow:",
             "1. start_research_run",
             "2. list_research_tool_plan",
-            "3. record_codex_search_evidence for each searched source, with stance set to "
-            "supports, contradicts, or neutral",
-            "4. run_dummy_universe_tool",
-            "5. run_dummy_analysis_tool",
-            "6. synthesize_prediction_candidates",
-            "7. render_prediction_report",
-            "8. inspect_research_run",
+            "3. phase4_universe_discovery",
+            "4. phase4_market_data",
+            "5. phase4_technical_package",
+            "6. phase4_social_evidence",
+            "7. phase4_news_catalyst",
+            "8. phase4_fundamentals",
+            "9. phase4_sector_macro",
+            "10. phase4_candidate_synthesis",
+            "11. phase4_prediction_evaluation",
+            "12. render_prediction_report",
+            "13. inspect_research_run",
             "",
             "The final response must summarize the report path, JSON path, audit manifest path, "
-            "and whether at least one live-search evidence item was recorded.",
+            "and whether at least one source evidence item was recorded.",
         ]
     )
 
@@ -141,6 +144,10 @@ def verify_smoke_outputs(config: CodexSmokeConfig, *, require_sqlite: bool = Tru
         "shell fallback",
         "fastmcp stdio transport was blocked",
         "phase2mcpservice",
+        "record_codex_search_evidence",
+        "run_dummy_universe_tool",
+        "run_dummy_analysis_tool",
+        "synthesize_prediction_candidates",
     )
     if any(marker in final_message for marker in failure_markers):
         raise RuntimeError("Codex smoke final message reported MCP fallback or failure.")
@@ -149,9 +156,6 @@ def verify_smoke_outputs(config: CodexSmokeConfig, *, require_sqlite: bool = Tru
     evidence = report_payload.get("evidence_sources")
     if not isinstance(evidence, list) or not evidence:
         raise RuntimeError("Codex smoke report did not include evidence_sources.")
-    if not any(_is_codex_search_evidence(item) for item in evidence):
-        raise RuntimeError("Codex smoke report did not include Codex live-search evidence.")
-
     candidates = report_payload.get("prediction_candidates")
     insufficient = report_payload.get("insufficient_evidence_summary")
     if not candidates and not insufficient:
@@ -232,10 +236,7 @@ def verify_sqlite_run(config: CodexSmokeConfig) -> None:
 
     evidence = store.list_evidence_for_run(run_id)
     if not evidence:
-        raise RuntimeError("Codex smoke did not persist search evidence.")
-    if not any(_is_codex_sqlite_evidence(item) for item in evidence):
-        raise RuntimeError("Codex smoke SQLite evidence did not include Codex live search.")
-
+        raise RuntimeError("Codex smoke did not persist source evidence.")
     candidates = store.list_prediction_candidates_for_run(run_id)
     if not candidates:
         raise RuntimeError("Codex smoke did not persist prediction candidates.")
@@ -268,7 +269,7 @@ def prepare_clean_database(config: CodexSmokeConfig) -> None:
 
 
 def expected_run_id(config: CodexSmokeConfig) -> str:
-    return f"codex-smoke-{config.run_date.isoformat()}-{symbol_slug(config.symbol)}"
+    return f"phase4-{config.run_date.isoformat()}-{symbol_slug(config.symbol)}"
 
 
 def snapshot_restricted_paths(repo_root: Path) -> RestrictedPathSnapshot:
