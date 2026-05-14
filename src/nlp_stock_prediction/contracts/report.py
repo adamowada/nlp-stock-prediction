@@ -109,6 +109,8 @@ class AuditArtifact(ContractModel):
         "markdown_report",
         "json_report",
         "provider_result",
+        "market_data",
+        "technical_package",
         "ml_forecast",
         "instrument_universe",
         "audit_manifest",

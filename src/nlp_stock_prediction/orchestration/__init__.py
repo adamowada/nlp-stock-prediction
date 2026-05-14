@@ -10,6 +10,16 @@ from nlp_stock_prediction.orchestration.dummy import (
     generate_dummy_report_bundle,
 )
 from nlp_stock_prediction.orchestration.phase2_service import Phase2McpService
+from nlp_stock_prediction.orchestration.phase4_market_data import (
+    MarketDataToolResult,
+    Phase4MarketDataArtifact,
+    Phase4MarketDataTool,
+)
+from nlp_stock_prediction.orchestration.phase4_technical_package import (
+    Phase4TechnicalPackageArtifact,
+    Phase4TechnicalPackageTool,
+    TechnicalPackageToolResult,
+)
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationExecutionError,
     OrchestrationState,
@@ -30,14 +40,20 @@ __all__ = [
     "ArtifactIndex",
     "ArtifactType",
     "ArtifactWriter",
+    "MarketDataToolResult",
     "OrchestrationExecutionError",
     "OrchestrationState",
     "OrchestrationTool",
     "Phase2McpService",
+    "Phase4MarketDataArtifact",
+    "Phase4MarketDataTool",
+    "Phase4TechnicalPackageArtifact",
+    "Phase4TechnicalPackageTool",
     "ReportBundle",
     "RunContext",
     "StagedExecutionResult",
     "StagedExecutor",
+    "TechnicalPackageToolResult",
     "ToolRegistry",
     "ToolRunRecord",
     "ToolRunResult",
