@@ -10,12 +10,18 @@ from typing import cast
 
 from nlp_stock_prediction.contracts.analysis import AnalysisBundle
 from nlp_stock_prediction.contracts.base import JsonObject
-from nlp_stock_prediction.contracts.enums import FreshnessStatus, PredictionStatus
+from nlp_stock_prediction.contracts.enums import (
+    FreshnessStatus,
+    PredictionStatus,
+    SignalArtifactFamily,
+)
 from nlp_stock_prediction.contracts.evaluation import (
     BaselineComparison,
     EvaluationEvidenceCounts,
     PredictionEvaluation,
     PredictionEvaluationArtifactPayload,
+    SignalArtifactCounts,
+    SignalArtifactReference,
 )
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
@@ -64,12 +70,15 @@ def evaluate_prediction_candidate(
         reason for _reference, reason in (*missing_supporting, *missing_contradicting)
     )
     ml_signal_count = _ml_signal_count(analysis_bundle)
+    signal_artifacts = _candidate_signal_artifacts(candidate)
+    signal_artifact_ids = tuple(reference.artifact_id for reference in signal_artifacts)
     counts = EvaluationEvidenceCounts(
         supporting_source_evidence=len(supporting_refs),
         contradicting_source_evidence=len(contradicting_refs),
         missing_source_references=len(missing_refs),
-        technical_signal_artifacts=len(candidate.signal_artifact_ids),
+        technical_signal_artifacts=len(signal_artifact_ids),
         ml_signal_count=ml_signal_count,
+        signal_artifacts_by_family=SignalArtifactCounts.from_references(signal_artifacts),
         supporting_reference_ids=tuple(reference.evidence_id for reference in supporting_refs),
         contradicting_reference_ids=tuple(
             reference.evidence_id for reference in contradicting_refs
@@ -92,6 +101,7 @@ def evaluate_prediction_candidate(
         instrument_id=candidate.instrument_id,
         symbol=candidate.symbol,
         created_at=evaluated_at,
+        prediction_type=candidate.prediction_type,
         horizon=candidate.horizon,
         direction=candidate.direction,
         status=status,
@@ -101,7 +111,8 @@ def evaluate_prediction_candidate(
         evidence_counts=counts,
         evidence_for=supporting_refs,
         evidence_against=contradicting_refs,
-        signal_artifact_ids=candidate.signal_artifact_ids,
+        signal_artifact_ids=signal_artifact_ids,
+        signal_artifacts=signal_artifacts,
         metadata={
             "candidate_declared_status": candidate.status.value,
             "analysis_bundle_id": analysis_bundle.analysis_id if analysis_bundle else None,
@@ -503,7 +514,7 @@ def _validate_candidate_matches_stored(
     _append_mismatch(
         mismatches,
         "signal_artifacts",
-        candidate.signal_artifact_ids,
+        tuple(reference.artifact_id for reference in _candidate_signal_artifacts(candidate)),
         stored_candidate.signal_artifacts,
     )
     if mismatches:
@@ -550,6 +561,35 @@ def _ml_signal_count(analysis_bundle: AnalysisBundle | None) -> int:
     return 1 if analysis_bundle.technical.ml_signal is not None else 0
 
 
+def _candidate_signal_artifacts(
+    candidate: PredictionCandidate,
+) -> tuple[SignalArtifactReference, ...]:
+    references = list(candidate.signal_artifacts)
+    typed_ids = {reference.artifact_id for reference in references}
+    for artifact_id in candidate.signal_artifact_ids:
+        if artifact_id in typed_ids:
+            continue
+        references.append(_legacy_signal_artifact_reference(artifact_id))
+    return tuple(references)
+
+
+def _legacy_signal_artifact_reference(artifact_id: str) -> SignalArtifactReference:
+    normalized = artifact_id.lower()
+    if "timesfm" in normalized or normalized.startswith("artifact-ml"):
+        return SignalArtifactReference(
+            artifact_id=artifact_id,
+            family=SignalArtifactFamily.TIMESFM,
+            artifact_type="ml_forecast",
+            metadata={"legacy_flat_reference": True},
+        )
+    return SignalArtifactReference(
+        artifact_id=artifact_id,
+        family=SignalArtifactFamily.TECHNICALS,
+        artifact_type="technical_package",
+        metadata={"legacy_flat_reference": True},
+    )
+
+
 def _link_available_evidence(
     *,
     store: SQLiteStore,
@@ -593,6 +633,7 @@ def _evaluation_metadata(
         "status": evaluation.status.value,
         "instrument_id": evaluation.instrument_id,
         "symbol": evaluation.symbol,
+        "prediction_type": evaluation.prediction_type.value,
         "score": evaluation.score,
         "baseline_verdict": evaluation.baseline_comparison.verdict,
         "quality_label": evaluation.quality_language.report_label,
@@ -603,6 +644,10 @@ def _evaluation_metadata(
             reference.evidence_id for reference in evaluation.evidence_against
         ],
         "missing_reference_ids": list(evaluation.evidence_counts.missing_reference_ids),
+        "signal_artifact_ids": list(evaluation.signal_artifact_ids),
+        "signal_artifact_counts": evaluation.evidence_counts.signal_artifacts_by_family.model_dump(
+            mode="json"
+        ),
     }
     if artifact is not None:
         metadata["artifact_id"] = artifact.artifact_id

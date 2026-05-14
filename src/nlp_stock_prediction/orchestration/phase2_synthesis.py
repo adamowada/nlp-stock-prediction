@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from nlp_stock_prediction.contracts.base import JsonObject
-from nlp_stock_prediction.contracts.enums import Direction, TimeHorizon
+from nlp_stock_prediction.contracts.enums import Direction, PredictionType, TimeHorizon
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
@@ -77,7 +77,7 @@ def synthesize_prediction_candidates(
         run_id=run_id,
         instrument_id=instrument_id,
         prediction_horizon=TimeHorizon.SWING.value,
-        prediction_type="scenario",
+        prediction_type=PredictionType.DIRECTIONAL.value,
         scenario=scenario,
         direction=Direction.MIXED.value,
         confidence=confidence,

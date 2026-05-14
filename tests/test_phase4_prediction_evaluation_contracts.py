@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -14,8 +14,16 @@ from nlp_stock_prediction.contracts import (
     PredictionCandidate,
     PredictionChangeTrigger,
     PredictionEvaluation,
+    PredictionOutcome,
+    PredictionOutcomeEvaluation,
+    PredictionOutcomeEvaluationStatus,
+    PredictionOutcomeResult,
+    PredictionOutcomeStatus,
     PredictionStatus,
+    PredictionType,
     RetrievalMethod,
+    SignalArtifactFamily,
+    SignalArtifactReference,
     SourceEvidence,
     SourceKind,
     SourceProvenance,
@@ -70,6 +78,7 @@ def _candidate(
     evidence_for: tuple[EvidenceReference, ...] = (),
     evidence_against: tuple[EvidenceReference, ...] = (),
     signal_artifact_ids: tuple[str, ...] = (),
+    signal_artifacts: tuple[SignalArtifactReference, ...] = (),
     include_structured_baseline: bool = True,
 ) -> PredictionCandidate:
     status = (
@@ -90,6 +99,7 @@ def _candidate(
         evidence_for=evidence_for,
         evidence_against=evidence_against,
         signal_artifact_ids=signal_artifact_ids,
+        signal_artifacts=signal_artifacts,
         uncertainties=("Fixture sources are deterministic test inputs.",),
         change_triggers=(
             PredictionChangeTrigger(
@@ -173,6 +183,7 @@ def test_evaluation_scores_no_source_evidence_as_insufficient() -> None:
     assert evaluation.status == PredictionStatus.INSUFFICIENT_EVIDENCE
     assert evaluation.evidence_counts.supporting_source_evidence == 0
     assert evaluation.evidence_counts.technical_signal_artifacts == 1
+    assert evaluation.evidence_counts.signal_artifacts_by_family.technicals == 1
     assert evaluation.baseline_comparison.verdict == "below_baseline"
     assert any("No attributable source evidence" in item for item in evaluation.uncertainty)
 
@@ -276,7 +287,43 @@ def test_technical_ml_only_support_cannot_create_evidence_supported_evaluation()
     assert evaluation.status == PredictionStatus.INSUFFICIENT_EVIDENCE
     assert evaluation.evidence_counts.ml_signal_count == 1
     assert evaluation.evidence_counts.technical_signal_artifacts == 1
+    assert evaluation.evidence_counts.signal_artifacts_by_family.timesfm == 1
     assert evaluation.metadata["technical_or_ml_support_is_sidecar_only"] is True
+
+
+@pytest.mark.unit
+def test_typed_signal_artifact_reference_counts_by_family() -> None:
+    signal_ref = SignalArtifactReference(
+        artifact_id="artifact-social-tsla",
+        family=SignalArtifactFamily.SOCIAL,
+        artifact_type="normalized_evidence",
+        schema_version="phase4.social-evidence.v1",
+        tool_run_id="tool-social-tsla",
+        created_at=NOW,
+        as_of=NOW,
+        source_evidence_ids=("evidence-social",),
+    )
+    candidate = _candidate(signal_artifacts=(signal_ref,))
+
+    evaluation = evaluate_prediction_candidate(
+        candidate,
+        evidence_sources=(),
+        created_at=NOW,
+    )
+
+    assert evaluation.signal_artifact_ids == ("artifact-social-tsla",)
+    assert evaluation.signal_artifacts == (signal_ref,)
+    assert evaluation.evidence_counts.signal_artifacts_by_family.social == 1
+
+
+@pytest.mark.unit
+def test_signal_artifact_reference_rejects_wrong_family_artifact_type() -> None:
+    with pytest.raises(ValidationError, match="family"):
+        SignalArtifactReference(
+            artifact_id="artifact-timesfm-news",
+            family=SignalArtifactFamily.TIMESFM,
+            artifact_type="normalized_evidence",
+        )
 
 
 @pytest.mark.unit
@@ -304,4 +351,83 @@ def test_evaluation_contract_rejects_supported_status_without_source_evidence() 
                 contradicting_source_evidence=0,
                 missing_source_references=0,
             ),
+        )
+
+
+@pytest.mark.unit
+def test_prediction_outcome_and_outcome_evaluation_accept_observed_result() -> None:
+    evidence = EvidenceReference(evidence_id="evidence-outcome-tsla")
+    outcome = PredictionOutcome(
+        outcome_id="outcome-candidate-tsla-quality",
+        candidate_id="candidate-tsla-quality",
+        instrument_id="instrument:equity:us:tsla",
+        symbol="TSLA",
+        prediction_type=PredictionType.DIRECTIONAL,
+        horizon=TimeHorizon.SWING,
+        evaluation_window_start=NOW,
+        evaluation_window_end=NOW + timedelta(days=5),
+        status=PredictionOutcomeStatus.OBSERVED,
+        observed_result=PredictionOutcomeResult.SUPPORTED,
+        observed_at=NOW + timedelta(days=5),
+        result_summary="The later evidence supported the original scenario.",
+        outcome_evidence=(evidence,),
+    )
+    outcome_evaluation = PredictionOutcomeEvaluation(
+        outcome_evaluation_id="outcome-evaluation-candidate-tsla-quality",
+        outcome_id=outcome.outcome_id,
+        candidate_id=outcome.candidate_id,
+        instrument_id=outcome.instrument_id,
+        symbol=outcome.symbol,
+        evaluated_at=NOW + timedelta(days=5),
+        status=PredictionOutcomeEvaluationStatus.CONFIRMED,
+        outcome=outcome,
+        quality_score=0.73,
+        evidence=(evidence,),
+    )
+
+    assert outcome_evaluation.outcome.observed_result == PredictionOutcomeResult.SUPPORTED
+    assert outcome_evaluation.status == PredictionOutcomeEvaluationStatus.CONFIRMED
+
+
+@pytest.mark.unit
+def test_prediction_outcome_requires_limitations_when_unavailable() -> None:
+    with pytest.raises(ValidationError, match="limitations"):
+        PredictionOutcome(
+            outcome_id="outcome-unavailable",
+            candidate_id="candidate-tsla-quality",
+            instrument_id="instrument:equity:us:tsla",
+            symbol="TSLA",
+            prediction_type=PredictionType.DIRECTIONAL,
+            evaluation_window_start=NOW,
+            evaluation_window_end=NOW + timedelta(days=5),
+            status=PredictionOutcomeStatus.UNAVAILABLE,
+        )
+
+
+@pytest.mark.unit
+def test_resolved_outcome_evaluation_requires_observed_outcome() -> None:
+    outcome = PredictionOutcome(
+        outcome_id="outcome-pending",
+        candidate_id="candidate-tsla-quality",
+        instrument_id="instrument:equity:us:tsla",
+        symbol="TSLA",
+        prediction_type=PredictionType.DIRECTIONAL,
+        evaluation_window_start=NOW,
+        evaluation_window_end=NOW + timedelta(days=5),
+        status=PredictionOutcomeStatus.PENDING,
+        limitations=("Evaluation window has not completed.",),
+    )
+
+    with pytest.raises(ValidationError, match="observed outcome"):
+        PredictionOutcomeEvaluation(
+            outcome_evaluation_id="outcome-evaluation-pending",
+            outcome_id=outcome.outcome_id,
+            candidate_id=outcome.candidate_id,
+            instrument_id=outcome.instrument_id,
+            symbol=outcome.symbol,
+            evaluated_at=NOW,
+            status=PredictionOutcomeEvaluationStatus.CONFIRMED,
+            outcome=outcome,
+            quality_score=0.5,
+            evidence=(EvidenceReference(evidence_id="evidence-outcome-tsla"),),
         )

@@ -308,7 +308,8 @@ def _render_candidate(candidate: PredictionCandidate) -> list[str]:
         f"({_markdown_text(candidate.symbol)}): {_markdown_text(candidate.thesis)}",
         (
             f"  - Status: {candidate.status.value}; direction: {candidate.direction.value}; "
-            f"horizon: {candidate.horizon.value}; confidence {candidate.confidence:.2f}"
+            f"type: {candidate.prediction_type.value}; horizon: {candidate.horizon.value}; "
+            f"confidence {candidate.confidence:.2f}"
         ),
         f"  - Baseline: {_markdown_text(candidate.baseline)}",
         f"  - Evidence for: {_format_evidence_ids(candidate.evidence_for)}",
@@ -321,8 +322,9 @@ def _render_candidate(candidate: PredictionCandidate) -> list[str]:
         f"  - Change trigger limitations: {_format_list(candidate.change_trigger_limitations)}",
         f"  - Prior outcome reviews: {_format_code_list(candidate.prior_outcome_review_ids)}",
     ]
-    if candidate.signal_artifact_ids:
-        lines.append(f"  - Signal artifacts: {_format_code_list(candidate.signal_artifact_ids)}")
+    signal_artifacts = _format_signal_artifacts(candidate)
+    if signal_artifacts != "none":
+        lines.append(f"  - Signal artifacts: {signal_artifacts}")
     lines.extend(_render_candidate_evaluation_metadata(candidate))
     lines.append("")
     return lines
@@ -523,6 +525,18 @@ def _format_change_triggers(candidate: PredictionCandidate) -> str:
         f"{_markdown_text(trigger.summary)}"
         for trigger in candidate.change_triggers
     )
+
+
+def _format_signal_artifacts(candidate: PredictionCandidate) -> str:
+    typed = {reference.artifact_id: reference for reference in candidate.signal_artifacts}
+    parts = [
+        f"{reference.family.value}: `{_markdown_code(reference.artifact_id)}`"
+        for reference in candidate.signal_artifacts
+    ]
+    for artifact_id in candidate.signal_artifact_ids:
+        if artifact_id not in typed:
+            parts.append(f"legacy: `{_markdown_code(artifact_id)}`")
+    return "; ".join(parts) if parts else "none"
 
 
 def _format_list(values: tuple[str, ...]) -> str:

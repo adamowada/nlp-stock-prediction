@@ -12,7 +12,7 @@ from typing import Literal, cast
 from pydantic import Field, model_validator
 
 from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr
-from nlp_stock_prediction.contracts.enums import Direction, TimeHorizon
+from nlp_stock_prediction.contracts.enums import Direction, PredictionType, TimeHorizon
 from nlp_stock_prediction.contracts.instruments import InstrumentQuery, InstrumentUniverseRequest
 from nlp_stock_prediction.contracts.providers import FundamentalsSnapshot
 from nlp_stock_prediction.orchestration.artifacts import (
@@ -998,7 +998,7 @@ class Phase4Service:
             run_id=run_id,
             instrument_id=instrument_id,
             prediction_horizon=TimeHorizon.SWING.value,
-            prediction_type="scenario",
+            prediction_type=PredictionType.DIRECTIONAL.value,
             scenario=_phase4_candidate_scenario(
                 symbol=candidate_symbol,
                 evidence_for=bool(evidence_for),

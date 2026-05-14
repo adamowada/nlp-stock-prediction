@@ -199,6 +199,20 @@ must point to source evidence, tool artifacts, provider context, or prior outcom
 to a candidate. Candidate records must either include specific change triggers or an explicit
 limitation explaining why the report cannot define them yet.
 
+Settled prediction/evaluation contracts now include an explicit `prediction_type`, typed
+`SignalArtifactReference` records by signal family (`technicals`, `timesfm`, `social`, `news`,
+`fundamentals`, and `sector_macro`), and per-family signal counts in prediction-quality evaluation
+payloads. Flat `signal_artifact_ids` remain for compatibility with existing SQLite candidate rows,
+but typed references are the stable report/export shape for new code.
+
+Phase 6 outcome tracking begins with `PredictionOutcome` and `PredictionOutcomeEvaluation`.
+`PredictionOutcome` records the evaluated candidate, instrument, prediction type, horizon,
+evaluation window, observed/unavailable/stale/pending state, observed result when available,
+outcome evidence, artifact IDs, and limitations. `PredictionOutcomeEvaluation` records the review
+status, quality score when resolved, optional baseline comparison, evidence, artifacts, and
+limitations. Resolved outcome evaluations require an observed outcome plus evidence or artifacts;
+pending, stale, or not-evaluable evaluations must explain their limitations.
+
 ## Planning State
 
 Active plans belong in the tracked planning SQLite database. Planning contracts include:

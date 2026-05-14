@@ -7,6 +7,9 @@ from nlp_stock_prediction.contracts import (
     EvidenceReference,
     PredictionCandidate,
     PredictionStatus,
+    PredictionType,
+    SignalArtifactFamily,
+    SignalArtifactReference,
     SourceEvidence,
     TimeHorizon,
 )
@@ -51,6 +54,7 @@ def prediction_candidate_from_record(
         candidate_id=candidate.candidate_id,
         instrument_id=candidate.instrument_id,
         symbol=symbol,
+        prediction_type=_prediction_type(candidate.prediction_type),
         horizon=_time_horizon(candidate.prediction_horizon),
         direction=_direction(candidate.direction),
         status=status,
@@ -65,6 +69,7 @@ def prediction_candidate_from_record(
             "Stored candidate records do not yet include structured change-trigger inputs.",
         ),
         signal_artifact_ids=candidate.signal_artifacts,
+        signal_artifacts=_signal_artifact_references(candidate.signal_artifacts),
         metadata=candidate.metadata,
     )
 
@@ -171,6 +176,36 @@ def _time_horizon(value: str) -> TimeHorizon:
         return TimeHorizon(value)
     except ValueError:
         return TimeHorizon.SWING
+
+
+def _prediction_type(value: str) -> PredictionType:
+    try:
+        return PredictionType(value)
+    except ValueError:
+        return PredictionType.DIRECTIONAL
+
+
+def _signal_artifact_references(
+    artifact_ids: tuple[str, ...],
+) -> tuple[SignalArtifactReference, ...]:
+    return tuple(_signal_artifact_reference(artifact_id) for artifact_id in artifact_ids)
+
+
+def _signal_artifact_reference(artifact_id: str) -> SignalArtifactReference:
+    normalized = artifact_id.lower()
+    if "timesfm" in normalized or normalized.startswith("artifact-ml"):
+        return SignalArtifactReference(
+            artifact_id=artifact_id,
+            family=SignalArtifactFamily.TIMESFM,
+            artifact_type="ml_forecast",
+            metadata={"derived_from_stored_candidate": True},
+        )
+    return SignalArtifactReference(
+        artifact_id=artifact_id,
+        family=SignalArtifactFamily.TECHNICALS,
+        artifact_type="technical_package",
+        metadata={"derived_from_stored_candidate": True},
+    )
 
 
 __all__ = [

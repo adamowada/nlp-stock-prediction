@@ -21,7 +21,13 @@ from nlp_stock_prediction.contracts.base import (
     JsonObject,
     NonEmptyStr,
 )
-from nlp_stock_prediction.contracts.enums import Direction, PredictionStatus, TimeHorizon
+from nlp_stock_prediction.contracts.enums import (
+    Direction,
+    PredictionStatus,
+    PredictionType,
+    TimeHorizon,
+)
+from nlp_stock_prediction.contracts.evaluation import SignalArtifactReference
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.extraction import StrategyCluster
 from nlp_stock_prediction.contracts.instruments import (
@@ -251,6 +257,7 @@ class PredictionCandidate(ContractModel):
     candidate_id: NonEmptyStr
     instrument_id: NonEmptyStr
     symbol: InstrumentSymbol
+    prediction_type: PredictionType = PredictionType.DIRECTIONAL
     horizon: TimeHorizon = TimeHorizon.UNKNOWN
     direction: Direction = Direction.UNKNOWN
     status: PredictionStatus
@@ -267,6 +274,7 @@ class PredictionCandidate(ContractModel):
     change_trigger_limitations: tuple[str, ...] = Field(default_factory=tuple)
     prior_outcome_review_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     signal_artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
+    signal_artifacts: tuple[SignalArtifactReference, ...] = Field(default_factory=tuple)
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -299,6 +307,9 @@ class PredictionCandidate(ContractModel):
             raise ValueError(
                 "prediction candidates require change triggers or change trigger limitations"
             )
+        typed_signal_ids = tuple(reference.artifact_id for reference in self.signal_artifacts)
+        if len(set(typed_signal_ids)) != len(typed_signal_ids):
+            raise ValueError("prediction candidate signal artifact references must be unique")
         _validate_report_authored_language(
             self.thesis,
             self.baseline,
@@ -589,6 +600,10 @@ class DailyReport(ContractModel):
             for trigger in candidate.change_triggers:
                 cited_evidence_ids.update(reference.evidence_id for reference in trigger.evidence)
                 referenced_artifact_ids.update(trigger.artifact_ids)
+            referenced_artifact_ids.update(candidate.signal_artifact_ids)
+            for signal_artifact in candidate.signal_artifacts:
+                referenced_artifact_ids.add(signal_artifact.artifact_id)
+                cited_evidence_ids.update(signal_artifact.source_evidence_ids)
             missing_prior_ids = set(candidate.prior_outcome_review_ids).difference(
                 prior_outcome_review_ids
             )
@@ -783,5 +798,6 @@ __all__ = [
     "PredictionChangeTrigger",
     "PriorOutcomeReview",
     "ReportSourceReference",
+    "SignalArtifactReference",
     "UncertaintyDriver",
 ]
