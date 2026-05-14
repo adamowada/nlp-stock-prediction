@@ -125,6 +125,8 @@ def write_prediction_evaluation_artifact(
     analysis_bundle: AnalysisBundle | None = None,
     created_at: datetime | None = None,
     artifact_filename: str | None = None,
+    tool_run_id: str | None = None,
+    record_tool_run: bool = True,
 ) -> tuple[PredictionEvaluation, AuditArtifact]:
     """Evaluate a stored candidate, write a stable artifact, and index it in SQLite."""
 
@@ -147,7 +149,7 @@ def write_prediction_evaluation_artifact(
         created_at=evaluated_at,
         evaluation_id=f"evaluation-{_slug(candidate.candidate_id)}-{digest[:8]}",
     )
-    tool_run_id = f"tool-prediction-evaluation-{digest[:12]}"
+    resolved_tool_run_id = tool_run_id or f"tool-prediction-evaluation-{digest[:12]}"
     inputs: JsonObject = {
         "candidate_id": candidate.candidate_id,
         "source_evidence_count": len(evidence_sources),
@@ -166,35 +168,28 @@ def write_prediction_evaluation_artifact(
     )
     artifact_id = f"artifact-prediction-evaluation-{_slug(candidate.candidate_id)}-{digest[:8]}"
     filename = artifact_filename or f"prediction-evaluation-{_slug(candidate.candidate_id)}.json"
-    with safe_phase4_tool_execution(
-        store=store,
-        artifact_roots=(artifact_dir,),
-        tool_run_id=tool_run_id,
-        run_id=run_id,
-        tool_name=_TOOL_NAME,
-        tool_version=_TOOL_VERSION,
-        started_at=evaluated_at,
-        inputs=inputs,
-    ):
-        store.record_tool_run(
-            ToolRunRecord(
-                tool_run_id=tool_run_id,
-                run_id=run_id,
-                tool_name=_TOOL_NAME,
-                tool_version=_TOOL_VERSION,
-                status="successful",
-                started_at=evaluated_at,
-                completed_at=evaluated_at,
-                inputs=inputs,
+
+    def write_artifact() -> tuple[PredictionEvaluation, AuditArtifact]:
+        if record_tool_run:
+            store.record_tool_run(
+                ToolRunRecord(
+                    tool_run_id=resolved_tool_run_id,
+                    run_id=run_id,
+                    tool_name=_TOOL_NAME,
+                    tool_version=_TOOL_VERSION,
+                    status="successful",
+                    started_at=evaluated_at,
+                    completed_at=evaluated_at,
+                    inputs=inputs,
+                )
             )
-        )
         artifact = ArtifactIndex.for_directory(
             store=store,
             repo_root=repo_root,
             base_dir=artifact_dir,
             created_at=evaluated_at,
             produced_by=_TOOL_NAME,
-            tool_run_id=tool_run_id,
+            tool_run_id=resolved_tool_run_id,
             schema_version=payload.schema_version,
         ).write_json(
             artifact_id=artifact_id,
@@ -229,6 +224,21 @@ def write_prediction_evaluation_artifact(
             created_at=evaluated_at,
         )
         return evaluation, artifact
+
+    if not record_tool_run:
+        return write_artifact()
+
+    with safe_phase4_tool_execution(
+        store=store,
+        artifact_roots=(artifact_dir,),
+        tool_run_id=resolved_tool_run_id,
+        run_id=run_id,
+        tool_name=_TOOL_NAME,
+        tool_version=_TOOL_VERSION,
+        started_at=evaluated_at,
+        inputs=inputs,
+    ):
+        return write_artifact()
 
 
 def attach_evaluation_metadata(

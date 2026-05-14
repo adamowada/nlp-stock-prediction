@@ -43,7 +43,7 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     symbol_slug,
     utc_now,
 )
-from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.phase4_execution import safe_phase4_tool_execution
 from nlp_stock_prediction.orchestration.phase4_market_data import (
     MarketDataToolResult,
     Phase4MarketDataArtifact,

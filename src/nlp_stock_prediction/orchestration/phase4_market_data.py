@@ -34,10 +34,8 @@ from nlp_stock_prediction.contracts import (
 from nlp_stock_prediction.ml.ohlcv import calendar_date, timestamp_key_for
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase2_common import stable_digest, symbol_slug, utc_now
-from nlp_stock_prediction.orchestration.phase4_common import (
-    retrieval_method_for_provider,
-    safe_phase4_tool_execution,
-)
+from nlp_stock_prediction.orchestration.phase4_common import retrieval_method_for_provider
+from nlp_stock_prediction.orchestration.phase4_execution import safe_phase4_tool_execution
 from nlp_stock_prediction.providers._base import provider_health, provider_warning
 from nlp_stock_prediction.storage.records import SourceQueryRecord, ToolRunRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore

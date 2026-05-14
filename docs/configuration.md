@@ -23,7 +23,7 @@ context; tuning and promotion workflows are outside the product workflow.
 Generate the deterministic offline report:
 
 ```sh
-python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
+python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --offline
 ```
 
 Run the optional Phase 2 real-Codex smoke after installing the MCP extra:

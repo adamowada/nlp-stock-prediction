@@ -27,15 +27,17 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
     repo_root = _repo_root_for_output(config.output_dir)
     output_arg = _path_arg(config.output_dir, repo_root)
     output_digest = stable_digest(output_arg)[:8]
+    normalized_symbol = config.symbol.strip().upper()
+    symbol_digest = stable_digest(normalized_symbol)[:8]
     service = Phase4Service(
         repo_root=repo_root,
         database_path=Path("data")
-        / f"phase4-runtime-{config.run_date.isoformat()}-tsla-{output_digest}.sqlite3",
+        / (f"phase4-runtime-{config.run_date.isoformat()}-{symbol_digest}-{output_digest}.sqlite3"),
     )
     result = service.run_offline_phase4_flow(
         run_date=config.run_date.isoformat(),
         output_dir=output_arg,
-        symbol="TSLA",
+        symbol=normalized_symbol,
     )
     report_payload = cast(dict[str, object], result["report"])
     markdown_path = Path(str(report_payload["markdown_path"]))

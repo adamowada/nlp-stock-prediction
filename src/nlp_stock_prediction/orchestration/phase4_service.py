@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -13,7 +12,7 @@ from pydantic import Field, model_validator
 
 from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr
 from nlp_stock_prediction.contracts.instruments import InstrumentQuery, InstrumentUniverseRequest
-from nlp_stock_prediction.contracts.providers import FundamentalsSnapshot, RedditProvider
+from nlp_stock_prediction.contracts.providers import FundamentalsSnapshot
 from nlp_stock_prediction.orchestration.artifacts import (
     ArtifactFileTransaction,
     ArtifactIndex,
@@ -29,14 +28,16 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     symbol_slug,
     utc_now,
 )
-from nlp_stock_prediction.orchestration.phase2_dummy_tools import (
-    run_phase2_dummy_analysis_tool,
-    run_phase2_dummy_universe_tool,
-)
 from nlp_stock_prediction.orchestration.phase2_evidence import record_codex_search_evidence
 from nlp_stock_prediction.orchestration.phase2_report import render_phase2_prediction_report
 from nlp_stock_prediction.orchestration.phase2_synthesis import synthesize_prediction_candidates
 from nlp_stock_prediction.orchestration.phase4_common import Phase4ToolResult
+from nlp_stock_prediction.orchestration.phase4_evaluation import (
+    evaluate_stored_prediction_candidates,
+)
+from nlp_stock_prediction.orchestration.phase4_fixture_providers import (
+    Phase4FixtureProviderFactory,
+)
 from nlp_stock_prediction.orchestration.phase4_fundamentals import (
     PHASE4_FUNDAMENTALS_TOOL_NAME,
     run_phase4_fundamentals_tool,
@@ -67,12 +68,7 @@ from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
 from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
     Phase4UniverseDiscoveryTool,
 )
-from nlp_stock_prediction.providers._base import JsonResponse
 from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
-from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
-from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
-from nlp_stock_prediction.providers.social import XRecentSearchProvider
-from nlp_stock_prediction.reddit.provider import FixtureRedditProvider
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
 from nlp_stock_prediction.storage.records import ResearchRunRecord, ToolRunRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore, initialize_research_database
@@ -81,9 +77,7 @@ PHASE4_STAGE_ORDER: tuple[str, ...] = ("discover", "collect", "analyze", "evalua
 Phase4Stage = Literal["discover", "collect", "analyze", "evaluate", "report"]
 Phase4ToolRunStatus = Literal["successful", "partial", "empty", "skipped", "failed"]
 
-PHASE4_DISCOVER_TOOL_ID = "phase4.discover_instruments"
 PHASE4_COLLECT_TOOL_ID = "phase4.collect_codex_search_evidence"
-PHASE4_ANALYZE_TOOL_ID = "phase4.analyze_context"
 PHASE4_EVALUATE_TOOL_ID = "phase4.evaluate_prediction_candidates"
 PHASE4_REPORT_TOOL_ID = "phase4.render_final_report"
 PHASE4_UNIVERSE_TOOL_ID = "phase4.universe_discovery"
@@ -535,6 +529,10 @@ class Phase4Service:
     def store(self) -> SQLiteStore:
         return self._store
 
+    @property
+    def fixtures(self) -> Phase4FixtureProviderFactory:
+        return Phase4FixtureProviderFactory(self.repo_root)
+
     def start_research_run(
         self,
         *,
@@ -611,11 +609,7 @@ class Phase4Service:
         normalized_symbol = self._validated_symbol(run, symbol)
         run_date = run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        fixture_path = self._fixture_path(
-            "raw",
-            "candlecharts",
-            f"public_ohlcv_{normalized_symbol.lower()}.html",
-        )
+        fixture_path = self.fixtures.market_html_path(normalized_symbol)
         provider = CandlechartsMarketDataProvider(
             html_path=fixture_path,
             now=utc_now,
@@ -686,8 +680,8 @@ class Phase4Service:
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
-            reddit_provider=cast(RedditProvider | None, self._fixture_reddit_provider()),
-            x_provider=self._fixture_x_provider(),
+            reddit_provider=self.fixtures.reddit_provider(),
+            x_provider=self.fixtures.x_provider(normalized_symbol),
             instrument_id=self._instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
@@ -703,7 +697,7 @@ class Phase4Service:
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
-            providers=self._fixture_news_providers(),
+            providers=self.fixtures.news_providers(normalized_symbol),
             instrument_id=self._instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
@@ -719,7 +713,7 @@ class Phase4Service:
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
-            providers=self._fixture_fundamentals_providers(normalized_symbol),
+            providers=self.fixtures.fundamentals_providers(normalized_symbol),
             instrument_id=self._instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
@@ -745,7 +739,7 @@ class Phase4Service:
         normalized_symbol = self._validated_symbol(run, symbol)
         candidates = self.store.list_prediction_candidates_for_run(run_id)
 
-        def action(_context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
+        def action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
             if not candidates:
                 return Phase4ToolRunOutcome(
                     status="empty",
@@ -755,16 +749,23 @@ class Phase4Service:
                     },
                     metadata={"candidate_count": 0},
                 )
+            result = evaluate_stored_prediction_candidates(
+                store=self.store,
+                repo_root=self.repo_root,
+                artifact_dir=context.paths.audit_dir,
+                run_id=run_id,
+                tool_run_id=context.tool_run_id,
+                generated_at=utc_now(),
+            )
             return Phase4ToolRunOutcome(
-                status="skipped",
-                payload={
+                status="partial" if result.warnings else "successful",
+                payload=result.payload,
+                artifact_ids=result.artifact_ids,
+                warnings=result.warnings,
+                metadata={
                     "candidate_count": len(candidates),
-                    "message": (
-                        "Stored candidates are present; first-class evaluation artifact writing "
-                        "is available through nlp_stock_prediction.evaluation."
-                    ),
+                    "evaluation_count": result.payload["evaluation_count"],
                 },
-                metadata={"candidate_count": len(candidates)},
             )
 
         return self._execute_symbol_tool(
@@ -856,67 +857,8 @@ class Phase4Service:
     def run_dummy_universe_tool(self, *, run_id: str, symbol: str) -> JsonObject:
         return self.phase4_universe_discovery(run_id=run_id, symbol=symbol)
 
-    def _run_phase2_dummy_universe_tool(self, *, run_id: str, symbol: str) -> JsonObject:
-        def action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
-            result = run_phase2_dummy_universe_tool(
-                store=self.store,
-                repo_root=self.repo_root,
-                paths=context.paths,
-                run_id=run_id,
-                symbol=normalized_symbol,
-                tool_run_id=context.tool_run_id,
-                record_tool_run=False,
-                tool_name=context.tool.tool_name,
-                tool_version=context.tool.tool_version,
-            )
-            warnings = _string_tuple(result.get("warnings"))
-            return Phase4ToolRunOutcome(
-                status="partial" if warnings else "successful",
-                payload=result,
-                artifact_ids=(str(result["artifact_id"]),),
-                warnings=warnings,
-                metadata={"instrument_count": len(cast(list[object], result["instrument_ids"]))},
-            )
-
-        normalized_symbol = self._validated_symbol(self._require_run(run_id), symbol)
-        return self._execute_symbol_tool(
-            run_id=run_id,
-            symbol=normalized_symbol,
-            tool_id=PHASE4_DISCOVER_TOOL_ID,
-            inputs={"symbol": normalized_symbol},
-            action=action,
-        ).payload
-
     def run_dummy_analysis_tool(self, *, run_id: str, symbol: str) -> JsonObject:
         return self.phase4_technical_package(run_id=run_id, symbol=symbol)
-
-    def _run_phase2_dummy_analysis_tool(self, *, run_id: str, symbol: str) -> JsonObject:
-        def action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
-            result = run_phase2_dummy_analysis_tool(
-                store=self.store,
-                repo_root=self.repo_root,
-                paths=context.paths,
-                run_id=run_id,
-                symbol=normalized_symbol,
-                tool_run_id=context.tool_run_id,
-                record_tool_run=False,
-                tool_name=context.tool.tool_name,
-                tool_version=context.tool.tool_version,
-            )
-            return Phase4ToolRunOutcome(
-                status="successful",
-                payload=result,
-                artifact_ids=(str(result["artifact_id"]),),
-            )
-
-        normalized_symbol = self._validated_symbol(self._require_run(run_id), symbol)
-        return self._execute_symbol_tool(
-            run_id=run_id,
-            symbol=normalized_symbol,
-            tool_id=PHASE4_ANALYZE_TOOL_ID,
-            inputs={"symbol": normalized_symbol},
-            action=action,
-        ).payload
 
     def synthesize_prediction_candidates(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)
@@ -1107,82 +1049,6 @@ class Phase4Service:
                 return path if path.is_absolute() else self.repo_root / path
         return None
 
-    def _fixture_path(self, *parts: str) -> Path | None:
-        path = self.repo_root.joinpath("tests", "fixtures", *parts)
-        return path if path.exists() else None
-
-    def _fixture_json(self, *parts: str) -> object | None:
-        path = self._fixture_path(*parts)
-        if path is None:
-            return None
-        loaded: object = json.loads(path.read_text(encoding="utf-8"))
-        return loaded
-
-    def _fixture_reddit_provider(self) -> FixtureRedditProvider | None:
-        card_path = self._fixture_path("reddit", "devvit_card_normal.html")
-        records = self._fixture_json("reddit", "discussion_records.json")
-        if card_path is None or not isinstance(records, list):
-            return None
-        return FixtureRedditProvider(
-            ticker_card_html=card_path.read_text(encoding="utf-8"),
-            discussion_records=cast(list[dict[str, object]], records),
-            fetched_at=utc_now(),
-            raw_ticker_snapshot_id="raw-reddit-ticker-card",
-            raw_discussion_snapshot_id="raw-reddit-discussion",
-        )
-
-    def _fixture_x_provider(self) -> XRecentSearchProvider | None:
-        payload = self._fixture_json("raw", "x", "recent_tsla.json")
-        if payload is None:
-            return None
-        return XRecentSearchProvider(
-            bearer_token="fixture-token",
-            transport=_StaticJsonTransport({"tweets/search/recent": cast(JsonObject, payload)}),
-            now=utc_now,
-        )
-
-    def _fixture_news_providers(self) -> tuple[PublicNewsProvider, ...]:
-        payload = self._fixture_json("raw", "news", "tsla.json")
-        if payload is None:
-            return ()
-        return (
-            PublicNewsProvider(
-                config=PublicNewsProviderConfig(
-                    provider_name="fixture-news",
-                    endpoint="https://news.example.invalid/v1/search",
-                    api_key_param="token",
-                    query_param="search",
-                ),
-                api_key="fixture-key",
-                transport=_StaticJsonTransport(
-                    {"news.example.invalid/v1/search": cast(JsonObject, payload)}
-                ),
-                now=utc_now,
-            ),
-        )
-
-    def _fixture_fundamentals_providers(
-        self,
-        symbol: str,
-    ) -> tuple[SecEdgarFundamentalsProvider, ...]:
-        companyfacts = self._fixture_json("raw", "sec_edgar", "companyfacts_tsla.json")
-        submissions = self._fixture_json("raw", "sec_edgar", "submissions_tsla.json")
-        if companyfacts is None or submissions is None:
-            return ()
-        return (
-            SecEdgarFundamentalsProvider(
-                ticker_cik_map={symbol.upper(): "1318605"},
-                user_agent="nlp-stock-prediction fixture-runtime contact@example.test",
-                transport=_StaticJsonTransport(
-                    {
-                        "companyfacts": cast(JsonObject, companyfacts),
-                        "submissions": cast(JsonObject, submissions),
-                    }
-                ),
-                now=utc_now,
-            ),
-        )
-
 
 def _phase4_tool_run_id(
     *,
@@ -1240,14 +1106,6 @@ def _with_execution_payload(
     return outcome.model_copy(update={"payload": payload})
 
 
-def _string_tuple(value: object) -> tuple[str, ...]:
-    if isinstance(value, list | tuple):
-        return tuple(str(item) for item in value if item)
-    if isinstance(value, str) and value:
-        return (value,)
-    return ()
-
-
 def _phase4_tool_result_payload(result: Phase4ToolResult) -> JsonObject:
     return {
         "run_id": result.run_id,
@@ -1261,32 +1119,10 @@ def _phase4_tool_result_payload(result: Phase4ToolResult) -> JsonObject:
     }
 
 
-@dataclass(frozen=True)
-class _StaticJsonTransport:
-    responses: Mapping[str, JsonObject]
-
-    def get_json(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        timeout: float = 10.0,
-    ) -> JsonResponse:
-        del headers, timeout
-        for url_fragment, payload in self.responses.items():
-            if url_fragment in url:
-                return JsonResponse(payload=payload)
-        if len(self.responses) == 1:
-            return JsonResponse(payload=next(iter(self.responses.values())))
-        raise ValueError(f"No fixture JSON response is registered for URL: {url}")
-
-
 __all__ = [
     "ALLOWED_WRITE_ROOTS",
     "MISSING_CANDIDATE_WARNING",
-    "PHASE4_ANALYZE_TOOL_ID",
     "PHASE4_COLLECT_TOOL_ID",
-    "PHASE4_DISCOVER_TOOL_ID",
     "PHASE4_EVALUATE_TOOL_ID",
     "PHASE4_FUNDAMENTALS_TOOL_ID",
     "PHASE4_MARKET_DATA_TOOL_ID",

@@ -26,14 +26,16 @@ from nlp_stock_prediction.orchestration.phase4_common import (
     model_json,
     provider_request_query,
     record_source_query_for_result,
-    record_tool_completed,
-    record_tool_started,
     result_list_json,
     scoped_source_evidence,
     source_evidence_json,
     tool_identity,
     tool_status,
     warning_messages,
+)
+from nlp_stock_prediction.orchestration.phase4_execution import (
+    record_tool_completed,
+    record_tool_started,
     write_phase4_json_artifact,
 )
 from nlp_stock_prediction.storage.records import EvidenceRecord

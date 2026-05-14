@@ -9,12 +9,8 @@ from typing import cast
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.enums import (
     CredentialState,
-    Direction,
-    PredictionStatus,
     ProviderStatus,
-    TimeHorizon,
 )
-from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.instruments import Instrument
 from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderHealth
 from nlp_stock_prediction.contracts.report import (
@@ -23,7 +19,6 @@ from nlp_stock_prediction.contracts.report import (
     DailyReport,
     DataFreshnessSummary,
     InstrumentReportSection,
-    PredictionCandidate,
 )
 from nlp_stock_prediction.instruments.repository import instrument_from_record
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex, ArtifactType
@@ -34,11 +29,11 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     utc_now,
 )
 from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
+from nlp_stock_prediction.orchestration.report_candidates import prediction_candidate_from_record
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
-    PredictionCandidateRecord,
     ResearchRunRecord,
     ToolRunRecord,
 )
@@ -70,7 +65,7 @@ def render_phase2_prediction_report(
     instrument = _primary_instrument(store, symbol=symbol, fallback_generated_at=now)
     candidates = store.list_prediction_candidates_for_run(run.run_id)
     prediction_candidates = tuple(
-        _report_candidate(candidate, evidence_sources) for candidate in candidates
+        prediction_candidate_from_record(candidate, evidence_sources) for candidate in candidates
     )
     section_refs = tuple(
         EvidenceReference(
@@ -260,60 +255,6 @@ def _primary_instrument(
     if discovered:
         return instrument_from_record(discovered[0])
     return phase2_instrument(symbol.upper(), fallback_generated_at)
-
-
-def _report_candidate(
-    candidate: PredictionCandidateRecord,
-    evidence_sources: tuple[SourceEvidence, ...],
-) -> PredictionCandidate:
-    evidence_by_id = {record.evidence_id: record for record in evidence_sources}
-    evidence_for_refs = tuple(
-        EvidenceReference(
-            evidence_id=evidence_id,
-            quote=evidence_by_id[evidence_id].text[:180] if evidence_id in evidence_by_id else None,
-            relevance=0.76,
-        )
-        for evidence_id in candidate.evidence_for
-    )
-    evidence_against_refs = tuple(
-        EvidenceReference(
-            evidence_id=evidence_id,
-            quote=evidence_by_id[evidence_id].text[:180] if evidence_id in evidence_by_id else None,
-            relevance=0.76,
-        )
-        for evidence_id in candidate.evidence_against
-    )
-    status = (
-        PredictionStatus.CONTRADICTED
-        if evidence_against_refs
-        else PredictionStatus.EVIDENCE_SUPPORTED
-        if evidence_for_refs
-        else PredictionStatus.INSUFFICIENT_EVIDENCE
-    )
-    symbol = candidate.metadata.get("symbol")
-    if not isinstance(symbol, str) or not symbol.strip():
-        symbol = candidate.instrument_id.rsplit(":", 1)[-1]
-    baseline = candidate.baseline.get("summary")
-    if not isinstance(baseline, str) or not baseline.strip():
-        baseline = "No directional edge is assumed without source-backed evidence."
-    uncertainty = candidate.uncertainty or "Evidence coverage and freshness may limit confidence."
-    return PredictionCandidate(
-        candidate_id=candidate.candidate_id,
-        instrument_id=candidate.instrument_id,
-        symbol=symbol,
-        horizon=TimeHorizon.SWING,
-        direction=Direction.MIXED,
-        status=status,
-        thesis=candidate.scenario,
-        baseline=baseline,
-        confidence=candidate.confidence or 0.0,
-        evidence_for=evidence_for_refs,
-        evidence_against=evidence_against_refs,
-        assumptions=("Source evidence is observed material, not automatically true.",),
-        uncertainties=(uncertainty,),
-        signal_artifact_ids=candidate.signal_artifacts,
-        metadata=candidate.metadata,
-    )
 
 
 def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> AuditArtifact:

@@ -26,7 +26,7 @@ from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.instruments.registry import InstrumentRegistry, instrument_to_record
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.context import RunContext
-from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.phase4_execution import safe_phase4_tool_execution
 from nlp_stock_prediction.storage.records import (
     InstrumentRecord,
     SourceQueryRecord,

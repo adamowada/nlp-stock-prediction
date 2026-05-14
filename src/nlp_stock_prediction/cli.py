@@ -68,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Base output directory; files are written under <output>/<YYYY-MM-DD>/.",
     )
     research_parser.add_argument(
+        "--symbol",
+        default="TSLA",
+        help="Instrument symbol or pair to research, for example TSLA or BTC-USD.",
+    )
+    research_parser.add_argument(
         "--fixture-dir",
         type=Path,
         help="Optional fixture root recorded in command metadata.",
@@ -90,6 +95,7 @@ def build_research_config(args: argparse.Namespace) -> RunConfig:
     return RunConfig(
         run_date=args.run_date,
         output_dir=args.output_dir,
+        symbol=args.symbol,
         fixture_dir=args.fixture_dir,
         cache_dir=args.cache_dir,
         offline=args.offline,

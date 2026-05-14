@@ -245,6 +245,7 @@ def test_cli_research_contract_parses_canonical_options_and_generates_report(
     )
 
     assert args.run_date == date(2026, 5, 11)
+    assert args.symbol == "TSLA"
     exit_code = main(
         [
             "research",

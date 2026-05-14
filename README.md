@@ -69,7 +69,7 @@ python -m nlp_stock_prediction --help
 Generate a deterministic offline research report:
 
 ```sh
-python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
+python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --offline
 ```
 
 The offline command writes local report artifacts under `reports/` without using network providers
@@ -89,6 +89,7 @@ Generate an offline report for a specific date:
 ```sh
 python -m nlp_stock_prediction research \
   --date 2026-05-12 \
+  --symbol TSLA \
   --output reports/ \
   --offline
 ```

@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from nlp_stock_prediction.contracts import (
+    FreshnessStatus,
+    RetrievalMethod,
+    SourceEvidence,
+    SourceKind,
+    SourceProvenance,
+)
 from nlp_stock_prediction.orchestration import (
     PHASE4_STAGE_ORDER,
     Phase4Service,
@@ -20,8 +27,15 @@ from nlp_stock_prediction.orchestration.phase4_service import (
     MISSING_CANDIDATE_WARNING,
     Phase4ToolRunStatus,
 )
+from nlp_stock_prediction.storage import (
+    EvidenceRecord,
+    InstrumentRecord,
+    PredictionCandidateRecord,
+    ToolRunRecord,
+)
 
 RUN_DATE = date(2026, 5, 13)
+NOW = datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
 
 
 def _started_service(tmp_path: Path) -> tuple[Phase4Service, str]:
@@ -218,3 +232,97 @@ def test_phase4_report_is_final_only_and_warns_without_synthesizing_candidates(
     payload = json.loads(Path(str(rendered["json_path"])).read_text(encoding="utf-8"))
     assert payload["prediction_candidates"] == []
     assert payload["insufficient_evidence_summary"] == MISSING_CANDIDATE_WARNING
+
+
+@pytest.mark.integration
+def test_phase4_prediction_evaluation_service_writes_artifact_and_metadata(
+    tmp_path: Path,
+) -> None:
+    service, run_id = _started_service(tmp_path)
+    service.store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="instrument:equity:us:tsla",
+            symbol="TSLA",
+            asset_class="stock",
+            name="Tesla Inc.",
+        )
+    )
+    evidence = SourceEvidence(
+        evidence_id="evidence-phase4-service-support",
+        source_kind=SourceKind.NEWS_ARTICLE,
+        ticker="TSLA",
+        text="Fixture catalyst supports scenario quality.",
+        created_at=NOW,
+        permalink="https://example.test/evidence-phase4-service-support",
+        matched_tickers=("TSLA",),
+        matched_instrument_ids=("instrument:equity:us:tsla",),
+        instrument_id="instrument:equity:us:tsla",
+        provenance=SourceProvenance(
+            provider_name="fixture-news",
+            source_kind=SourceKind.NEWS_ARTICLE,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=NOW,
+            observed_at=NOW,
+            source_url="https://example.test/evidence-phase4-service-support",
+            permalink="https://example.test/evidence-phase4-service-support",
+            raw_identifier="evidence-phase4-service-support",
+            raw_snapshot_id="raw-evidence-phase4-service-support",
+            freshness_status=FreshnessStatus.FRESH,
+        ),
+    )
+    service.store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-phase4-service-evidence",
+            run_id=run_id,
+            tool_name="phase4_test_evidence",
+            tool_version="test.v1",
+            status="successful",
+            started_at=NOW,
+            completed_at=NOW,
+            inputs={"symbol": "TSLA"},
+        )
+    )
+    service.store.record_evidence(
+        EvidenceRecord(
+            evidence_id=evidence.evidence_id,
+            tool_run_id="tool-phase4-service-evidence",
+            source_type=SourceKind.NEWS_ARTICLE.value,
+            provider="fixture-news",
+            retrieved_at=NOW,
+            published_at=NOW,
+            instruments=("instrument:equity:us:tsla",),
+            claim=evidence.text,
+            freshness_status=FreshnessStatus.FRESH.value,
+            metadata={"source_evidence": evidence.model_dump(mode="json")},
+        )
+    )
+    service.store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            candidate_id="candidate-phase4-service-quality",
+            run_id=run_id,
+            instrument_id="instrument:equity:us:tsla",
+            prediction_horizon="swing",
+            prediction_type="scenario_quality",
+            scenario="TSLA fixture scenario quality depends on attributed evidence.",
+            status="evidence_supported",
+            confidence=0.62,
+            direction="mixed",
+            evidence_for=(evidence.evidence_id,),
+            baseline={"summary": "No directional edge is assumed without source-backed evidence."},
+            uncertainty="Fixture sources are deterministic test inputs.",
+            metadata={"symbol": "TSLA"},
+        )
+    )
+
+    result = service.phase4_prediction_evaluation(run_id=run_id, symbol="TSLA")
+
+    assert result["status"] == "successful"
+    assert result["evaluation_count"] == 1
+    artifact_id = cast(list[str], result["artifact_ids"])[0]
+    artifact = service.store.get_artifact(artifact_id)
+    assert artifact is not None
+    assert artifact.artifact_type == "prediction_evaluation"
+    assert artifact.tool_run_id == result["tool_run_id"]
+    candidate = service.store.get_prediction_candidate("candidate-phase4-service-quality")
+    assert candidate is not None
+    assert "prediction_evaluation" in candidate.metadata
