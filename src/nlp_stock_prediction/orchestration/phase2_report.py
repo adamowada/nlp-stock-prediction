@@ -53,6 +53,15 @@ def render_phase2_prediction_report(
     paths: Phase2RunPaths,
     run_date: date,
     symbol: str,
+    tool_run_id: str | None = None,
+    record_tool_run: bool = True,
+    tool_name: str = "render_prediction_report",
+    tool_version: str = "phase2.v1",
+    tool_status: str = "ok",
+    tool_warnings: tuple[str, ...] = (),
+    produced_by: str = "render_prediction_report",
+    artifact_schema_version: str = "phase2-report.v1",
+    insufficient_evidence_summary: str | None = None,
 ) -> JsonObject:
     now = utc_now()
     evidence_records = store.list_evidence_for_run(run.run_id)
@@ -126,7 +135,7 @@ def render_phase2_prediction_report(
         prediction_candidates=prediction_candidates,
         insufficient_evidence_summary=None
         if prediction_candidates
-        else "No candidate could be synthesized.",
+        else insufficient_evidence_summary or "No candidate could be synthesized.",
         audit_manifest=AuditManifest(
             run_id=run.run_id,
             schema_version="audit-manifest.v2",
@@ -141,27 +150,29 @@ def render_phase2_prediction_report(
     manifest = report.audit_manifest
     if not isinstance(manifest, AuditManifest):
         raise TypeError("Codex smoke reports must include an audit manifest")
-    report_tool_run_id = f"tool-render-report-{run.run_id}"
-    store.record_tool_run(
-        ToolRunRecord(
-            tool_run_id=report_tool_run_id,
-            run_id=run.run_id,
-            tool_name="render_prediction_report",
-            tool_version="phase2.v1",
-            status="ok",
-            started_at=now,
-            completed_at=now,
-            inputs={"symbol": symbol},
+    report_tool_run_id = tool_run_id or f"tool-render-report-{run.run_id}"
+    if record_tool_run:
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=report_tool_run_id,
+                run_id=run.run_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                status=tool_status,
+                started_at=now,
+                completed_at=now,
+                inputs={"symbol": symbol},
+                warnings=tool_warnings,
+            )
         )
-    )
     report_index = ArtifactIndex.for_directory(
         store=store,
         repo_root=repo_root,
         base_dir=paths.run_dir,
         created_at=now,
-        produced_by="render_prediction_report",
+        produced_by=produced_by,
         tool_run_id=report_tool_run_id,
-        schema_version="phase2-report.v1",
+        schema_version=artifact_schema_version,
     )
     markdown_artifact = report_index.write_text(
         artifact_id=f"artifact-report-md-{stable_digest(run.run_id)}",
@@ -185,9 +196,9 @@ def render_phase2_prediction_report(
         repo_root=repo_root,
         base_dir=paths.audit_dir,
         created_at=now,
-        produced_by="render_prediction_report",
+        produced_by=produced_by,
         tool_run_id=report_tool_run_id,
-        schema_version="phase2-report.v1",
+        schema_version=artifact_schema_version,
     ).write_json(
         artifact_id=f"artifact-audit-manifest-{stable_digest(run.run_id)}",
         artifact_type="audit_manifest",

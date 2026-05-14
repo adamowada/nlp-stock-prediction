@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -218,4 +219,42 @@ class ArtifactIndex:
         )
 
 
-__all__ = ["ArtifactIndex", "ArtifactType", "ArtifactWriter"]
+@dataclass(frozen=True)
+class ArtifactFileTransaction:
+    """Track files present before a tool run and remove new files after rollback."""
+
+    root: Path
+    files_before: frozenset[Path]
+
+    @classmethod
+    def begin(cls, root: Path) -> ArtifactFileTransaction:
+        resolved_root = root.resolve()
+        return cls(root=resolved_root, files_before=_existing_files(resolved_root))
+
+    def rollback_new_files(self) -> None:
+        if not self.root.exists():
+            return
+        for path in sorted(
+            (candidate for candidate in self.root.rglob("*") if candidate.is_file()),
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            resolved = path.resolve()
+            if resolved not in self.files_before:
+                path.unlink(missing_ok=True)
+        for directory in sorted(
+            (candidate for candidate in self.root.rglob("*") if candidate.is_dir()),
+            key=lambda item: len(item.parts),
+            reverse=True,
+        ):
+            with suppress(OSError):
+                directory.rmdir()
+
+
+def _existing_files(root: Path) -> frozenset[Path]:
+    if not root.exists():
+        return frozenset()
+    return frozenset(path.resolve() for path in root.rglob("*") if path.is_file())
+
+
+__all__ = ["ArtifactFileTransaction", "ArtifactIndex", "ArtifactType", "ArtifactWriter"]

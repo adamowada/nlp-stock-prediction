@@ -43,13 +43,18 @@ def record_codex_search_evidence(
     query: str,
     published_at: str | None = None,
     stance: str | None = None,
+    tool_run_id: str | None = None,
+    record_tool_run: bool = True,
+    tool_name: str = "record_codex_search_evidence",
+    tool_version: str = "phase2.v1",
+    tool_status: str = "ok",
 ) -> JsonObject:
     now = utc_now()
     normalized_symbol = symbol.strip().upper()
     normalized_stance = normalize_evidence_stance(stance, claim)
     digest = stable_digest("|".join([run_id, normalized_symbol, title, url, claim]))
     evidence_id = f"evidence-codex-search-{digest}"
-    tool_run_id = f"tool-codex-search-{digest}"
+    resolved_tool_run_id = tool_run_id or f"tool-codex-search-{digest}"
     source_query_id = f"query-codex-search-{digest}"
     artifact_id = f"artifact-codex-search-{digest}"
     artifact_filename = f"codex-search-evidence-{digest}.json"
@@ -92,30 +97,31 @@ def record_codex_search_evidence(
         "run_id": run_id,
         "records": [cast(JsonObject, evidence.model_dump(mode="json"))],
     }
-    store.record_tool_run(
-        ToolRunRecord(
-            tool_run_id=tool_run_id,
-            run_id=run_id,
-            tool_name="record_codex_search_evidence",
-            tool_version="phase2.v1",
-            status="ok",
-            inputs={
-                "symbol": normalized_symbol,
-                "url": url,
-                "query": query,
-                "stance": normalized_stance,
-            },
-            started_at=now,
-            completed_at=now,
+    if record_tool_run:
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=resolved_tool_run_id,
+                run_id=run_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                status=tool_status,
+                inputs={
+                    "symbol": normalized_symbol,
+                    "url": url,
+                    "query": query,
+                    "stance": normalized_stance,
+                },
+                started_at=now,
+                completed_at=now,
+            )
         )
-    )
     ArtifactIndex.for_directory(
         store=store,
         repo_root=repo_root,
         base_dir=paths.audit_dir,
         created_at=now,
-        produced_by="record_codex_search_evidence",
-        tool_run_id=tool_run_id,
+        produced_by=tool_name,
+        tool_run_id=resolved_tool_run_id,
         schema_version="codex-search-evidence.v1",
     ).write_json(
         artifact_id=artifact_id,
@@ -127,7 +133,7 @@ def record_codex_search_evidence(
     store.record_source_query(
         SourceQueryRecord(
             source_query_id=source_query_id,
-            tool_run_id=tool_run_id,
+            tool_run_id=resolved_tool_run_id,
             provider="codex-web-search",
             query=query,
             url=url,
@@ -138,7 +144,7 @@ def record_codex_search_evidence(
     store.record_evidence(
         EvidenceRecord(
             evidence_id=evidence_id,
-            tool_run_id=tool_run_id,
+            tool_run_id=resolved_tool_run_id,
             source_query_id=source_query_id,
             source_type=source_kind.value,
             provider="codex-web-search",
@@ -161,7 +167,12 @@ def record_codex_search_evidence(
             },
         )
     )
-    return {"run_id": run_id, "evidence_id": evidence_id, "artifact_id": artifact_id}
+    return {
+        "run_id": run_id,
+        "tool_run_id": resolved_tool_run_id,
+        "evidence_id": evidence_id,
+        "artifact_id": artifact_id,
+    }
 
 
 def source_evidence_from_record(record: EvidenceRecord) -> SourceEvidence:

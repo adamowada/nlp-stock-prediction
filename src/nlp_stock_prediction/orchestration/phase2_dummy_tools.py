@@ -28,6 +28,11 @@ def run_phase2_dummy_universe_tool(
     paths: Phase2RunPaths,
     run_id: str,
     symbol: str,
+    tool_run_id: str | None = None,
+    record_tool_run: bool = True,
+    tool_name: str = "run_dummy_universe_tool",
+    tool_version: str = "phase3.fixture.v1",
+    tool_status: str = "ok",
 ) -> JsonObject:
     now = utc_now()
     normalized_symbol = symbol.strip().upper()
@@ -40,27 +45,28 @@ def run_phase2_dummy_universe_tool(
     )
     universe = universe_result.universe
     artifact_id = f"artifact-instrument-universe-{stable_digest(run_id)}"
-    tool_run_id = f"tool-dummy-universe-{run_id}"
-    store.record_tool_run(
-        ToolRunRecord(
-            tool_run_id=tool_run_id,
-            run_id=run_id,
-            tool_name="run_dummy_universe_tool",
-            tool_version="phase3.fixture.v1",
-            status="ok",
-            started_at=now,
-            completed_at=now,
-            inputs={"symbol": symbol, "universe_id": universe.request_id},
-            warnings=universe.warnings,
+    resolved_tool_run_id = tool_run_id or f"tool-dummy-universe-{run_id}"
+    if record_tool_run:
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=resolved_tool_run_id,
+                run_id=run_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                status=tool_status,
+                started_at=now,
+                completed_at=now,
+                inputs={"symbol": symbol, "universe_id": universe.request_id},
+                warnings=universe.warnings,
+            )
         )
-    )
     ArtifactIndex.for_directory(
         store=store,
         repo_root=repo_root,
         base_dir=paths.audit_dir,
         created_at=now,
-        produced_by="run_dummy_universe_tool",
-        tool_run_id=tool_run_id,
+        produced_by=tool_name,
+        tool_run_id=resolved_tool_run_id,
         schema_version="phase3.instrument-universe.v1",
     ).write_json(
         artifact_id=artifact_id,
@@ -81,7 +87,7 @@ def run_phase2_dummy_universe_tool(
         store.upsert_instrument(instrument_record)
     return {
         "run_id": run_id,
-        "tool_run_id": tool_run_id,
+        "tool_run_id": resolved_tool_run_id,
         "universe_id": universe.request_id,
         "instrument_ids": list(universe.instrument_ids),
         "artifact_id": artifact_id,
@@ -96,10 +102,15 @@ def run_phase2_dummy_analysis_tool(
     paths: Phase2RunPaths,
     run_id: str,
     symbol: str,
+    tool_run_id: str | None = None,
+    record_tool_run: bool = True,
+    tool_name: str = "run_dummy_analysis_tool",
+    tool_version: str = "phase2.v1",
+    tool_status: str = "ok",
 ) -> JsonObject:
     now = utc_now()
     artifact_id = f"artifact-dummy-analysis-{stable_digest(run_id)}"
-    tool_run_id = f"tool-dummy-analysis-{run_id}"
+    resolved_tool_run_id = tool_run_id or f"tool-dummy-analysis-{run_id}"
     payload: JsonObject = {
         "schema_version": "dummy-analysis.v1",
         "run_id": run_id,
@@ -112,25 +123,26 @@ def run_phase2_dummy_analysis_tool(
             }
         ],
     }
-    store.record_tool_run(
-        ToolRunRecord(
-            tool_run_id=tool_run_id,
-            run_id=run_id,
-            tool_name="run_dummy_analysis_tool",
-            tool_version="phase2.v1",
-            status="ok",
-            started_at=now,
-            completed_at=now,
-            inputs={"symbol": symbol},
+    if record_tool_run:
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=resolved_tool_run_id,
+                run_id=run_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                status=tool_status,
+                started_at=now,
+                completed_at=now,
+                inputs={"symbol": symbol},
+            )
         )
-    )
     ArtifactIndex.for_directory(
         store=store,
         repo_root=repo_root,
         base_dir=paths.audit_dir,
         created_at=now,
-        produced_by="run_dummy_analysis_tool",
-        tool_run_id=tool_run_id,
+        produced_by=tool_name,
+        tool_run_id=resolved_tool_run_id,
         schema_version="dummy-analysis.v1",
     ).write_json(
         artifact_id=artifact_id,
@@ -139,7 +151,7 @@ def run_phase2_dummy_analysis_tool(
         payload=payload,
         metadata={"symbol": symbol.upper()},
     )
-    return {"run_id": run_id, "artifact_id": artifact_id}
+    return {"run_id": run_id, "tool_run_id": resolved_tool_run_id, "artifact_id": artifact_id}
 
 
 def upsert_phase2_instrument(store: SQLiteStore, *, symbol: str, retrieved_at: datetime) -> None:
