@@ -111,6 +111,7 @@ class AuditArtifact(ContractModel):
         "provider_result",
         "ml_forecast",
         "instrument_universe",
+        "prediction_evaluation",
         "audit_manifest",
     ]
     path: NonEmptyStr

@@ -25,6 +25,7 @@ ArtifactType = Literal[
     "provider_result",
     "ml_forecast",
     "instrument_universe",
+    "prediction_evaluation",
     "audit_manifest",
 ]
 
