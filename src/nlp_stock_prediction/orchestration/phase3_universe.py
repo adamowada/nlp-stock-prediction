@@ -3,28 +3,84 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
-from typing import cast
+from typing import Protocol, cast
 
-from nlp_stock_prediction.contracts import (
+from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.contracts.enums import (
     AssetClass,
-    Instrument,
-    InstrumentResolution,
     InstrumentResolutionStatus,
-    InstrumentUniverse,
-    JsonObject,
     TradabilityStatus,
 )
 from nlp_stock_prediction.contracts.instruments import (
+    Instrument,
     InstrumentDataAvailability,
+    InstrumentResolution,
+    InstrumentUniverse,
     ProviderInstrumentId,
     TradabilityEvidence,
 )
 from nlp_stock_prediction.instruments.registry import instrument_to_record
-from nlp_stock_prediction.storage import InstrumentRecord
+from nlp_stock_prediction.storage.records import InstrumentRecord
 
 PHASE3_UNIVERSE_SCHEMA_VERSION = "phase3.instrument-universe.v1"
 PHASE3_FIXTURE_PROVIDER = "phase3-fixture-directory"
+
+
+@dataclass(frozen=True)
+class InstrumentUniverseToolResult:
+    """Universe discovery output plus artifact and indexing records."""
+
+    universe: InstrumentUniverse
+    artifact_payload: JsonObject
+    instrument_records: tuple[InstrumentRecord, ...]
+
+    @property
+    def instrument_ids(self) -> tuple[str, ...]:
+        return self.universe.instrument_ids
+
+
+class InstrumentUniverseTool(Protocol):
+    """Tool seam for fixture and live instrument universe discovery adapters."""
+
+    def run(
+        self,
+        *,
+        request_id: str,
+        generated_at: datetime,
+        run_id: str,
+        primary_symbol: str,
+        primary_instrument_id: str | None = None,
+    ) -> InstrumentUniverseToolResult: ...
+
+
+@dataclass(frozen=True)
+class Phase3FixtureUniverseTool:
+    """Deterministic fixture Adapter for Phase 3 universe discovery."""
+
+    def run(
+        self,
+        *,
+        request_id: str,
+        generated_at: datetime,
+        run_id: str,
+        primary_symbol: str,
+        primary_instrument_id: str | None = None,
+    ) -> InstrumentUniverseToolResult:
+        universe = build_phase3_fixture_universe(
+            request_id=request_id,
+            generated_at=generated_at,
+            primary_symbol=primary_symbol,
+            primary_instrument_id=primary_instrument_id,
+        )
+        return InstrumentUniverseToolResult(
+            universe=universe,
+            artifact_payload=phase3_universe_artifact_payload(run_id=run_id, universe=universe),
+            instrument_records=tuple(
+                instrument_record_from_contract(instrument) for instrument in universe.instruments
+            ),
+        )
 
 
 def build_phase3_fixture_universe(
@@ -299,6 +355,9 @@ def _dedupe_resolutions(*resolutions: InstrumentResolution) -> tuple[InstrumentR
 __all__ = [
     "PHASE3_FIXTURE_PROVIDER",
     "PHASE3_UNIVERSE_SCHEMA_VERSION",
+    "InstrumentUniverseTool",
+    "InstrumentUniverseToolResult",
+    "Phase3FixtureUniverseTool",
     "build_phase3_fixture_universe",
     "instrument_record_from_contract",
     "phase3_universe_artifact_payload",

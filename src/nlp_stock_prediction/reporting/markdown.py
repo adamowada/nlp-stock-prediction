@@ -4,24 +4,23 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from nlp_stock_prediction.contracts import (
+from nlp_stock_prediction.contracts.analysis import (
     AnalysisComponent,
-    AuditManifest,
-    DailyReport,
-    EvidenceReference,
     FundamentalAnalysis,
-    Instrument,
-    InstrumentResolution,
     MacroContext,
-    PredictionCandidate,
     SectorContext,
-    SourceEvidence,
     TechnicalAnalysis,
     TechnicalMlSignal,
 )
+from nlp_stock_prediction.contracts.evidence import SourceEvidence
+from nlp_stock_prediction.contracts.instruments import Instrument, InstrumentResolution
+from nlp_stock_prediction.contracts.provenance import EvidenceReference
+from nlp_stock_prediction.contracts.report import DailyReport, PredictionCandidate
+from nlp_stock_prediction.reporting.view import ReportView
 
 
 def render_markdown_report(report: DailyReport) -> str:
+    view = ReportView.from_report(report)
     lines: list[str] = [
         "# Prediction Research Report",
         "",
@@ -46,9 +45,8 @@ def render_markdown_report(report: DailyReport) -> str:
         "## Provider Warnings",
         "",
     ]
-    warnings = [warning for health in report.provider_health for warning in health.warnings]
-    if warnings:
-        for warning in warnings:
+    if view.provider_warnings:
+        for warning in view.provider_warnings:
             provider = warning.provider_name or "unknown-provider"
             lines.append(
                 f"- `{provider}` {warning.severity.value}: "
@@ -57,18 +55,13 @@ def render_markdown_report(report: DailyReport) -> str:
     else:
         lines.append("- No provider warnings.")
 
-    candidates_by_id = {
-        candidate.candidate_id: candidate for candidate in report.prediction_candidates
-    }
-    instruments_by_id = {instrument.instrument_id: instrument for instrument in report.instruments}
-
     if report.instrument_resolutions:
         lines.extend(["", "## Universe Resolution", ""])
         lines.extend(_render_universe_resolution(report.instrument_resolutions))
 
     lines.extend(["", "## Instrument Sections", ""])
     for section in report.instrument_sections:
-        instrument = instruments_by_id.get(section.instrument_id)
+        instrument = view.instrument_for_section(section)
         lines.extend(
             [
                 f"### {section.symbol}",
@@ -109,11 +102,7 @@ def render_markdown_report(report: DailyReport) -> str:
         lines.extend(["", "Macro:", ""])
         lines.extend(_render_analysis(section.macro_context))
         lines.extend(["", "#### Prediction Scenarios", ""])
-        section_candidates = [
-            candidates_by_id[candidate_id]
-            for candidate_id in section.prediction_candidate_ids
-            if candidate_id in candidates_by_id
-        ]
+        section_candidates = view.candidates_for_section(section)
         if section_candidates:
             for candidate in section_candidates:
                 lines.extend(_render_candidate(candidate))
@@ -147,9 +136,8 @@ def render_markdown_report(report: DailyReport) -> str:
     lines.append("")
 
     lines.extend(["## Audit Artifacts", ""])
-    manifest = report.audit_manifest
-    if isinstance(manifest, AuditManifest) and manifest.artifacts:
-        for artifact in manifest.artifacts:
+    if view.audit_artifacts:
+        for artifact in view.audit_artifacts:
             digest = f", sha256 `{artifact.sha256}`" if artifact.sha256 else ""
             count = (
                 f", records {artifact.record_count}" if artifact.record_count is not None else ""

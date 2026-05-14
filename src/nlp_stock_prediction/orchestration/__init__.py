@@ -1,6 +1,6 @@
 """Deterministic orchestration runtime."""
 
-from nlp_stock_prediction.orchestration.artifacts import ArtifactType, ArtifactWriter
+from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex, ArtifactType, ArtifactWriter
 from nlp_stock_prediction.orchestration.context import RunContext, deterministic_generated_at
 from nlp_stock_prediction.orchestration.dummy import (
     DEFAULT_STAGE_ORDER,
@@ -27,6 +27,7 @@ from nlp_stock_prediction.orchestration.tools import (
 __all__ = [
     "DEFAULT_STAGE_ORDER",
     "DUMMY_ORCHESTRATION_DISABLED_MESSAGE",
+    "ArtifactIndex",
     "ArtifactType",
     "ArtifactWriter",
     "OrchestrationExecutionError",

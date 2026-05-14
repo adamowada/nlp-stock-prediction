@@ -9,106 +9,65 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import cast
 
-from nlp_stock_prediction.contracts import (
-    AssetClass,
+from nlp_stock_prediction.contracts.base import JsonValue
+from nlp_stock_prediction.contracts.enums import AssetClass, InstrumentResolutionStatus
+from nlp_stock_prediction.contracts.instruments import (
     Instrument,
-    InstrumentDataAvailability,
     InstrumentQuery,
     InstrumentResolution,
-    InstrumentResolutionStatus,
     InstrumentUniverse,
     InstrumentUniverseRequest,
     ProviderInstrumentId,
-    RelatedInstrument,
-    TradabilityEvidence,
     WatchlistEntry,
 )
-from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, JsonValue
-from nlp_stock_prediction.storage import InstrumentRecord, SQLiteStore
-
-
-def instrument_to_record(
-    instrument: Instrument,
-    *,
-    metadata: JsonObject | None = None,
-) -> InstrumentRecord:
-    """Convert a validated instrument contract into the SQLite persistence record."""
-
-    validated = Instrument.model_validate(instrument)
-    return InstrumentRecord(
-        instrument_id=validated.instrument_id,
-        symbol=validated.symbol,
-        asset_class=validated.asset_class.value,
-        name=validated.display_name,
-        venue=validated.venue,
-        aliases=validated.aliases,
-        provider_ids=tuple(_dump_contract(item) for item in validated.provider_ids),
-        related_instruments=tuple(_dump_contract(item) for item in validated.related_instruments),
-        tradability_evidence=tuple(_dump_contract(item) for item in validated.tradability_evidence),
-        data_availability=tuple(_dump_contract(item) for item in validated.data_availability),
-        metadata=validated.metadata if metadata is None else {**validated.metadata, **metadata},
-    )
-
-
-def instrument_from_record(record: InstrumentRecord) -> Instrument:
-    """Convert a SQLite instrument record into the public Instrument contract."""
-
-    return Instrument(
-        instrument_id=record.instrument_id,
-        symbol=record.symbol,
-        display_name=record.name or record.symbol,
-        asset_class=AssetClass(record.asset_class),
-        venue=record.venue,
-        aliases=record.aliases,
-        provider_ids=tuple(
-            ProviderInstrumentId.model_validate(item) for item in record.provider_ids
-        ),
-        related_instruments=tuple(
-            RelatedInstrument.model_validate(item) for item in record.related_instruments
-        ),
-        tradability_evidence=tuple(
-            TradabilityEvidence.model_validate(_normalize_tradability_record(item))
-            for item in record.tradability_evidence
-        ),
-        data_availability=tuple(
-            InstrumentDataAvailability.model_validate(_normalize_availability_record(item))
-            for item in record.data_availability
-        ),
-        metadata=record.metadata,
-    )
+from nlp_stock_prediction.instruments.repository import (
+    InstrumentRepository,
+    SQLiteInstrumentRepository,
+    instrument_from_record,
+    instrument_to_record,
+)
+from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 
 class InstrumentRegistry:
-    """Contract-aware registry and resolver backed by ``SQLiteStore``."""
+    """Contract-aware registry and resolver backed by an instrument repository."""
 
-    def __init__(self, store: SQLiteStore, *, initialize: bool = True) -> None:
-        self._store = store
+    def __init__(
+        self,
+        repository: InstrumentRepository | SQLiteStore,
+        *,
+        initialize: bool = True,
+    ) -> None:
+        self._repository = (
+            SQLiteInstrumentRepository(repository)
+            if isinstance(repository, SQLiteStore)
+            else repository
+        )
         if initialize:
-            self._store.initialize()
+            self._repository.initialize()
+
+    @property
+    def repository(self) -> InstrumentRepository:
+        return self._repository
 
     @property
     def store(self) -> SQLiteStore:
-        return self._store
+        if not isinstance(self._repository, SQLiteInstrumentRepository):
+            raise AttributeError("instrument registry is not backed by a SQLite store")
+        return self._repository.store
 
     def upsert(self, instrument: Instrument) -> Instrument:
         validated = Instrument.model_validate(instrument)
-        self._store.upsert_instrument(instrument_to_record(validated))
+        self._repository.upsert(validated)
         return validated
 
     def get(self, instrument_id: str) -> Instrument | None:
-        record = self._store.get_instrument(instrument_id)
-        if record is None:
-            return None
-        return instrument_from_record(record)
+        return self._repository.get(instrument_id)
 
     def find_by_symbol_or_alias(self, query: str) -> tuple[Instrument, ...]:
         query_model = InstrumentQuery(query=query)
-        return tuple(
-            instrument_from_record(record)
-            for record in self._store.find_instruments_by_symbol_or_alias(query_model.query)
-        )
+        return self._repository.find_by_symbol_or_alias(query_model.query)
 
     def find_by_provider_id(
         self,
@@ -345,23 +304,15 @@ class InstrumentRegistry:
         identifier: str,
         require_namespace: bool,
     ) -> tuple[Instrument, ...]:
-        return _dedupe_instruments(
-            instrument
-            for instrument in self._list_instruments()
-            if any(
-                _provider_id_matches(
-                    provider_id,
-                    provider=provider,
-                    namespace=namespace,
-                    identifier=identifier,
-                    require_namespace=require_namespace,
-                )
-                for provider_id in instrument.provider_ids
-            )
+        return self._repository.find_by_provider_id(
+            provider=provider,
+            namespace=namespace,
+            identifier=identifier,
+            require_namespace=require_namespace,
         )
 
     def _list_instruments(self) -> tuple[Instrument, ...]:
-        return tuple(instrument_from_record(record) for record in self._store.list_instruments())
+        return self._repository.list_instruments()
 
     def _related_instruments(
         self,
@@ -392,24 +343,6 @@ class InstrumentRegistry:
                     continue
                 related.append(found)
         return _dedupe_instruments(related), tuple(warnings)
-
-
-def _dump_contract(model: ContractModel) -> JsonObject:
-    return cast(JsonObject, model.model_dump(mode="json"))
-
-
-def _normalize_tradability_record(value: JsonObject) -> JsonObject:
-    normalized = dict(value)
-    if "source_url" not in normalized and isinstance(normalized.get("url"), str):
-        normalized["source_url"] = normalized["url"]
-    return normalized
-
-
-def _normalize_availability_record(value: JsonObject) -> JsonObject:
-    normalized = dict(value)
-    if "checked_at" not in normalized and "as_of" in normalized:
-        normalized["checked_at"] = normalized["as_of"]
-    return normalized
 
 
 def _dedupe_instruments(instruments: Iterable[Instrument]) -> tuple[Instrument, ...]:

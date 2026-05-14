@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -17,6 +17,7 @@ from nlp_stock_prediction.contracts import (
 )
 from nlp_stock_prediction.orchestration import (
     DEFAULT_STAGE_ORDER,
+    ArtifactIndex,
     ArtifactWriter,
     OrchestrationExecutionError,
     OrchestrationState,
@@ -30,6 +31,7 @@ from nlp_stock_prediction.orchestration import (
     generate_dummy_report_bundle,
 )
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
+from nlp_stock_prediction.storage import ResearchRunRecord, SQLiteStore, ToolRunRecord
 
 RUN_DATE = date(2026, 5, 12)
 
@@ -94,6 +96,70 @@ def test_artifact_writer_rejects_paths_outside_base_dir(tmp_path: Path) -> None:
             artifact_type="markdown_report",
             filename=str((tmp_path / "escape.md").resolve()),
             content="nope",
+        )
+
+
+@pytest.mark.unit
+def test_artifact_index_writes_and_indexes_artifact_records(tmp_path: Path) -> None:
+    created_at = datetime(2026, 5, 12, 21, 0, tzinfo=UTC)
+    store = SQLiteStore(tmp_path / "prediction-research.sqlite3")
+    store.initialize()
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id="run-indexed-artifacts",
+            run_kind="unit",
+            objective="exercise artifact indexing",
+            status="running",
+            started_at=created_at,
+        )
+    )
+    store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-indexed-artifacts",
+            run_id="run-indexed-artifacts",
+            tool_name="unit-artifact-tool",
+            tool_version="v1",
+            status="ok",
+            started_at=created_at,
+            completed_at=created_at,
+        )
+    )
+
+    artifact = ArtifactIndex.for_directory(
+        store=store,
+        repo_root=tmp_path,
+        base_dir=tmp_path / "reports" / "audit",
+        created_at=created_at,
+        produced_by="unit-artifact-tool",
+        tool_run_id="tool-indexed-artifacts",
+        schema_version="unit-artifacts.v1",
+    ).write_json(
+        artifact_id="artifact-indexed-json",
+        artifact_type="provider_result",
+        filename="provider-result.json",
+        payload={"records": [{"id": "one"}]},
+        record_count=1,
+        metadata={"purpose": "unit"},
+    )
+
+    record = store.get_artifact("artifact-indexed-json")
+    assert record is not None
+    assert record.tool_run_id == "tool-indexed-artifacts"
+    assert record.path == Path("reports") / "audit" / "provider-result.json"
+    assert record.sha256 == artifact.sha256
+    assert record.schema_version == "unit-artifacts.v1"
+    assert record.metadata == {"purpose": "unit"}
+    assert store.list_artifacts_for_run("run-indexed-artifacts") == (record,)
+
+    with pytest.raises(ValueError, match="repository root"):
+        ArtifactIndex.for_directory(
+            store=store,
+            repo_root=tmp_path,
+            base_dir=tmp_path.parent / f"{tmp_path.name}-outside",
+            created_at=created_at,
+            produced_by="unit-artifact-tool",
+            tool_run_id="tool-indexed-artifacts",
+            schema_version="unit-artifacts.v1",
         )
 
 

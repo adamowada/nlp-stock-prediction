@@ -6,41 +6,40 @@ from datetime import date
 from pathlib import Path
 from typing import cast
 
-from nlp_stock_prediction.contracts import (
-    AuditArtifact,
-    AuditManifest,
+from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.contracts.enums import (
     CredentialState,
-    DailyReport,
-    DataFreshnessSummary,
     Direction,
-    EvidenceReference,
-    InstrumentReportSection,
-    JsonObject,
-    PredictionCandidate,
     PredictionStatus,
-    ProviderHealth,
-    SourceEvidence,
     TimeHorizon,
 )
-from nlp_stock_prediction.orchestration.artifacts import ArtifactType
+from nlp_stock_prediction.contracts.evidence import SourceEvidence
+from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderHealth
+from nlp_stock_prediction.contracts.report import (
+    AuditArtifact,
+    AuditManifest,
+    DailyReport,
+    DataFreshnessSummary,
+    InstrumentReportSection,
+    PredictionCandidate,
+)
+from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex, ArtifactType
 from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
-    file_sha256,
     phase2_instrument,
     stable_digest,
     utc_now,
 )
 from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
-from nlp_stock_prediction.reporting.audit import write_json_artifact
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
-from nlp_stock_prediction.storage import (
+from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
     PredictionCandidateRecord,
     ResearchRunRecord,
-    SQLiteStore,
     ToolRunRecord,
 )
+from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 
 def render_phase2_prediction_report(
@@ -129,19 +128,9 @@ def render_phase2_prediction_report(
             ),
         ),
     )
-    paths.run_dir.mkdir(parents=True, exist_ok=True)
-    paths.audit_dir.mkdir(parents=True, exist_ok=True)
-    paths.report_path.write_text(render_markdown_report(report), encoding="utf-8")
-    paths.json_path.write_text(render_json_report(report), encoding="utf-8")
     manifest = report.audit_manifest
     if not isinstance(manifest, AuditManifest):
         raise TypeError("Codex smoke reports must include an audit manifest")
-    manifest_sha = write_json_artifact(
-        paths.audit_manifest_path,
-        cast(JsonObject, manifest.model_dump(mode="json")),
-    )
-    report_sha = file_sha256(paths.report_path)
-    json_sha = file_sha256(paths.json_path)
     report_tool_run_id = f"tool-render-report-{run.run_id}"
     store.record_tool_run(
         ToolRunRecord(
@@ -155,38 +144,44 @@ def render_phase2_prediction_report(
             inputs={"symbol": symbol},
         )
     )
-    for artifact_id, artifact_type, path, sha256 in (
-        (
-            f"artifact-report-md-{stable_digest(run.run_id)}",
-            "markdown_report",
-            paths.report_path,
-            report_sha,
-        ),
-        (
-            f"artifact-report-json-{stable_digest(run.run_id)}",
-            "json_report",
-            paths.json_path,
-            json_sha,
-        ),
-        (
-            f"artifact-audit-manifest-{stable_digest(run.run_id)}",
-            "audit_manifest",
-            paths.audit_manifest_path,
-            manifest_sha,
-        ),
-    ):
-        store.record_artifact(
-            ArtifactRecord(
-                artifact_id=artifact_id,
-                tool_run_id=report_tool_run_id,
-                artifact_type=artifact_type,
-                path=path.relative_to(repo_root),
-                sha256=sha256,
-                schema_version="phase2-report.v1",
-                metadata={"run_id": run.run_id},
-                created_at=now,
-            )
-        )
+    report_index = ArtifactIndex.for_directory(
+        store=store,
+        repo_root=repo_root,
+        base_dir=paths.run_dir,
+        created_at=now,
+        produced_by="render_prediction_report",
+        tool_run_id=report_tool_run_id,
+        schema_version="phase2-report.v1",
+    )
+    report_index.write_text(
+        artifact_id=f"artifact-report-md-{stable_digest(run.run_id)}",
+        artifact_type="markdown_report",
+        filename=paths.report_path.name,
+        content=render_markdown_report(report),
+        metadata={"run_id": run.run_id},
+    )
+    report_index.write_text(
+        artifact_id=f"artifact-report-json-{stable_digest(run.run_id)}",
+        artifact_type="json_report",
+        filename=paths.json_path.name,
+        content=render_json_report(report),
+        metadata={"run_id": run.run_id},
+    )
+    ArtifactIndex.for_directory(
+        store=store,
+        repo_root=repo_root,
+        base_dir=paths.audit_dir,
+        created_at=now,
+        produced_by="render_prediction_report",
+        tool_run_id=report_tool_run_id,
+        schema_version="phase2-report.v1",
+    ).write_json(
+        artifact_id=f"artifact-audit-manifest-{stable_digest(run.run_id)}",
+        artifact_type="audit_manifest",
+        filename=paths.audit_manifest_path.name,
+        payload=cast(JsonObject, manifest.model_dump(mode="json")),
+        metadata={"run_id": run.run_id},
+    )
     store.upsert_research_run(
         ResearchRunRecord(
             run_id=run.run_id,

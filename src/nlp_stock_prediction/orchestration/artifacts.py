@@ -8,8 +8,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from nlp_stock_prediction.contracts import AuditArtifact, JsonObject
+from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
+from nlp_stock_prediction.storage.records import ArtifactRecord
+from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 ArtifactType = Literal[
     "raw_snapshot",
@@ -112,4 +115,107 @@ class ArtifactWriter:
         return path
 
 
-__all__ = ["ArtifactType", "ArtifactWriter"]
+@dataclass(frozen=True)
+class ArtifactIndex:
+    """Write stable artifacts and index them in research SQLite."""
+
+    store: SQLiteStore
+    repo_root: Path
+    writer: ArtifactWriter
+    tool_run_id: str | None
+    schema_version: str
+
+    @classmethod
+    def for_directory(
+        cls,
+        *,
+        store: SQLiteStore,
+        repo_root: Path,
+        base_dir: Path,
+        created_at: datetime,
+        produced_by: str,
+        tool_run_id: str | None,
+        schema_version: str,
+    ) -> ArtifactIndex:
+        resolved_repo_root = repo_root.resolve()
+        resolved_base_dir = base_dir.resolve()
+        try:
+            resolved_base_dir.relative_to(resolved_repo_root)
+        except ValueError as exc:
+            raise ValueError(
+                "artifact base directory must stay within the repository root"
+            ) from exc
+        return cls(
+            store=store,
+            repo_root=resolved_repo_root,
+            writer=ArtifactWriter(
+                base_dir=resolved_base_dir,
+                created_at=created_at,
+                produced_by=produced_by,
+            ),
+            tool_run_id=tool_run_id,
+            schema_version=schema_version,
+        )
+
+    def write_json(
+        self,
+        *,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        payload: JsonObject,
+        record_count: int | None = None,
+        metadata: JsonObject | None = None,
+    ) -> AuditArtifact:
+        artifact = self.writer.write_json(
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=filename,
+            payload=payload,
+            record_count=record_count,
+            metadata=metadata,
+        )
+        self._record_artifact(artifact)
+        return artifact
+
+    def write_text(
+        self,
+        *,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        content: str,
+        record_count: int | None = None,
+        metadata: JsonObject | None = None,
+    ) -> AuditArtifact:
+        artifact = self.writer.write_text(
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            filename=filename,
+            content=content,
+            record_count=record_count,
+            metadata=metadata,
+        )
+        self._record_artifact(artifact)
+        return artifact
+
+    def _record_artifact(self, artifact: AuditArtifact) -> None:
+        if artifact.sha256 is None:
+            raise ValueError("indexed artifacts require sha256")
+        repo_root = self.repo_root.resolve()
+        artifact_path = Path(artifact.path).resolve()
+        self.store.record_artifact(
+            ArtifactRecord(
+                artifact_id=artifact.artifact_id,
+                tool_run_id=self.tool_run_id,
+                artifact_type=artifact.artifact_type,
+                path=artifact_path.relative_to(repo_root),
+                sha256=artifact.sha256,
+                schema_version=self.schema_version,
+                metadata=artifact.metadata,
+                created_at=artifact.created_at,
+            )
+        )
+
+
+__all__ = ["ArtifactIndex", "ArtifactType", "ArtifactWriter"]

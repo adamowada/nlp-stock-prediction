@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from nlp_stock_prediction.contracts import JsonObject
+from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.orchestration.phase2_common import (
     ALLOWED_WRITE_ROOTS,
     Phase2RunPaths,
@@ -23,8 +24,8 @@ from nlp_stock_prediction.orchestration.phase2_evidence import record_codex_sear
 from nlp_stock_prediction.orchestration.phase2_report import render_phase2_prediction_report
 from nlp_stock_prediction.orchestration.phase2_synthesis import synthesize_prediction_candidates
 from nlp_stock_prediction.orchestration.phase2_tool_plan import phase2_research_tool_plan
-from nlp_stock_prediction.storage import (
-    ResearchRunRecord,
+from nlp_stock_prediction.storage.records import ResearchRunRecord
+from nlp_stock_prediction.storage.sqlite import (
     SQLiteStore,
     initialize_research_database,
 )
@@ -107,11 +108,12 @@ class Phase2McpService:
         published_at: str | None = None,
         stance: str | None = None,
     ) -> JsonObject:
-        run = self._require_run(run_id)
-        normalized_symbol = self._validated_symbol(run, symbol)
-        run_date = run_date_from_run(run)
-        paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        with self.store.transaction():
+        def action(
+            _run: ResearchRunRecord,
+            normalized_symbol: str,
+            paths: Phase2RunPaths,
+            _run_date: date,
+        ) -> JsonObject:
             return record_codex_search_evidence(
                 store=self.store,
                 repo_root=self.repo_root,
@@ -126,12 +128,15 @@ class Phase2McpService:
                 stance=stance,
             )
 
+        return self._run_symbol_step(run_id=run_id, symbol=symbol, action=action)
+
     def run_dummy_universe_tool(self, *, run_id: str, symbol: str) -> JsonObject:
-        run = self._require_run(run_id)
-        normalized_symbol = self._validated_symbol(run, symbol)
-        run_date = run_date_from_run(run)
-        paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        with self.store.transaction():
+        def action(
+            _run: ResearchRunRecord,
+            normalized_symbol: str,
+            paths: Phase2RunPaths,
+            _run_date: date,
+        ) -> JsonObject:
             return run_phase2_dummy_universe_tool(
                 store=self.store,
                 repo_root=self.repo_root,
@@ -140,12 +145,15 @@ class Phase2McpService:
                 symbol=normalized_symbol,
             )
 
+        return self._run_symbol_step(run_id=run_id, symbol=symbol, action=action)
+
     def run_dummy_analysis_tool(self, *, run_id: str, symbol: str) -> JsonObject:
-        run = self._require_run(run_id)
-        normalized_symbol = self._validated_symbol(run, symbol)
-        run_date = run_date_from_run(run)
-        paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        with self.store.transaction():
+        def action(
+            _run: ResearchRunRecord,
+            normalized_symbol: str,
+            paths: Phase2RunPaths,
+            _run_date: date,
+        ) -> JsonObject:
             return run_phase2_dummy_analysis_tool(
                 store=self.store,
                 repo_root=self.repo_root,
@@ -154,12 +162,15 @@ class Phase2McpService:
                 symbol=normalized_symbol,
             )
 
+        return self._run_symbol_step(run_id=run_id, symbol=symbol, action=action)
+
     def synthesize_prediction_candidates(self, *, run_id: str, symbol: str) -> JsonObject:
-        run = self._require_run(run_id)
-        normalized_symbol = self._validated_symbol(run, symbol)
-        run_date = run_date_from_run(run)
-        paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        with self.store.transaction():
+        def action(
+            _run: ResearchRunRecord,
+            normalized_symbol: str,
+            paths: Phase2RunPaths,
+            _run_date: date,
+        ) -> JsonObject:
             return synthesize_prediction_candidates(
                 store=self.store,
                 repo_root=self.repo_root,
@@ -172,12 +183,15 @@ class Phase2McpService:
                 ),
             )
 
+        return self._run_symbol_step(run_id=run_id, symbol=symbol, action=action)
+
     def render_prediction_report(self, *, run_id: str, symbol: str) -> JsonObject:
-        run = self._require_run(run_id)
-        normalized_symbol = self._validated_symbol(run, symbol)
-        run_date = run_date_from_run(run)
-        paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        with self.store.transaction():
+        def action(
+            run: ResearchRunRecord,
+            normalized_symbol: str,
+            paths: Phase2RunPaths,
+            run_date: date,
+        ) -> JsonObject:
             if not self.store.list_prediction_candidates_for_run(run_id):
                 self.synthesize_prediction_candidates(run_id=run_id, symbol=normalized_symbol)
             return render_phase2_prediction_report(
@@ -188,6 +202,8 @@ class Phase2McpService:
                 run_date=run_date,
                 symbol=normalized_symbol,
             )
+
+        return self._run_symbol_step(run_id=run_id, symbol=symbol, action=action)
 
     def inspect_research_run(self, *, run_id: str) -> JsonObject:
         run = self._require_run(run_id)
@@ -211,6 +227,20 @@ class Phase2McpService:
         if run is None:
             raise ValueError(f"research run does not exist: {run_id}")
         return run
+
+    def _run_symbol_step(
+        self,
+        *,
+        run_id: str,
+        symbol: str,
+        action: Callable[[ResearchRunRecord, str, Phase2RunPaths, date], JsonObject],
+    ) -> JsonObject:
+        run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
+        run_date = run_date_from_run(run)
+        paths = self._paths(run_date, str(run.metadata["output_dir"]))
+        with self.store.transaction():
+            return action(run, normalized_symbol, paths, run_date)
 
     def _validated_symbol(self, run: ResearchRunRecord, symbol: str) -> str:
         stored_symbol = run.metadata.get("symbol")

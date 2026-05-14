@@ -19,7 +19,11 @@ from nlp_stock_prediction.contracts import (
     Watchlist,
     WatchlistEntry,
 )
-from nlp_stock_prediction.instruments import InstrumentRegistry
+from nlp_stock_prediction.instruments import InstrumentRegistry, SQLiteInstrumentRepository
+from nlp_stock_prediction.orchestration.phase3_universe import (
+    PHASE3_UNIVERSE_SCHEMA_VERSION,
+    Phase3FixtureUniverseTool,
+)
 from nlp_stock_prediction.storage import SQLiteStore
 
 pytestmark = pytest.mark.unit
@@ -112,6 +116,58 @@ def test_registry_upsert_get_and_lookup_round_trip_contract_instrument(tmp_path:
     assert registry.find_by_symbol_or_alias("Tesla") == (stored,)
     assert registry.find_by_provider_id("ALPHA-VANTAGE", "symbol", "TSLA") == (stored,)
     assert registry.find_by_provider_id("ALPHA-VANTAGE", None, "TSLA") == (stored,)
+
+
+def test_sqlite_instrument_repository_is_contract_shaped_seam(tmp_path: Path) -> None:
+    repository = SQLiteInstrumentRepository(_store(tmp_path))
+    repository.initialize()
+    instrument = _instrument(
+        instrument_id="currency:EURUSD",
+        symbol="EUR/USD",
+        display_name="Euro / US Dollar",
+        asset_class=AssetClass.CURRENCY,
+        aliases=("EUR-USD", "EUR:USD"),
+        provider_ids=(_provider("fixture-fx", "pair", "EUR/USD"),),
+    )
+
+    repository.upsert(instrument, metadata={"repository_test": True})
+
+    stored = repository.get("currency:EURUSD")
+    assert stored is not None
+    assert stored.symbol == "EUR/USD"
+    assert stored.metadata["repository_test"] is True
+    assert repository.find_by_symbol_or_alias("eur-usd") == (stored,)
+    assert repository.find_by_provider_id(
+        provider="FIXTURE-FX",
+        namespace="pair",
+        identifier="EUR/USD",
+        require_namespace=True,
+    ) == (stored,)
+    assert repository.find_by_provider_id(
+        provider="FIXTURE-FX",
+        namespace=None,
+        identifier="EUR/USD",
+        require_namespace=False,
+    ) == (stored,)
+
+
+def test_phase3_fixture_universe_tool_returns_artifact_and_index_records() -> None:
+    result = Phase3FixtureUniverseTool().run(
+        request_id="fixture-universe-tool",
+        generated_at=_now(),
+        run_id="run-fixture-universe-tool",
+        primary_symbol="BTC/USD",
+        primary_instrument_id="instrument:codex:BTC-USD",
+    )
+
+    assert result.instrument_ids == result.universe.instrument_ids
+    assert result.artifact_payload["schema_version"] == PHASE3_UNIVERSE_SCHEMA_VERSION
+    assert result.artifact_payload["run_id"] == "run-fixture-universe-tool"
+    assert result.instrument_records[0].instrument_id == "instrument:codex:BTC-USD"
+    assert result.instrument_records[0].metadata["phase3_universe"] is True
+    assert {record.instrument_id for record in result.instrument_records} == set(
+        result.universe.instrument_ids
+    )
 
 
 def test_resolve_returns_ambiguity_and_uses_hints_to_disambiguate(tmp_path: Path) -> None:

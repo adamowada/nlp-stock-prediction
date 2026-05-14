@@ -1,8 +1,6 @@
 """Local persistence for prediction research state."""
 
-from nlp_stock_prediction.storage.sqlite import (
-    CURRENT_PLANNING_SCHEMA_VERSION,
-    CURRENT_RESEARCH_SCHEMA_VERSION,
+from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
@@ -14,17 +12,21 @@ from nlp_stock_prediction.storage.sqlite import (
     PlanCommitLinkRecord,
     PlanDecisionRecord,
     PlanMilestoneRecord,
-    PlanningSQLiteStore,
     PlanProgressRecord,
     PlanRecord,
     PredictionCandidateRecord,
     ResearchRunRecord,
-    ResearchSQLiteStore,
     SourceQueryRecord,
-    SQLiteStore,
     ToolRunRecord,
     WatchlistItemRecord,
     WatchlistRecord,
+)
+from nlp_stock_prediction.storage.sqlite import (
+    CURRENT_PLANNING_SCHEMA_VERSION,
+    CURRENT_RESEARCH_SCHEMA_VERSION,
+    PlanningSQLiteStore,
+    ResearchSQLiteStore,
+    SQLiteStore,
     initialize_database,
     initialize_planning_database,
     initialize_research_database,

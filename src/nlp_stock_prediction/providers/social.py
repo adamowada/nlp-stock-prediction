@@ -5,20 +5,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
-from nlp_stock_prediction.contracts import (
+from nlp_stock_prediction.contracts.enums import (
     CredentialState,
-    EvidenceRequest,
     FreshnessStatus,
-    ProviderHealth,
-    ProviderResult,
     ProviderStatus,
-    ProviderWarning,
     RetrievalMethod,
-    SourceEvidence,
     SourceKind,
     WarningCode,
     WarningSeverity,
 )
+from nlp_stock_prediction.contracts.evidence import SourceEvidence
+from nlp_stock_prediction.contracts.provenance import ProviderHealth, ProviderWarning
+from nlp_stock_prediction.contracts.providers import EvidenceRequest, ProviderResult
 from nlp_stock_prediction.providers._base import (
     JsonFetch,
     JsonTransport,
@@ -34,15 +32,17 @@ from nlp_stock_prediction.providers._base import (
     freshness_status,
     malformed_result,
     missing_credentials_result,
-    no_data_result,
     parse_optional_provider_datetime,
     provider_health,
-    provider_result,
     provider_warning,
     source_provenance,
     stable_hash,
     transport_error_result,
     utc_now,
+)
+from nlp_stock_prediction.providers.execution import (
+    evidence_result_from_records,
+    partial_item_warning,
 )
 
 
@@ -160,38 +160,15 @@ class XRecentSearchProvider:
                 credential_state=CredentialState.CONFIGURED,
                 cache_key=cache_key,
             )
-        if not evidence:
-            return no_data_result(
-                provider_name=self.provider_name,
-                request=request,
-                fetched_at=fetched_at,
-                message="X recent search returned no posts",
-                credential_state=CredentialState.CONFIGURED,
-                raw_snapshot_id=fetched.raw_snapshot_id,
-                cache_key=fetched.cache_key,
-            )
-        warnings: tuple[ProviderWarning, ...] = partial_warnings
-        status = ProviderStatus.PARTIAL if warnings else ProviderStatus.OK
-        if any(item.provenance.freshness_status.value == "stale" for item in evidence):
-            status = ProviderStatus.STALE
-            warnings += (
-                provider_warning(
-                    provider_name=self.provider_name,
-                    code=WarningCode.STALE_DATA,
-                    severity=WarningSeverity.WARNING,
-                    message="X recent search returned stale social posts",
-                    occurred_at=fetched_at,
-                    raw_snapshot_id=fetched.raw_snapshot_id,
-                ),
-            )
-        return provider_result(
+        return evidence_result_from_records(
             provider_name=self.provider_name,
-            status=status,
             request=request,
             fetched_at=fetched_at,
+            evidence=evidence,
+            warnings=partial_warnings,
+            no_data_message="X recent search returned no posts",
+            stale_message="X recent search returned stale social posts",
             credential_state=CredentialState.CONFIGURED,
-            data=evidence,
-            warnings=warnings,
             raw_snapshot_id=fetched.raw_snapshot_id,
             cache_key=fetched.cache_key,
         )
@@ -240,7 +217,8 @@ class XRecentSearchProvider:
         for index, raw_item in enumerate(items):
             if not isinstance(raw_item, dict):
                 warnings.append(
-                    _malformed_item_warning(
+                    partial_item_warning(
+                        provider_name=self.provider_name,
                         fetched_at=fetched_at,
                         raw_snapshot_id=fetched.raw_snapshot_id,
                         index=index,
@@ -252,7 +230,8 @@ class XRecentSearchProvider:
             text = str(raw_item.get("text") or "").strip()
             if not post_id or not text:
                 warnings.append(
-                    _malformed_item_warning(
+                    partial_item_warning(
+                        provider_name=self.provider_name,
                         fetched_at=fetched_at,
                         raw_snapshot_id=fetched.raw_snapshot_id,
                         index=index,
@@ -318,24 +297,6 @@ class XRecentSearchProvider:
                 )
             )
         return tuple(evidence), tuple(warnings)
-
-
-def _malformed_item_warning(
-    *,
-    fetched_at: datetime,
-    raw_snapshot_id: str,
-    index: int,
-    message: str,
-) -> ProviderWarning:
-    return provider_warning(
-        provider_name=XRecentSearchProvider.provider_name,
-        code=WarningCode.PARTIAL_DATA,
-        severity=WarningSeverity.WARNING,
-        message=message,
-        occurred_at=fetched_at,
-        raw_snapshot_id=raw_snapshot_id,
-        metadata={"item_index": index},
-    )
 
 
 def _author_hash(author_id: object) -> str | None:

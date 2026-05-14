@@ -7,9 +7,11 @@ from pathlib import Path
 import pytest
 
 from nlp_stock_prediction.contracts import RunConfig
+from nlp_stock_prediction.contracts.report import AuditManifest
 from nlp_stock_prediction.reporting.fixtures import build_offline_fixture_bundle
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
+from nlp_stock_prediction.reporting.view import ReportView
 
 RUN_DATE = date(2026, 5, 12)
 
@@ -66,6 +68,26 @@ def test_markdown_renders_evidence_ledger_provenance(tmp_path: Path) -> None:
     assert "Tickers: `TSLA`" in markdown
     assert "Raw identifier: `fixture-news-tsla-001`" in markdown
     assert "Raw snapshot/artifact IDs: `raw-fixture-news-tsla-001`" in markdown
+
+
+@pytest.mark.unit
+def test_report_view_prepares_render_lookup_maps(tmp_path: Path) -> None:
+    config = RunConfig(run_date=RUN_DATE, output_dir=tmp_path, offline=True)
+    report = build_offline_fixture_bundle(config).report
+
+    view = ReportView.from_report(report)
+    section = report.instrument_sections[0]
+
+    assert view.instrument_for_section(section) == report.instruments[0]
+    assert (
+        tuple(candidate.candidate_id for candidate in view.candidates_for_section(section))
+        == section.prediction_candidate_ids
+    )
+    assert view.provider_warnings == tuple(
+        warning for health in report.provider_health for warning in health.warnings
+    )
+    assert isinstance(report.audit_manifest, AuditManifest)
+    assert view.audit_artifacts == report.audit_manifest.artifacts
 
 
 @pytest.mark.unit
