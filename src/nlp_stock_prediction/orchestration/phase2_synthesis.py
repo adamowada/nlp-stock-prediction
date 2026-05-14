@@ -32,6 +32,11 @@ def synthesize_prediction_candidates(
     run_id: str,
     symbol: str,
     ensure_instrument: Callable[[], object],
+    tool_run_id: str | None = None,
+    record_tool_run: bool = True,
+    tool_name: str = "synthesize_prediction_candidates",
+    tool_version: str = "phase2.v1",
+    tool_status: str = "ok",
 ) -> JsonObject:
     now = utc_now()
     evidence = store.list_evidence_for_run(run_id)
@@ -96,26 +101,27 @@ def synthesize_prediction_candidates(
         ],
     }
     artifact_id = f"artifact-prediction-inputs-{stable_digest(run_id)}"
-    tool_run_id = f"tool-candidate-synthesis-{run_id}"
-    store.record_tool_run(
-        ToolRunRecord(
-            tool_run_id=tool_run_id,
-            run_id=run_id,
-            tool_name="synthesize_prediction_candidates",
-            tool_version="phase2.v1",
-            status="ok",
-            started_at=now,
-            completed_at=now,
-            inputs={"symbol": symbol, "evidence_count": len(evidence)},
+    resolved_tool_run_id = tool_run_id or f"tool-candidate-synthesis-{run_id}"
+    if record_tool_run:
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=resolved_tool_run_id,
+                run_id=run_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                status=tool_status,
+                started_at=now,
+                completed_at=now,
+                inputs={"symbol": symbol, "evidence_count": len(evidence)},
+            )
         )
-    )
     ArtifactIndex.for_directory(
         store=store,
         repo_root=repo_root,
         base_dir=paths.audit_dir,
         created_at=now,
-        produced_by="synthesize_prediction_candidates",
-        tool_run_id=tool_run_id,
+        produced_by=tool_name,
+        tool_run_id=resolved_tool_run_id,
         schema_version="phase2-candidate-synthesis.v1",
     ).write_json(
         artifact_id=artifact_id,
@@ -154,7 +160,12 @@ def synthesize_prediction_candidates(
             created_at=now,
         )
     )
-    return {"run_id": run_id, "candidate_id": candidate_id, "artifact_id": artifact_id}
+    return {
+        "run_id": run_id,
+        "tool_run_id": resolved_tool_run_id,
+        "candidate_id": candidate_id,
+        "artifact_id": artifact_id,
+    }
 
 
 def _candidate_scenario(*, symbol: str, evidence_for: bool, evidence_against: bool) -> str:
