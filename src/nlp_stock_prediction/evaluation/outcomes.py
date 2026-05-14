@@ -29,6 +29,13 @@ from nlp_stock_prediction.contracts.evaluation import (
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
 from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.evaluation.common import aware_utc, digest, slug
+from nlp_stock_prediction.evaluation.freshness import (
+    artifact_reference_as_of,
+    freshness_limitations,
+    phase7_freshness_metadata,
+    review_candidate_artifact_freshness,
+    review_candidate_evidence_aging,
+)
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
 from nlp_stock_prediction.storage.outcome_repository import persist_prediction_outcome_records
@@ -104,10 +111,29 @@ def build_prediction_evaluation_target(
         candidate=candidate,
         cutoff=cutoff,
     )
+    evidence_aging_records = review_candidate_evidence_aging(
+        store=store,
+        candidate=candidate,
+        reviewed_at=cutoff,
+    )
+    artifact_freshness_reviews = review_candidate_artifact_freshness(
+        store=store,
+        candidate=candidate,
+        reviewed_at=cutoff,
+    )
+    freshness_metadata = phase7_freshness_metadata(
+        reviewed_at=cutoff,
+        evidence_aging_records=evidence_aging_records,
+        artifact_freshness_reviews=artifact_freshness_reviews,
+    )
     baseline = _baseline_comparison_from_candidate(candidate)
     limitations = [
         *evidence_limitations,
         *artifact_limitations,
+        *freshness_limitations(
+            evidence_aging_records=evidence_aging_records,
+            artifact_freshness_reviews=artifact_freshness_reviews,
+        ),
     ]
     if baseline is None:
         limitations.append("No stored baseline comparison was available at the cutoff.")
@@ -140,6 +166,7 @@ def build_prediction_evaluation_target(
             signal_artifacts=signal_artifacts,
             source_artifact_ids=source_artifact_ids,
             report_artifact_ids=report_artifact_ids,
+            phase7_freshness=freshness_metadata,
         ),
         baseline_comparison=baseline,
         evidence_ids=eligible_evidence_ids,
@@ -150,6 +177,7 @@ def build_prediction_evaluation_target(
         metadata={
             "source": PHASE6_OUTCOME_TOOL_NAME,
             "stored_candidate_run_id": candidate.run_id,
+            "phase7_freshness": freshness_metadata,
         },
     )
 
@@ -753,19 +781,12 @@ def _artifact_reference_as_of(
     artifact: ArtifactRecord,
     cutoff: datetime,
 ) -> tuple[datetime | None, str | None]:
-    raw = artifact.metadata.get("as_of") or artifact.metadata.get("latest_usable_bar")
-    if isinstance(raw, str) and raw.strip():
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return None, "invalid as_of timestamp"
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            return None, "naive as_of timestamp"
-        parsed_utc = parsed.astimezone(UTC)
-        if parsed_utc > cutoff:
-            return None, "as_of after cutoff"
-        return parsed_utc, None
-    return artifact.created_at, None
+    artifact_as_of, reason = artifact_reference_as_of(artifact)
+    if reason is not None:
+        return None, reason
+    if artifact_as_of is not None and artifact_as_of > cutoff:
+        return None, "as_of after cutoff"
+    return artifact_as_of, None
 
 
 def _signal_family(artifact: ArtifactRecord) -> SignalArtifactFamily | None:
@@ -819,6 +840,7 @@ def _candidate_snapshot(
     signal_artifacts: tuple[SignalArtifactReference, ...],
     source_artifact_ids: tuple[str, ...],
     report_artifact_ids: tuple[str, ...],
+    phase7_freshness: JsonObject,
 ) -> JsonObject:
     return {
         "candidate_id": candidate.candidate_id,
@@ -837,6 +859,7 @@ def _candidate_snapshot(
         "signal_artifact_ids": [reference.artifact_id for reference in signal_artifacts],
         "source_artifact_ids": list(source_artifact_ids),
         "report_artifact_ids": list(report_artifact_ids),
+        "phase7_freshness": phase7_freshness,
         "baseline": _json_ready(candidate.baseline),
         "uncertainty": candidate.uncertainty,
         "metadata": _json_ready(candidate.metadata),

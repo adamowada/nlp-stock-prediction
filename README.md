@@ -166,6 +166,15 @@ evaluations become prior-outcome review entries in Markdown/JSON, and calibratio
 separate audit artifacts referenced by the report rather than being collapsed into trading-style
 performance claims.
 
+## Current Phase 7 Evaluation Hardening
+
+Phase 7 now adds typed freshness and aging reviews to point-in-time evaluation targets. Target
+freezing records evidence aging and artifact freshness under `phase7_freshness`, normalizes
+date-only market artifact metadata deterministically, and keeps aged-out, stale, missing,
+malformed, hash-mismatched, provider-replaced, and future/lookahead artifact states auditable.
+Standalone `artifact_freshness_review` and `evidence_aging_summary` audit artifacts can be written
+and indexed without recomputing or mutating calibration artifacts.
+
 ## Current Phase 5 Prediction Reports
 
 The report product writes Markdown, JSON, and audit-manifest artifacts from the stored run graph.

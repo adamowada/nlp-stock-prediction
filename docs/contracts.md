@@ -237,6 +237,18 @@ status, quality score when resolved, optional baseline comparison, evidence, art
 limitations. Resolved outcome evaluations require an observed outcome plus evidence or artifacts;
 pending, stale, or not-evaluable evaluations must explain their limitations.
 
+Phase 7 freshness hardening is captured with `EvidenceAgingRecord` and
+`ArtifactFreshnessReview`. `build_prediction_evaluation_target` now freezes these records under
+`phase7_freshness` in target metadata and the candidate snapshot. Evidence aging records preserve
+provider, source type, retrieved/published timestamps, source artifact IDs, stale or aged-out state,
+and provider replacement references. Artifact freshness reviews preserve artifact type, provider,
+producer, created/as-of/observed timestamps, hash expectations, source relationships, and explicit
+statuses for stale, missing, malformed, hash-mismatched, superseded, or provider-replaced artifacts.
+Date-only market metadata such as `latest_usable_bar` is normalized to a UTC start-of-day timestamp
+with an auditable limitation instead of being silently accepted as live proof. The same records can
+be written as separate `artifact_freshness_review` and `evidence_aging_summary` audit artifacts so
+later reports can explain aged-out prior evidence without mutating calibration artifacts.
+
 Phase 6 calibration can now persist signal-family ablations. A `signal_family_ablation` audit
 artifact records the point-in-time cohort, source target/outcome-evaluation IDs, source signal
 artifacts, and one `SignalFamilyAblation` per requested family. Each ablation compares resolved
