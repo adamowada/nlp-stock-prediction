@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from nlp_stock_prediction.contracts import (
+    DEFAULT_JSON_REPORT_CONTRACT,
+    DEFAULT_MARKDOWN_REPORT_OUTLINE,
     Direction,
     InsufficientEvidenceReport,
     PredictionStatus,
@@ -17,7 +19,7 @@ from nlp_stock_prediction.contracts import (
 )
 from nlp_stock_prediction.contracts.report import AuditManifest, DailyReport
 from nlp_stock_prediction.reporting.fixtures import build_offline_fixture_bundle
-from nlp_stock_prediction.reporting.json import render_json_report
+from nlp_stock_prediction.reporting.json import load_json_report, render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.reporting.view import ReportView
 
@@ -258,3 +260,23 @@ def test_json_renderer_preserves_phase3_report_fields(tmp_path: Path) -> None:
     )
     assert payload["prior_outcome_reviews"][0]["status"] == "not_available"
     assert payload["material_claim_traces"][0]["source_reference_ids"] == ["source-ref-tsla-news"]
+
+
+@pytest.mark.unit
+def test_json_report_contract_round_trips_and_covers_material_markdown_sections(
+    tmp_path: Path,
+) -> None:
+    report = _fixture_report(tmp_path)
+    json_text = render_json_report(report)
+
+    round_tripped = load_json_report(json_text)
+    json_headings = tuple(
+        section.heading for section in DEFAULT_JSON_REPORT_CONTRACT.material_sections
+    )
+
+    assert round_tripped == report
+    assert DEFAULT_JSON_REPORT_CONTRACT.report_schema_version == report.schema_version
+    assert DEFAULT_JSON_REPORT_CONTRACT.markdown_outline_schema_version == (
+        DEFAULT_MARKDOWN_REPORT_OUTLINE.schema_version
+    )
+    assert set(DEFAULT_MARKDOWN_REPORT_OUTLINE.heading_order[1:]).issubset(json_headings)

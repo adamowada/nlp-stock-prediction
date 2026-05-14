@@ -81,6 +81,21 @@ using recommendation, position sizing, or trade-instruction framing. Structured 
 reports render their blocking reasons, providers, evidence, artifacts, and metadata instead of
 inventing a fallback scenario.
 
+## JSON Reports And Runtime Index
+
+JSON reports keep the top-level `DailyReport` payload shape and are validated against
+`json-report-contract.v1` before they are written. The contract maps every material Markdown product
+section to stable JSON fields, including report metadata, data freshness, provider health and
+warnings, instrument sections, prediction scenarios or structured insufficient evidence,
+prior-outcome reviews, material claim traces, source references, the evidence ledger, and audit
+artifacts.
+
+Final Markdown, JSON, and audit-manifest files are also recorded in the research database
+`report_artifact_index`. The index stores paths, hashes, artifact schema version, report schema
+version, report date, instrument identity, report data mode, tool run id, and source run timestamps.
+It does not store report bodies or raw provider payloads; those remain file-backed artifacts under
+ignored output directories.
+
 Run the optional Phase 4 real-Codex smoke after installing the MCP extra:
 
 ```sh

@@ -14,6 +14,7 @@ from nlp_stock_prediction.contracts.enums import (
 from nlp_stock_prediction.contracts.instruments import Instrument
 from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderHealth
 from nlp_stock_prediction.contracts.report import (
+    AuditArtifact,
     AuditManifest,
     DailyReport,
     DataFreshnessSummary,
@@ -48,6 +49,7 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.storage.records import (
+    ReportArtifactRecord,
     ResearchRunRecord,
     ToolRunRecord,
 )
@@ -310,7 +312,7 @@ def render_phase2_prediction_report(
     final_manifest = manifest.model_copy(
         update={"artifacts": (*manifest.artifacts, markdown_artifact, json_artifact)}
     )
-    ArtifactIndex.for_directory(
+    audit_manifest_artifact = ArtifactIndex.for_directory(
         store=store,
         repo_root=repo_root,
         base_dir=paths.audit_dir,
@@ -324,6 +326,25 @@ def render_phase2_prediction_report(
         filename=paths.audit_manifest_path.name,
         payload=cast(JsonObject, final_manifest.model_dump(mode="json")),
         metadata={"run_id": run.run_id, **mode_metadata},
+    )
+    _record_final_report_artifact_index(
+        store=store,
+        repo_root=repo_root,
+        run=run,
+        run_completed_at=now,
+        report=report,
+        instrument=instrument,
+        report_data_mode=resolved_report_data_mode,
+        tool_run_id=report_tool_run_id,
+        artifact_schema_version=artifact_schema_version,
+        artifacts=(markdown_artifact, json_artifact, audit_manifest_artifact),
+        metadata={
+            "candidate_count": len(prediction_candidates),
+            "stored_candidate_count": len(candidate_records),
+            "excluded_candidate_ids": list(assembly_state.excluded_candidate_ids),
+            "provider_names": [health.provider_name for health in provider_health],
+            **mode_metadata,
+        },
     )
     store.upsert_research_run(
         ResearchRunRecord(
@@ -359,6 +380,47 @@ def _provider_name_for_mode(
     if report_data_mode == CODEX_SMOKE_REPORT_DATA_MODE:
         return "codex-web-search"
     return "dummy-smoke-tools"
+
+
+def _record_final_report_artifact_index(
+    *,
+    store: SQLiteStore,
+    repo_root: Path,
+    run: ResearchRunRecord,
+    run_completed_at: datetime,
+    report: DailyReport,
+    instrument: Instrument,
+    report_data_mode: ReportDataMode,
+    tool_run_id: str,
+    artifact_schema_version: str,
+    artifacts: tuple[AuditArtifact, ...],
+    metadata: JsonObject,
+) -> None:
+    for artifact in artifacts:
+        if artifact.sha256 is None:
+            raise ValueError("final report artifact index requires artifact hashes")
+        store.record_report_artifact(
+            ReportArtifactRecord(
+                artifact_id=artifact.artifact_id,
+                run_id=run.run_id,
+                tool_run_id=tool_run_id,
+                artifact_type=artifact.artifact_type,
+                path=Path(artifact.path).resolve().relative_to(repo_root.resolve())
+                if Path(artifact.path).is_absolute()
+                else Path(artifact.path),
+                sha256=artifact.sha256,
+                schema_version=artifact_schema_version,
+                report_schema_version=report.schema_version,
+                report_date=report.report_date,
+                instrument_id=instrument.instrument_id,
+                symbol=instrument.symbol,
+                report_data_mode=report_data_mode,
+                source_run_started_at=run.started_at,
+                source_run_completed_at=run_completed_at,
+                metadata=metadata,
+                created_at=artifact.created_at,
+            )
+        )
 
 
 def _prior_outcome_reviews(

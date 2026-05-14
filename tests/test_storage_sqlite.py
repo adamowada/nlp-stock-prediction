@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -23,6 +23,7 @@ from nlp_stock_prediction.storage import (
     PlanProgressRecord,
     PlanRecord,
     PredictionCandidateRecord,
+    ReportArtifactRecord,
     ResearchRunRecord,
     SourceQueryRecord,
     SQLiteStore,
@@ -92,6 +93,7 @@ def test_research_database_initialization_is_idempotent_and_excludes_planning(
         "instrument_related_instruments",
         "instrument_tradability_evidence",
         "prediction_candidates",
+        "report_artifact_index",
         "research_runs",
         "source_queries",
         "tool_runs",
@@ -245,6 +247,7 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
         "instrument_provider_ids",
         "instrument_related_instruments",
         "instrument_tradability_evidence",
+        "report_artifact_index",
         "watchlist_items",
         "watchlists",
     }.issubset(_table_names(store))
@@ -563,6 +566,136 @@ def test_artifact_upsert_refreshes_created_at_for_run_graph_ordering(tmp_path: P
     artifact = store.get_artifact("artifact-refresh")
     assert artifact is not None
     assert artifact.created_at == later
+
+
+@pytest.mark.unit
+def test_report_artifact_index_round_trips_and_finds_latest_bundle(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    earlier = _timestamp()
+    later = earlier.replace(hour=13)
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id="run-report-index",
+            run_kind="daily_prediction_report",
+            objective="index final report artifacts",
+            status="completed",
+            started_at=earlier,
+            completed_at=later,
+            metadata={"run_date": "2026-05-13"},
+        )
+    )
+    store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-render-report-index",
+            run_id="run-report-index",
+            tool_name="render_prediction_report",
+            tool_version="phase5.report-index.v1",
+            status="successful",
+            started_at=earlier,
+            completed_at=later,
+            inputs={"symbol": "TSLA"},
+        )
+    )
+    for artifact_id, artifact_type, path, digest in (
+        (
+            "artifact-report-md-index",
+            "markdown_report",
+            Path("reports/2026-05-13/tsla/report.md"),
+            "a" * 64,
+        ),
+        (
+            "artifact-report-json-index",
+            "json_report",
+            Path("reports/2026-05-13/tsla/report.json"),
+            "b" * 64,
+        ),
+        (
+            "artifact-report-audit-index",
+            "audit_manifest",
+            Path("reports/2026-05-13/tsla/audit/audit-manifest.json"),
+            "c" * 64,
+        ),
+    ):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id=artifact_id,
+                tool_run_id="tool-render-report-index",
+                artifact_type=artifact_type,
+                path=path,
+                sha256=digest,
+                schema_version="phase5-report.v1",
+                produced_by="render_prediction_report",
+                metadata={"run_id": "run-report-index"},
+                created_at=later,
+            )
+        )
+        store.record_report_artifact(
+            ReportArtifactRecord(
+                artifact_id=artifact_id,
+                run_id="run-report-index",
+                tool_run_id="tool-render-report-index",
+                artifact_type=artifact_type,
+                path=path,
+                sha256=digest,
+                schema_version="phase5-report.v1",
+                report_schema_version="daily-report.v2",
+                report_date=date(2026, 5, 13),
+                instrument_id="instrument:equity:us:tsla",
+                symbol="tsla",
+                report_data_mode="offline_fixture",
+                source_run_started_at=earlier,
+                source_run_completed_at=later,
+                metadata={"candidate_count": 1},
+                created_at=later,
+            )
+        )
+
+    report_artifacts = store.list_report_artifacts_for_run("run-report-index")
+    assert tuple(artifact.artifact_type for artifact in report_artifacts) == (
+        "markdown_report",
+        "json_report",
+        "audit_manifest",
+    )
+    assert report_artifacts[1] == ReportArtifactRecord(
+        artifact_id="artifact-report-json-index",
+        run_id="run-report-index",
+        tool_run_id="tool-render-report-index",
+        artifact_type="json_report",
+        path=Path("reports/2026-05-13/tsla/report.json"),
+        sha256="b" * 64,
+        schema_version="phase5-report.v1",
+        report_schema_version="daily-report.v2",
+        report_date=date(2026, 5, 13),
+        instrument_id="instrument:equity:us:tsla",
+        symbol="TSLA",
+        report_data_mode="offline_fixture",
+        source_run_started_at=earlier,
+        source_run_completed_at=later,
+        metadata={"candidate_count": 1},
+        created_at=later,
+    )
+    latest = store.get_latest_report_artifact(
+        report_date=date(2026, 5, 13),
+        instrument_id="instrument:equity:us:tsla",
+        artifact_type="json_report",
+    )
+    assert latest == report_artifacts[1]
+    assert store.get_latest_report_artifact(symbol="TSLA") == report_artifacts[1]
+    assert store.list_latest_report_artifact_bundle(symbol="TSLA") == report_artifacts
+
+    columns = _column_names(store, "report_artifact_index")
+    assert "report_body" not in columns
+    assert "payload_json" not in columns
+    with store.connect() as connection:
+        stored_metadata = connection.execute(
+            """
+            SELECT metadata_json FROM report_artifact_index
+            WHERE artifact_id = 'artifact-report-json-index'
+            """
+        ).fetchone()[0]
+    assert "candidate_count" in stored_metadata
+    assert "prediction_candidates" not in stored_metadata
 
 
 @pytest.mark.unit

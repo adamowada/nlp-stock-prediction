@@ -417,6 +417,41 @@ class MarkdownReportOutline(ContractModel):
         return self
 
 
+class JsonReportSectionContract(ContractModel):
+    """Machine-readable mapping from a product report section to JSON fields."""
+
+    heading: NonEmptyStr
+    json_pointers: tuple[NonEmptyStr, ...]
+    material: bool = True
+
+    @model_validator(mode="after")
+    def validate_json_pointers(self) -> JsonReportSectionContract:
+        if not self.json_pointers:
+            raise ValueError("JSON report section contracts require pointers")
+        for pointer in self.json_pointers:
+            if not pointer.startswith("/"):
+                raise ValueError("JSON report section pointers must be absolute JSON pointers")
+        return self
+
+
+class JsonReportContract(ContractModel):
+    """Stable JSON report contract aligned to the product Markdown outline."""
+
+    schema_version: NonEmptyStr
+    report_schema_version: NonEmptyStr
+    markdown_outline_schema_version: NonEmptyStr
+    material_sections: tuple[JsonReportSectionContract, ...]
+
+    @model_validator(mode="after")
+    def validate_material_sections(self) -> JsonReportContract:
+        headings = tuple(section.heading for section in self.material_sections)
+        if len(set(headings)) != len(headings):
+            raise ValueError("JSON report section headings must be unique")
+        if not all(section.material for section in self.material_sections):
+            raise ValueError("default JSON report contract only carries material sections")
+        return self
+
+
 DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
     schema_version="markdown-report.v2",
     heading_order=(
@@ -449,6 +484,73 @@ DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
         "Report Source References",
     ),
     required_footer_headings=("Audit Artifacts",),
+)
+
+DEFAULT_JSON_REPORT_CONTRACT = JsonReportContract(
+    schema_version="json-report-contract.v1",
+    report_schema_version="daily-report.v2",
+    markdown_outline_schema_version=DEFAULT_MARKDOWN_REPORT_OUTLINE.schema_version,
+    material_sections=(
+        JsonReportSectionContract(
+            heading="Report Metadata",
+            json_pointers=(
+                "/schema_version",
+                "/run_id",
+                "/report_date",
+                "/generated_at",
+                "/timezone",
+                "/command_args",
+            ),
+        ),
+        JsonReportSectionContract(
+            heading="Research Objective",
+            json_pointers=("/objective", "/universe"),
+        ),
+        JsonReportSectionContract(
+            heading="Data Freshness",
+            json_pointers=("/data_freshness",),
+        ),
+        JsonReportSectionContract(
+            heading="Provider Health",
+            json_pointers=("/provider_health",),
+        ),
+        JsonReportSectionContract(
+            heading="Provider Warnings",
+            json_pointers=("/provider_health",),
+        ),
+        JsonReportSectionContract(
+            heading="Instrument Sections",
+            json_pointers=("/instruments", "/instrument_sections"),
+        ),
+        JsonReportSectionContract(
+            heading="Prediction Scenarios Or Insufficient-Evidence Summary",
+            json_pointers=(
+                "/prediction_candidates",
+                "/insufficient_evidence",
+                "/insufficient_evidence_summary",
+            ),
+        ),
+        JsonReportSectionContract(
+            heading="Prior-Outcome Review",
+            json_pointers=("/prior_outcome_reviews",),
+        ),
+        JsonReportSectionContract(
+            heading="Material Claim Traceability",
+            json_pointers=("/material_claim_traces",),
+        ),
+        JsonReportSectionContract(
+            heading="Report Source References",
+            json_pointers=("/source_references",),
+        ),
+        JsonReportSectionContract(
+            heading="Evidence Ledger",
+            json_pointers=("/evidence_sources",),
+        ),
+        JsonReportSectionContract(
+            heading="Audit Artifacts",
+            json_pointers=("/audit_manifest",),
+        ),
+    ),
 )
 
 
@@ -786,6 +888,7 @@ def _validate_candidate_evaluation_metadata(candidate: PredictionCandidate) -> N
 
 
 __all__ = [
+    "DEFAULT_JSON_REPORT_CONTRACT",
     "DEFAULT_MARKDOWN_REPORT_OUTLINE",
     "AuditArtifact",
     "AuditManifest",
@@ -794,6 +897,8 @@ __all__ = [
     "DissentingEvidence",
     "InstrumentReportSection",
     "InsufficientEvidenceReport",
+    "JsonReportContract",
+    "JsonReportSectionContract",
     "MarkdownReportOutline",
     "MaterialClaimTrace",
     "PredictionCandidate",

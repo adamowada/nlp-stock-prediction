@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
 
@@ -27,6 +27,7 @@ from nlp_stock_prediction.storage.records import (
     PlanProgressRecord,
     PlanRecord,
     PredictionCandidateRecord,
+    ReportArtifactRecord,
     ResearchRunRecord,
     SourceQueryRecord,
     ToolRunRecord,
@@ -41,7 +42,7 @@ from nlp_stock_prediction.storage.run_graph import (
     fetch_tool_run_rows,
 )
 
-CURRENT_RESEARCH_SCHEMA_VERSION = 5
+CURRENT_RESEARCH_SCHEMA_VERSION = 6
 CURRENT_PLANNING_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = CURRENT_RESEARCH_SCHEMA_VERSION
 DEFAULT_RESEARCH_DATABASE_PATH = Path("data/prediction-research.sqlite3")
@@ -534,6 +535,166 @@ class SQLiteStore:
             _ensure_initialized(connection)
             rows = fetch_artifact_rows(connection, run_id)
         return tuple(_artifact_from_row(row) for row in rows)
+
+    def record_report_artifact(self, record: ReportArtifactRecord) -> None:
+        _validate_required(record.artifact_id, "artifact_id")
+        _validate_required(record.run_id, "run_id")
+        _validate_report_artifact_type(record.artifact_type)
+        _validate_required(record.sha256, "sha256")
+        _validate_required(record.schema_version, "schema_version")
+        _validate_required(record.report_schema_version, "report_schema_version")
+        _validate_required(record.report_data_mode, "report_data_mode")
+        _validate_relative_artifact_path(record.path)
+        if record.instrument_id is not None:
+            _validate_required(record.instrument_id, "instrument_id")
+        if record.symbol is not None:
+            _validate_required(record.symbol, "symbol")
+        created_at = record.created_at or _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO report_artifact_index (
+                    artifact_id, run_id, tool_run_id, artifact_type, path, sha256,
+                    schema_version, report_schema_version, report_date, instrument_id,
+                    symbol, report_data_mode, source_run_started_at,
+                    source_run_completed_at, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(artifact_id) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    tool_run_id = excluded.tool_run_id,
+                    artifact_type = excluded.artifact_type,
+                    path = excluded.path,
+                    sha256 = excluded.sha256,
+                    schema_version = excluded.schema_version,
+                    report_schema_version = excluded.report_schema_version,
+                    report_date = excluded.report_date,
+                    instrument_id = excluded.instrument_id,
+                    symbol = excluded.symbol,
+                    report_data_mode = excluded.report_data_mode,
+                    source_run_started_at = excluded.source_run_started_at,
+                    source_run_completed_at = excluded.source_run_completed_at,
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    record.artifact_id,
+                    record.run_id,
+                    record.tool_run_id,
+                    record.artifact_type,
+                    str(record.path),
+                    record.sha256,
+                    record.schema_version,
+                    record.report_schema_version,
+                    record.report_date.isoformat(),
+                    record.instrument_id,
+                    record.symbol.strip().upper() if record.symbol is not None else None,
+                    record.report_data_mode,
+                    _format_datetime(record.source_run_started_at),
+                    _format_optional_datetime(record.source_run_completed_at),
+                    _dump_json(record.metadata),
+                    _format_datetime(created_at),
+                ),
+            )
+
+    def get_report_artifact(self, artifact_id: str) -> ReportArtifactRecord | None:
+        _validate_required(artifact_id, "artifact_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                "SELECT * FROM report_artifact_index WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _report_artifact_from_row(row)
+
+    def list_report_artifacts_for_run(
+        self,
+        run_id: str,
+    ) -> tuple[ReportArtifactRecord, ...]:
+        _validate_required(run_id, "run_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM report_artifact_index
+                WHERE run_id = ?
+                ORDER BY created_at,
+                    CASE artifact_type
+                        WHEN 'markdown_report' THEN 1
+                        WHEN 'json_report' THEN 2
+                        WHEN 'audit_manifest' THEN 3
+                        ELSE 4
+                    END,
+                    artifact_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return tuple(_report_artifact_from_row(row) for row in rows)
+
+    def get_latest_report_artifact(
+        self,
+        *,
+        artifact_type: str = "json_report",
+        report_date: date | None = None,
+        instrument_id: str | None = None,
+        symbol: str | None = None,
+    ) -> ReportArtifactRecord | None:
+        _validate_report_artifact_type(artifact_type)
+        filters = ["artifact_type = ?"]
+        params: list[str] = [artifact_type]
+        if report_date is not None:
+            filters.append("report_date = ?")
+            params.append(report_date.isoformat())
+        if instrument_id is not None:
+            _validate_required(instrument_id, "instrument_id")
+            filters.append("instrument_id = ?")
+            params.append(instrument_id)
+        if symbol is not None:
+            _validate_required(symbol, "symbol")
+            filters.append("symbol = ?")
+            params.append(symbol.strip().upper())
+        where_clause = " AND ".join(filters)
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                f"""
+                SELECT * FROM report_artifact_index
+                WHERE {where_clause}
+                ORDER BY created_at DESC, run_id DESC, artifact_id DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            ).fetchone()
+        if row is None:
+            return None
+        return _report_artifact_from_row(row)
+
+    def list_latest_report_artifact_bundle(
+        self,
+        *,
+        report_date: date | None = None,
+        instrument_id: str | None = None,
+        symbol: str | None = None,
+    ) -> tuple[ReportArtifactRecord, ...]:
+        latest = self.get_latest_report_artifact(
+            artifact_type="json_report",
+            report_date=report_date,
+            instrument_id=instrument_id,
+            symbol=symbol,
+        )
+        if latest is None:
+            return ()
+        run_artifacts = self.list_report_artifacts_for_run(latest.run_id)
+        return tuple(
+            artifact
+            for artifact in run_artifacts
+            if artifact.report_date == latest.report_date
+            and artifact.instrument_id == latest.instrument_id
+            and artifact.symbol == latest.symbol
+        )
 
     def record_source_query(self, record: SourceQueryRecord) -> None:
         _validate_required(record.source_query_id, "source_query_id")
@@ -1381,12 +1542,17 @@ def _migrate_research_schema_v5(connection: sqlite3.Connection) -> None:
             connection.execute(f"ALTER TABLE artifacts ADD COLUMN {column} {definition}")
 
 
+def _migrate_research_schema_v6(connection: sqlite3.Connection) -> None:
+    connection.executescript(_RESEARCH_REPORT_INDEX_SCHEMA_SQL)
+
+
 _RESEARCH_MIGRATION_STEPS = (
     _SchemaMigrationStep(1, "initial_research_schema", _noop_migration),
     _SchemaMigrationStep(2, "phase2_research_graph_schema", _noop_migration),
     _SchemaMigrationStep(3, "phase2_evidence_provenance_schema", _noop_migration),
     _SchemaMigrationStep(4, "registry_grade_research_schema_v4", _migrate_research_schema_v4),
     _SchemaMigrationStep(5, "artifact_audit_provenance_schema_v5", _migrate_research_schema_v5),
+    _SchemaMigrationStep(6, "report_artifact_index_schema_v6", _migrate_research_schema_v6),
 )
 
 
@@ -1652,6 +1818,7 @@ _SAFE_SQL_TABLE_NAMES = frozenset(
         "planning_progress",
         "plans",
         "prediction_candidates",
+        "report_artifact_index",
         "research_runs",
         "schema_migrations",
         "source_queries",
@@ -1744,6 +1911,16 @@ def _validate_confidence(value: float | None) -> None:
         return
     if not 0.0 <= value <= 1.0:
         raise ValueError("confidence values must be between 0.0 and 1.0")
+
+
+_REPORT_ARTIFACT_TYPES = frozenset({"markdown_report", "json_report", "audit_manifest"})
+
+
+def _validate_report_artifact_type(value: str) -> None:
+    _validate_required(value, "artifact_type")
+    if value not in _REPORT_ARTIFACT_TYPES:
+        allowed = ", ".join(sorted(_REPORT_ARTIFACT_TYPES))
+        raise ValueError(f"report artifact_type must be one of: {allowed}")
 
 
 def _utc_now() -> datetime:
@@ -1929,6 +2106,29 @@ def _artifact_from_row(row: sqlite3.Row) -> ArtifactRecord:
         schema_version=_row_text(row, "schema_version"),
         produced_by=_row_optional_text(row, "produced_by"),
         record_count=_row_optional_int(row, "record_count"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+    )
+
+
+def _report_artifact_from_row(row: sqlite3.Row) -> ReportArtifactRecord:
+    return ReportArtifactRecord(
+        artifact_id=_row_text(row, "artifact_id"),
+        run_id=_row_text(row, "run_id"),
+        tool_run_id=_row_optional_text(row, "tool_run_id"),
+        artifact_type=_row_text(row, "artifact_type"),
+        path=Path(_row_text(row, "path")),
+        sha256=_row_text(row, "sha256"),
+        schema_version=_row_text(row, "schema_version"),
+        report_schema_version=_row_text(row, "report_schema_version"),
+        report_date=date.fromisoformat(_row_text(row, "report_date")),
+        instrument_id=_row_optional_text(row, "instrument_id"),
+        symbol=_row_optional_text(row, "symbol"),
+        report_data_mode=_row_text(row, "report_data_mode"),
+        source_run_started_at=_parse_datetime(_row_text(row, "source_run_started_at")),
+        source_run_completed_at=_parse_optional_datetime(
+            _row_optional_text(row, "source_run_completed_at")
+        ),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
         created_at=_parse_datetime(_row_text(row, "created_at")),
     )
@@ -2379,6 +2579,42 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_items_instrument
 ON watchlist_items(instrument_id);
 """
 
+_RESEARCH_REPORT_INDEX_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS report_artifact_index (
+    artifact_id TEXT PRIMARY KEY
+        REFERENCES artifacts(artifact_id) ON DELETE CASCADE
+        CHECK(length(artifact_id) > 0),
+    run_id TEXT NOT NULL
+        REFERENCES research_runs(run_id) ON DELETE CASCADE
+        CHECK(length(run_id) > 0),
+    tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+    artifact_type TEXT NOT NULL CHECK(
+        artifact_type IN ('markdown_report', 'json_report', 'audit_manifest')
+    ),
+    path TEXT NOT NULL CHECK(length(path) > 0),
+    sha256 TEXT NOT NULL CHECK(length(sha256) > 0),
+    schema_version TEXT NOT NULL CHECK(length(schema_version) > 0),
+    report_schema_version TEXT NOT NULL CHECK(length(report_schema_version) > 0),
+    report_date TEXT NOT NULL CHECK(length(report_date) > 0),
+    instrument_id TEXT,
+    symbol TEXT,
+    report_data_mode TEXT NOT NULL CHECK(length(report_data_mode) > 0),
+    source_run_started_at TEXT NOT NULL CHECK(length(source_run_started_at) > 0),
+    source_run_completed_at TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL CHECK(length(created_at) > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_artifact_index_run_id
+ON report_artifact_index(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_report_artifact_index_latest_json
+ON report_artifact_index(artifact_type, report_date, instrument_id, symbol, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_report_artifact_index_symbol_date
+ON report_artifact_index(symbol, report_date);
+"""
+
 _PLANNING_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -2489,6 +2725,7 @@ __all__ = [
     "PlanRecord",
     "PlanningSQLiteStore",
     "PredictionCandidateRecord",
+    "ReportArtifactRecord",
     "ResearchRunRecord",
     "ResearchSQLiteStore",
     "SQLiteStore",

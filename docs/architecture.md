@@ -114,9 +114,11 @@ provider error payloads, and surface malformed provider payloads without droppin
 
 Report bundles write Markdown, JSON, and audit-manifest artifacts. The final audit manifest includes
 the rendered report artifacts and their hashes, while SQLite run-graph queries include artifacts and
-source queries reachable through evidence and candidate links. Phase 2 smoke and Phase 4 tool-suite
-runs use deterministic run IDs, reject duplicate starts where applicable, and preserve prior
-successful outputs if a later transactional tool retry fails.
+source queries reachable through evidence and candidate links. Final report files are additionally
+indexed in `report_artifact_index` with path, hash, schema version, report date, instrument, data
+mode, tool run, and source run timestamps; report bodies and raw provider payloads remain on disk.
+Phase 2 smoke and Phase 4 tool-suite runs use deterministic run IDs, reject duplicate starts where
+applicable, and preserve prior successful outputs if a later transactional tool retry fails.
 
 ## ML Signal Discipline
 

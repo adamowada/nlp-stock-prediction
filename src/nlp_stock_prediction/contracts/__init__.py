@@ -126,6 +126,7 @@ from nlp_stock_prediction.contracts.providers import (
     XProvider,
 )
 from nlp_stock_prediction.contracts.report import (
+    DEFAULT_JSON_REPORT_CONTRACT,
     DEFAULT_MARKDOWN_REPORT_OUTLINE,
     AuditArtifact,
     AuditManifest,
@@ -134,6 +135,8 @@ from nlp_stock_prediction.contracts.report import (
     DissentingEvidence,
     InstrumentReportSection,
     InsufficientEvidenceReport,
+    JsonReportContract,
+    JsonReportSectionContract,
     MarkdownReportOutline,
     MaterialClaimTrace,
     PredictionCandidate,
@@ -144,6 +147,7 @@ from nlp_stock_prediction.contracts.report import (
 )
 
 __all__ = [
+    "DEFAULT_JSON_REPORT_CONTRACT",
     "DEFAULT_MARKDOWN_REPORT_OUTLINE",
     "AnalysisBundle",
     "AnalysisComponent",
@@ -191,6 +195,8 @@ __all__ = [
     "InstrumentUniverseRequest",
     "InsufficientEvidenceReport",
     "JsonObject",
+    "JsonReportContract",
+    "JsonReportSectionContract",
     "JsonValue",
     "LLMExtractor",
     "MacroContext",

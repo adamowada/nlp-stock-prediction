@@ -199,6 +199,12 @@ must point to source evidence, tool artifacts, provider context, or prior outcom
 to a candidate. Candidate records must either include specific change triggers or an explicit
 limitation explaining why the report cannot define them yet.
 
+`json-report-contract.v1` validates the machine-readable report artifact without wrapping or
+renaming the top-level `DailyReport` fields. It maps each material Markdown section to stable JSON
+pointers and round-trips through the `DailyReport` contract. Final report artifacts are indexed in
+runtime SQLite through `ReportArtifactRecord`, which stores metadata needed for point-in-time lookup
+without storing large report bodies in SQLite.
+
 Settled prediction/evaluation contracts now include an explicit `prediction_type`, typed
 `SignalArtifactReference` records by signal family (`technicals`, `timesfm`, `social`, `news`,
 `fundamentals`, and `sector_macro`), and per-family signal counts in prediction-quality evaluation
