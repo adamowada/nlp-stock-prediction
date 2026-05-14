@@ -54,6 +54,10 @@ from nlp_stock_prediction.orchestration.phase4_technical_package import (
     Phase4TechnicalPackageTool,
     TechnicalPackageToolResult,
 )
+from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
+    Phase4UniverseDiscoveryTool,
+    Phase4UniverseDiscoveryToolResult,
+)
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationExecutionError,
     OrchestrationState,
@@ -96,6 +100,8 @@ __all__ = [
     "Phase4ToolResult",
     "Phase4ToolRunContext",
     "Phase4ToolRunOutcome",
+    "Phase4UniverseDiscoveryTool",
+    "Phase4UniverseDiscoveryToolResult",
     "ReportBundle",
     "RunContext",
     "StagedExecutionResult",

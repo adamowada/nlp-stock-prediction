@@ -21,7 +21,7 @@ Acceptance:
 Goal: add local SQLite as the operational memory.
 
 Status: initial foundation implemented. The schema, repository wrappers, tracked planning database,
-and ignored research database exist; future phases will connect orchestration and tools to them.
+and ignored research database exist and are used by orchestration and Phase 4 tools.
 
 Build:
 
@@ -99,7 +99,7 @@ Acceptance status:
 - stocks, ETFs, crypto, currency/commodity exposure, and futures context can be represented in
   contracts and registry storage;
 - ambiguous symbols require explicit resolution and cannot select an instrument silently;
-- fixture/dummy universe paths can write instrument records and artifacts;
+- fixture-backed universe paths can write instrument records and artifacts;
 - first-class fixture-backed universe discovery is implemented in Phase 4; broader live provider
   discovery remains future hardening.
 

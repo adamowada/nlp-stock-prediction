@@ -150,21 +150,23 @@ python -m pytest tests/test_phase1_schema_contracts.py -k "resolution or report"
 These gates are offline. They should not require live market-data providers, live scraping, OpenAI
 credentials, optional GPU packages, or a new CLI command.
 
-### Phase 4 QA Scaffold Gates
+### Phase 4 QA Gates
 
-The Phase 4 cross-worktree scaffold is intentionally fixture-backed until the independent tool-suite
-branches merge. It uses fake in-test tools over stable public contracts, SQLite indexing, and report
-rendering so coordinator integration can replace the helper runner with real tools while preserving
-the same end-to-end assertions.
+The Phase 4 gate is deterministic and fixture-backed, and it exercises the real public tool
+modules and Phase 4 service path. The production-gate E2E
+starts a Phase 4 run, executes universe discovery, market data, technical package, fundamentals,
+sector/macro context, prediction evaluation, and final report rendering with fixture providers, then
+asserts SQLite run-graph rows, typed artifacts, report output, and no trading-instruction language.
 
 ```sh
 python -m pytest tests/test_phase4_tool_suite_e2e.py
 python -m pytest tests/test_phase4_tool_suite_e2e.py tests/test_phase2_mcp_service.py tests/test_orchestration_runtime.py
 ```
 
-The scaffold gate must stay offline and should verify mixed-asset universe discovery, typed
-artifacts, SQLite tool-run/evidence/candidate indexing, rendered Markdown/JSON reports, audit
-manifest coverage, and visible recovery from partial tool failure.
+The gate must stay offline and should verify mixed-asset universe discovery, typed artifacts,
+SQLite tool-run/evidence/candidate indexing, rendered Markdown/JSON reports, audit manifest
+coverage, prediction-quality evaluation artifacts, Phase 4 artifact type alignment, and visible
+recovery from partial tool failure.
 
 ### Cross-Cutting Integrity Gates
 
