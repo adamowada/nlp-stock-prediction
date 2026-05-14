@@ -227,6 +227,25 @@ recorded with:
 Repeatable provider integrations should still be implemented as tools when they become important to
 regular reports.
 
+## Evaluation Reliability And Provider Replacement
+
+Live report rendering writes Phase 7 reliability audit artifacts for live-mode inputs:
+
+- `source_reliability_note` artifacts are derived from stored evidence rows and their provenance.
+  They preserve provider name, retrieval method, freshness status, extraction confidence, source
+  URL/permalink/raw identifiers, related artifacts, and explicit limitations. They describe source
+  quality; they do not make the source claim true.
+- `provider_replacement_playbook` artifacts describe provider-family replacement requirements for
+  market data, news, social, fundamentals, macro, and public scraping paths. Each playbook records
+  required provenance fields, provider ID mapping, artifact schema expectations, freshness
+  semantics, credential requirements, unsupported modes, and compatibility limitations.
+
+Provider replacement is allowed only when provenance compatibility is preserved. Replacement paths
+that cannot preserve source URLs/permalinks, raw identifiers, timestamps, artifact type/schema, or
+freshness semantics must be rejected or surfaced as not evaluable. Missing credentials, rate limits,
+stale data, malformed payloads, and unavailable live providers remain visible as provider health
+warnings and must not fall back to fixture, dummy, smoke, scaffold, or fabricated inputs.
+
 ## Instrument Universe
 
 The implemented Phase 3 universe layer is contract and storage infrastructure. The live `research`

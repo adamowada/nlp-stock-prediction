@@ -428,6 +428,7 @@ def report_source_references(
                 ),
                 label=f"Artifact {artifact.artifact_id}",
                 reference_type=source_reference_type_for_artifact(artifact.artifact_type),
+                evidence_ids=_artifact_evidence_ids(artifact),
                 artifact_ids=(artifact.artifact_id,),
                 candidate_ids=_usable_candidate_ids(
                     assembly_state,
@@ -441,6 +442,10 @@ def report_source_references(
             )
         )
     for health in provider_health:
+        reliability_note_ids = _provider_reliability_note_ids(
+            audit_artifacts,
+            provider_name=health.provider_name,
+        )
         references.append(
             ReportSourceReference(
                 reference_id=_unique_reference_id(
@@ -450,10 +455,41 @@ def report_source_references(
                 label=f"Provider health {health.provider_name}",
                 reference_type="provider_health",
                 provider_names=(health.provider_name,),
-                metadata={"status": health.status.value},
+                metadata={
+                    "status": health.status.value,
+                    "source_reliability_note_ids": list(reliability_note_ids),
+                },
             )
         )
     return tuple(references)
+
+
+def _artifact_evidence_ids(artifact: AuditArtifact) -> tuple[str, ...]:
+    evidence_id = artifact.metadata.get("evidence_id")
+    evidence_ids = artifact.metadata.get("evidence_ids")
+    values: list[str] = []
+    if isinstance(evidence_id, str) and evidence_id:
+        values.append(evidence_id)
+    if isinstance(evidence_ids, list | tuple):
+        values.extend(value for value in evidence_ids if isinstance(value, str) and value)
+    return tuple(dict.fromkeys(values))
+
+
+def _provider_reliability_note_ids(
+    audit_artifacts: tuple[AuditArtifact, ...],
+    *,
+    provider_name: str,
+) -> tuple[str, ...]:
+    note_ids: list[str] = []
+    for artifact in audit_artifacts:
+        if artifact.artifact_type != "source_reliability_note":
+            continue
+        if artifact.metadata.get("provider") != provider_name:
+            continue
+        note_id = artifact.metadata.get("note_id")
+        if isinstance(note_id, str) and note_id:
+            note_ids.append(note_id)
+    return tuple(dict.fromkeys(note_ids))
 
 
 def material_claim_traces(

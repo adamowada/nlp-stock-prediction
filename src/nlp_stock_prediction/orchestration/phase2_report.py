@@ -72,6 +72,7 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
     report_data_mode_from_run,
     report_data_mode_metadata,
 )
+from nlp_stock_prediction.reliability import write_reliability_audit_artifacts
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.storage.records import (
@@ -192,6 +193,7 @@ def _render_phase2_prediction_report_core(
     report_data_mode: ReportDataMode | None = None,
 ) -> JsonObject:
     now = utc_now()
+    report_tool_run_id = tool_run_id or f"tool-render-report-{run.run_id}"
     is_phase4_report = artifact_schema_version.startswith("phase4")
     resolved_report_data_mode = report_data_mode or report_data_mode_from_run(
         run,
@@ -359,6 +361,33 @@ def _render_phase2_prediction_report_core(
         ),
         *assembly_state.provider_health,
     )
+    if record_tool_run:
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=report_tool_run_id,
+                run_id=run.run_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                status=tool_status,
+                started_at=now,
+                completed_at=now,
+                inputs={"symbol": symbol, **mode_metadata},
+                warnings=tool_warnings,
+            )
+        )
+    if resolved_report_data_mode == LIVE_REPORT_DATA_MODE:
+        audit_artifacts = (
+            *audit_artifacts,
+            *write_reliability_audit_artifacts(
+                store=store,
+                repo_root=repo_root,
+                artifact_dir=paths.audit_dir,
+                run_id=run.run_id,
+                tool_run_id=report_tool_run_id if record_tool_run else None,
+                evidence_records=evidence_records,
+                created_at=now,
+            ),
+        )
     source_references = report_source_references(
         evidence_sources=evidence_sources,
         audit_artifacts=audit_artifacts,
@@ -488,21 +517,6 @@ def _render_phase2_prediction_report_core(
     manifest = report.audit_manifest
     if not isinstance(manifest, AuditManifest):
         raise TypeError("Codex smoke reports must include an audit manifest")
-    report_tool_run_id = tool_run_id or f"tool-render-report-{run.run_id}"
-    if record_tool_run:
-        store.record_tool_run(
-            ToolRunRecord(
-                tool_run_id=report_tool_run_id,
-                run_id=run.run_id,
-                tool_name=tool_name,
-                tool_version=tool_version,
-                status=tool_status,
-                started_at=now,
-                completed_at=now,
-                inputs={"symbol": symbol, **mode_metadata},
-                warnings=tool_warnings,
-            )
-        )
     report_index = ArtifactIndex.for_directory(
         store=store,
         repo_root=repo_root,
