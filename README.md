@@ -175,6 +175,20 @@ malformed, hash-mismatched, provider-replaced, and future/lookahead artifact sta
 Standalone `artifact_freshness_review` and `evidence_aging_summary` audit artifacts can be written
 and indexed without recomputing or mutating calibration artifacts.
 
+The canonical public interface is phase-neutral:
+
+```sh
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 inspect --run-id <run-id>
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 outcome-summary --run-id <run-id> --artifact-root reports/<run-id>/audit
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 calibration --run-id <run-id> --cohort-id <cohort-id> --as-of 2026-05-22T00:00:00+00:00 --artifact-root reports/<run-id>/audit
+```
+
+`evaluation` subcommands cover `inspect`, `materialize-outcome`, `load-outcomes`,
+`outcome-summary`, `stale-artifacts`, `source-reliability`, `provider-playbook`, `calibration`,
+`walk-forward`, `ablation`, and `calibration-drift`. The commands require an explicit database and
+run ID, and write commands require `--artifact-root` so audit writes stay under the repository write
+policy.
+
 ## Current Phase 5 Prediction Reports
 
 The report product writes Markdown, JSON, and audit-manifest artifacts from the stored run graph.

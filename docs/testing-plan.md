@@ -218,12 +218,17 @@ python -m pytest tests/test_phase7_artifact_freshness.py tests/test_phase7_evide
 python -m pytest tests/test_phase7_live_outcome_materialization.py tests/test_phase7_outcome_review_summaries.py
 python -m pytest tests/test_phase7_source_reliability.py tests/test_phase7_provider_playbooks.py tests/test_provider_reliability.py
 python -m pytest tests/test_phase7_calibration_drift.py tests/test_phase6_calibration_summary.py tests/test_phase6_walk_forward_evaluation.py
+python -m pytest tests/test_phase7_public_tooling.py tests/test_phase6_public_tooling.py tests/test_phase4_public_wiring.py
 ```
 
 The reliability/playbook gate must verify official API evidence, public-scrape limitations, missing
 traceability, provider compatibility, artifact schema/freshness expectations, and visible live
 provider failure behavior. It must not introduce fixture, dummy, smoke, scaffold, secret, or
 fabricated provider fallbacks into product paths.
+
+The public-tooling gate must verify the phase-neutral `evaluation` CLI, explicit existing database
+and run inputs, required artifact roots for writers, registry-derived MCP tool names, and no dummy,
+fixture, scaffold, or smoke-only names in the evaluation surface.
 
 The calibration-drift gate must verify no-lookahead cutoffs, comparable cohort shape, bin/family
 metric deltas, insufficient-history and inconclusive statuses, drift artifact persistence, SQLite

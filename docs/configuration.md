@@ -246,6 +246,24 @@ freshness semantics must be rejected or surfaced as not evaluable. Missing crede
 stale data, malformed payloads, and unavailable live providers remain visible as provider health
 warnings and must not fall back to fixture, dummy, smoke, scaffold, or fabricated inputs.
 
+## Evaluation CLI
+
+The public evaluation interface is exposed through the canonical module invocation, not a console
+script:
+
+```sh
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 inspect --run-id <run-id>
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 stale-artifacts --run-id <run-id> --artifact-root reports/<run-id>/audit
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 provider-playbook --run-id <run-id> --artifact-root reports/<run-id>/audit
+```
+
+Every evaluation command requires `--database` and `--run-id`. The database path must already exist;
+missing paths are rejected instead of silently creating a new run database. Commands that write audit
+artifacts require `--artifact-root`, which is resolved through the same repository write policy used
+by report generation. Available subcommands are `inspect`, `materialize-outcome`, `load-outcomes`,
+`outcome-summary`, `stale-artifacts`, `source-reliability`, `provider-playbook`, `calibration`,
+`walk-forward`, `ablation`, and `calibration-drift`.
+
 ## Instrument Universe
 
 The implemented Phase 3 universe layer is contract and storage infrastructure. The live `research`

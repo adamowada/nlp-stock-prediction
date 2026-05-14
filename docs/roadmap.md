@@ -188,9 +188,12 @@ Build:
 - source reliability notes;
 - provider replacement playbooks;
 - calibration drift checks.
+- a phase-neutral `evaluation` CLI/MCP interface for the implemented evaluation workflows.
 
 Acceptance:
 
 - repeated reports can explain which prior evidence aged out;
 - calibration artifacts remain separate from prediction reports;
 - provider swaps preserve provenance and contract compatibility.
+- users can run `python -m nlp_stock_prediction evaluation ...` with an explicit database, run ID,
+  and artifact root for writers without invoking phase-numbered public commands.

@@ -147,6 +147,14 @@ adds those artifacts to the audit manifest, surfaces outcome evaluations as prio
 and references calibration artifacts as tool artifacts so downstream readers can audit prediction
 quality without treating it as trading performance.
 
+The public evaluation surface is a thin phase-neutral layer over the same run graph. The CLI group
+`python -m nlp_stock_prediction evaluation` and the local MCP registration both expose registry
+derived evaluation tools for inspection, live outcome materialization, outcome loading and summary,
+artifact freshness, source reliability, provider playbooks, calibration, walk-forward evaluation,
+ablation, and calibration drift. The CLI requires an existing `--database`, a concrete `--run-id`,
+and `--artifact-root` for writers; service resolution then applies the repository write policy before
+any artifact is indexed.
+
 ## ML Signal Discipline
 
 Technical ML sidecars are conservative audit inputs. OHLCV timestamps are normalized across date and

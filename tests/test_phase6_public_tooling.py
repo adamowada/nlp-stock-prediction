@@ -272,24 +272,32 @@ def test_phase6_registry_exposes_live_evaluation_tool_suite() -> None:
     tool_names = [str(tool["tool_name"]) for tool in tools]
 
     assert tool_names == [
-        "phase7_live_outcome_materialization",
-        "phase6_point_in_time_outcome_evaluation",
-        "phase6_load_outcome_evaluations",
-        "phase6_signal_family_ablation",
-        "phase6_walk_forward_evaluation",
-        "phase6_calibration_summary",
-        "inspect_phase6_run",
+        "evaluation_materialize_outcome",
+        "evaluation_load_outcomes",
+        "evaluation_ablation",
+        "evaluation_walk_forward",
+        "evaluation_outcome_summary",
+        "evaluation_stale_artifacts",
+        "evaluation_source_reliability",
+        "evaluation_provider_playbook",
+        "evaluation_calibration",
+        "evaluation_calibration_drift",
+        "evaluation_inspect",
     ]
     assert not any("dummy" in tool_name for tool_name in tool_names)
     requires_network = {str(tool["tool_name"]): bool(tool["requires_network"]) for tool in tools}
     assert requires_network == {
-        "phase7_live_outcome_materialization": True,
-        "phase6_point_in_time_outcome_evaluation": False,
-        "phase6_load_outcome_evaluations": False,
-        "phase6_signal_family_ablation": False,
-        "phase6_walk_forward_evaluation": False,
-        "phase6_calibration_summary": False,
-        "inspect_phase6_run": False,
+        "evaluation_materialize_outcome": True,
+        "evaluation_load_outcomes": False,
+        "evaluation_ablation": False,
+        "evaluation_walk_forward": False,
+        "evaluation_outcome_summary": False,
+        "evaluation_stale_artifacts": False,
+        "evaluation_source_reliability": False,
+        "evaluation_provider_playbook": False,
+        "evaluation_calibration": False,
+        "evaluation_calibration_drift": False,
+        "evaluation_inspect": False,
     }
 
 

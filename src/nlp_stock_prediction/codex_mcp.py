@@ -1,4 +1,4 @@
-"""Local MCP server exposing Phase 4 and Phase 6 research tools to Codex."""
+"""Local MCP server exposing research and evaluation tools to Codex."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def build_server(repo_root: Path | None = None, database_path: Path | None = Non
         from mcp.server.fastmcp import FastMCP  # type: ignore[import-not-found, unused-ignore]
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without optional extra
         raise RuntimeError(
-            "The Phase 4/6 Codex MCP server requires the optional `codex-smoke` extra: "
+            "The research/evaluation Codex MCP server requires the optional `codex-smoke` extra: "
             'python -m pip install -e ".[codex-smoke]"'
         ) from exc
 

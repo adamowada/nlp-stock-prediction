@@ -282,6 +282,17 @@ review IDs, source calibration artifact IDs, source outcome IDs, and source cali
 preserved as drift provenance. Reports reference the drift artifact through the audit manifest and
 source references; they do not inline recomputed drift math or adjust prediction scores.
 
+The public evaluation interface exposes these contracts through phase-neutral CLI and MCP tool
+names. CLI subcommands under `python -m nlp_stock_prediction evaluation` map to real artifact
+writers and readers: `materialize-outcome` writes live `prediction_outcome` and
+`prediction_outcome_evaluation` artifacts; `load-outcomes` validates persisted outcome-evaluation
+payloads; `outcome-summary` writes `outcome_review_summary`; `stale-artifacts` writes
+`artifact_freshness_review`; `source-reliability` writes `source_reliability_note`;
+`provider-playbook` writes `provider_replacement_playbook`; `ablation`, `walk-forward`,
+`calibration`, and `calibration-drift` write their matching evaluation artifact types; and
+`inspect` returns stored run counts. Each command requires an explicit research database and run ID,
+and every writer requires an artifact root that passes repository write-policy checks.
+
 Rendered Markdown/JSON reports now integrate persisted Phase 6 outputs without recomputing them.
 Stored `prediction_outcome_evaluations` for rendered candidates become `PriorOutcomeReview`
 records, candidates reference those review IDs, and report source references include the prior

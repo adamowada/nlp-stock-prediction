@@ -1,4 +1,4 @@
-"""Live Phase 6 evaluation and calibration tooling over persisted research runs."""
+"""Public evaluation and calibration tooling over persisted research runs."""
 
 from __future__ import annotations
 
@@ -12,10 +12,12 @@ from pydantic import Field, model_validator
 
 from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr
 from nlp_stock_prediction.contracts.enums import (
+    Direction,
     PredictionType,
     SignalArtifactFamily,
     TimeHorizon,
 )
+from nlp_stock_prediction.contracts.evaluation import OutcomeReviewSummary
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
 from nlp_stock_prediction.evaluation.ablation import (
     PHASE6_ABLATION_TOOL_NAME,
@@ -28,9 +30,20 @@ from nlp_stock_prediction.evaluation.calibration import (
     PHASE6_CALIBRATION_TOOL_VERSION,
     write_calibration_summary_artifact,
 )
+from nlp_stock_prediction.evaluation.common import (
+    digest,
+    phase7_freshness_records_from_target,
+    slug,
+)
 from nlp_stock_prediction.evaluation.drift import (
+    PHASE7_CALIBRATION_DRIFT_TOOL_NAME,
+    PHASE7_CALIBRATION_DRIFT_TOOL_VERSION,
     CalibrationDriftThresholds,
     write_calibration_drift_check_artifact,
+)
+from nlp_stock_prediction.evaluation.freshness import (
+    review_artifact_freshness,
+    write_artifact_freshness_review_artifact,
 )
 from nlp_stock_prediction.evaluation.live_outcomes import (
     PHASE7_LIVE_OUTCOME_TOOL_NAME,
@@ -41,7 +54,6 @@ from nlp_stock_prediction.evaluation.live_outcomes import (
 )
 from nlp_stock_prediction.evaluation.outcomes import (
     PHASE6_OUTCOME_TOOL_NAME,
-    PHASE6_OUTCOME_TOOL_VERSION,
     build_prediction_evaluation_target,
     write_point_in_time_outcome_evaluation_artifacts,
 )
@@ -50,13 +62,21 @@ from nlp_stock_prediction.evaluation.walk_forward import (
     PHASE6_WALK_FORWARD_TOOL_VERSION,
     write_walk_forward_evaluation_artifact,
 )
+from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase2_common import Phase2WritePolicy
 from nlp_stock_prediction.orchestration.phase6_sources import (
     Phase6OutcomeEvaluationSource,
     load_phase6_outcome_evaluation_sources,
 )
+from nlp_stock_prediction.reliability import (
+    build_source_reliability_notes,
+    default_provider_replacement_playbooks,
+    write_provider_replacement_playbook_artifacts,
+    write_source_reliability_note_artifacts,
+)
 from nlp_stock_prediction.storage.records import (
     ResearchRunRecord,
+    ToolRunRecord,
 )
 from nlp_stock_prediction.storage.sqlite import (
     DEFAULT_RESEARCH_DATABASE_PATH,
@@ -78,6 +98,36 @@ PHASE6_OUTCOME_EVALUATION_PUBLIC_TOOL_NAME = "phase6_point_in_time_outcome_evalu
 PHASE7_LIVE_OUTCOME_MATERIALIZATION_PUBLIC_TOOL_NAME = "phase7_live_outcome_materialization"
 PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_NAME = "phase6_load_outcome_evaluations"
 PHASE6_INSPECT_TOOL_NAME = "inspect_phase6_run"
+
+EVALUATION_MATERIALIZE_OUTCOME_TOOL_ID = "evaluation.materialize_outcome"
+EVALUATION_LOAD_OUTCOMES_TOOL_ID = "evaluation.load_outcomes"
+EVALUATION_OUTCOME_SUMMARY_TOOL_ID = "evaluation.outcome_summary"
+EVALUATION_STALE_ARTIFACTS_TOOL_ID = "evaluation.stale_artifacts"
+EVALUATION_SOURCE_RELIABILITY_TOOL_ID = "evaluation.source_reliability"
+EVALUATION_PROVIDER_PLAYBOOK_TOOL_ID = "evaluation.provider_playbook"
+EVALUATION_ABLATION_TOOL_ID = "evaluation.ablation"
+EVALUATION_WALK_FORWARD_TOOL_ID = "evaluation.walk_forward"
+EVALUATION_CALIBRATION_TOOL_ID = "evaluation.calibration"
+EVALUATION_CALIBRATION_DRIFT_TOOL_ID = "evaluation.calibration_drift"
+EVALUATION_INSPECT_TOOL_ID = "evaluation.inspect"
+
+EVALUATION_MATERIALIZE_OUTCOME_TOOL_NAME = "evaluation_materialize_outcome"
+EVALUATION_LOAD_OUTCOMES_TOOL_NAME = "evaluation_load_outcomes"
+EVALUATION_OUTCOME_SUMMARY_TOOL_NAME = "evaluation_outcome_summary"
+EVALUATION_STALE_ARTIFACTS_TOOL_NAME = "evaluation_stale_artifacts"
+EVALUATION_SOURCE_RELIABILITY_TOOL_NAME = "evaluation_source_reliability"
+EVALUATION_PROVIDER_PLAYBOOK_TOOL_NAME = "evaluation_provider_playbook"
+EVALUATION_ABLATION_TOOL_NAME = "evaluation_ablation"
+EVALUATION_WALK_FORWARD_TOOL_NAME = "evaluation_walk_forward"
+EVALUATION_CALIBRATION_TOOL_NAME = "evaluation_calibration"
+EVALUATION_CALIBRATION_DRIFT_TOOL_NAME = "evaluation_calibration_drift"
+EVALUATION_INSPECT_TOOL_NAME = "evaluation_inspect"
+
+EVALUATION_OUTCOME_SUMMARY_TOOL_VERSION = "evaluation.outcome-summary.v1"
+EVALUATION_STALE_ARTIFACTS_TOOL_VERSION = "evaluation.stale-artifacts.v1"
+EVALUATION_SOURCE_RELIABILITY_TOOL_VERSION = "evaluation.source-reliability.v1"
+EVALUATION_PROVIDER_PLAYBOOK_TOOL_VERSION = "evaluation.provider-playbook.v1"
+EVALUATION_INSPECT_TOOL_VERSION = "evaluation.inspect.v1"
 
 
 class Phase6ToolMetadata(ContractModel):
@@ -198,13 +248,13 @@ class Phase6ToolRegistry:
 
 
 def build_phase6_tool_registry() -> Phase6ToolRegistry:
-    """Build the default Phase 6 metadata registry."""
+    """Build the default public evaluation metadata registry."""
 
     return Phase6ToolRegistry(
         (
             Phase6ToolMetadata(
-                tool_id=PHASE7_LIVE_OUTCOME_MATERIALIZATION_TOOL_ID,
-                tool_name=PHASE7_LIVE_OUTCOME_MATERIALIZATION_PUBLIC_TOOL_NAME,
+                tool_id=EVALUATION_MATERIALIZE_OUTCOME_TOOL_ID,
+                tool_name=EVALUATION_MATERIALIZE_OUTCOME_TOOL_NAME,
                 tool_version=PHASE7_LIVE_OUTCOME_TOOL_VERSION,
                 stage="evaluate",
                 description=(
@@ -222,21 +272,9 @@ def build_phase6_tool_registry() -> Phase6ToolRegistry:
                 metadata={"source_tool_name": PHASE7_LIVE_OUTCOME_TOOL_NAME},
             ),
             Phase6ToolMetadata(
-                tool_id=PHASE6_OUTCOME_EVALUATION_TOOL_ID,
-                tool_name=PHASE6_OUTCOME_EVALUATION_PUBLIC_TOOL_NAME,
-                tool_version=PHASE6_OUTCOME_TOOL_VERSION,
-                stage="evaluate",
-                description=(
-                    "Persist a point-in-time outcome evaluation for one stored prediction "
-                    "candidate using attributed post-window evidence and artifacts."
-                ),
-                artifact_kinds=("prediction_outcome", "prediction_outcome_evaluation"),
-                metadata={"source_tool_name": PHASE6_OUTCOME_TOOL_NAME},
-            ),
-            Phase6ToolMetadata(
-                tool_id=PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID,
-                tool_name=PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_NAME,
-                tool_version="phase6.persisted-outcome-evaluations.v1",
+                tool_id=EVALUATION_LOAD_OUTCOMES_TOOL_ID,
+                tool_name=EVALUATION_LOAD_OUTCOMES_TOOL_NAME,
+                tool_version="evaluation.load-outcomes.v1",
                 stage="evaluate",
                 description=(
                     "Load persisted point-in-time outcome-evaluation artifacts for a research "
@@ -246,8 +284,52 @@ def build_phase6_tool_registry() -> Phase6ToolRegistry:
                 metadata={"source_tool_name": PHASE6_OUTCOME_TOOL_NAME},
             ),
             Phase6ToolMetadata(
-                tool_id=PHASE6_ABLATION_TOOL_ID,
-                tool_name=PHASE6_ABLATION_TOOL_NAME,
+                tool_id=EVALUATION_OUTCOME_SUMMARY_TOOL_ID,
+                tool_name=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
+                tool_version=EVALUATION_OUTCOME_SUMMARY_TOOL_VERSION,
+                stage="summarize",
+                description=(
+                    "Persist a cross-run outcome review summary from stored outcome "
+                    "evaluations, including evidence, artifact, and freshness context."
+                ),
+                artifact_kinds=("outcome_review_summary",),
+                dependencies=(EVALUATION_LOAD_OUTCOMES_TOOL_ID,),
+            ),
+            Phase6ToolMetadata(
+                tool_id=EVALUATION_STALE_ARTIFACTS_TOOL_ID,
+                tool_name=EVALUATION_STALE_ARTIFACTS_TOOL_NAME,
+                tool_version=EVALUATION_STALE_ARTIFACTS_TOOL_VERSION,
+                stage="summarize",
+                description=(
+                    "Review persisted run artifacts for stale, missing, malformed, "
+                    "hash-mismatched, or unknown freshness states."
+                ),
+                artifact_kinds=("artifact_freshness_review",),
+            ),
+            Phase6ToolMetadata(
+                tool_id=EVALUATION_SOURCE_RELIABILITY_TOOL_ID,
+                tool_name=EVALUATION_SOURCE_RELIABILITY_TOOL_NAME,
+                tool_version=EVALUATION_SOURCE_RELIABILITY_TOOL_VERSION,
+                stage="summarize",
+                description=(
+                    "Persist source reliability notes from stored live evidence provenance."
+                ),
+                artifact_kinds=("source_reliability_note",),
+            ),
+            Phase6ToolMetadata(
+                tool_id=EVALUATION_PROVIDER_PLAYBOOK_TOOL_ID,
+                tool_name=EVALUATION_PROVIDER_PLAYBOOK_TOOL_NAME,
+                tool_version=EVALUATION_PROVIDER_PLAYBOOK_TOOL_VERSION,
+                stage="summarize",
+                description=(
+                    "Persist provider replacement playbooks that preserve required "
+                    "provenance and freshness semantics."
+                ),
+                artifact_kinds=("provider_replacement_playbook",),
+            ),
+            Phase6ToolMetadata(
+                tool_id=EVALUATION_ABLATION_TOOL_ID,
+                tool_name=EVALUATION_ABLATION_TOOL_NAME,
                 tool_version=PHASE6_ABLATION_TOOL_VERSION,
                 stage="evaluate",
                 description=(
@@ -255,22 +337,24 @@ def build_phase6_tool_registry() -> Phase6ToolRegistry:
                     "stored outcome evaluations."
                 ),
                 artifact_kinds=("signal_family_ablation",),
-                dependencies=(PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID,),
+                dependencies=(EVALUATION_LOAD_OUTCOMES_TOOL_ID,),
+                metadata={"source_tool_name": PHASE6_ABLATION_TOOL_NAME},
             ),
             Phase6ToolMetadata(
-                tool_id=PHASE6_WALK_FORWARD_TOOL_ID,
-                tool_name=PHASE6_WALK_FORWARD_TOOL_NAME,
+                tool_id=EVALUATION_WALK_FORWARD_TOOL_ID,
+                tool_name=EVALUATION_WALK_FORWARD_TOOL_NAME,
                 tool_version=PHASE6_WALK_FORWARD_TOOL_VERSION,
                 stage="evaluate",
                 description=(
                     "Persist chronological walk-forward folds from stored outcome evaluations."
                 ),
                 artifact_kinds=("walk_forward_evaluation",),
-                dependencies=(PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID,),
+                dependencies=(EVALUATION_LOAD_OUTCOMES_TOOL_ID,),
+                metadata={"source_tool_name": PHASE6_WALK_FORWARD_TOOL_NAME},
             ),
             Phase6ToolMetadata(
-                tool_id=PHASE6_CALIBRATION_TOOL_ID,
-                tool_name=PHASE6_CALIBRATION_TOOL_NAME,
+                tool_id=EVALUATION_CALIBRATION_TOOL_ID,
+                tool_name=EVALUATION_CALIBRATION_TOOL_NAME,
                 tool_version=PHASE6_CALIBRATION_TOOL_VERSION,
                 stage="summarize",
                 description=(
@@ -278,15 +362,28 @@ def build_phase6_tool_registry() -> Phase6ToolRegistry:
                     "stored outcome evaluations."
                 ),
                 artifact_kinds=("calibration_summary",),
-                dependencies=(PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID,),
+                dependencies=(EVALUATION_LOAD_OUTCOMES_TOOL_ID,),
+                metadata={"source_tool_name": PHASE6_CALIBRATION_TOOL_NAME},
             ),
             Phase6ToolMetadata(
-                tool_id=PHASE6_INSPECT_TOOL_ID,
-                tool_name=PHASE6_INSPECT_TOOL_NAME,
-                tool_version="phase6.inspect.v1",
+                tool_id=EVALUATION_CALIBRATION_DRIFT_TOOL_ID,
+                tool_name=EVALUATION_CALIBRATION_DRIFT_TOOL_NAME,
+                tool_version=PHASE7_CALIBRATION_DRIFT_TOOL_VERSION,
+                stage="summarize",
+                description=(
+                    "Persist a calibration drift check comparing two stored calibration "
+                    "summaries without recomputing or backfilling observations."
+                ),
+                artifact_kinds=("calibration_drift_check",),
+                dependencies=(EVALUATION_CALIBRATION_TOOL_ID,),
+                metadata={"source_tool_name": PHASE7_CALIBRATION_DRIFT_TOOL_NAME},
+            ),
+            Phase6ToolMetadata(
+                tool_id=EVALUATION_INSPECT_TOOL_ID,
+                tool_name=EVALUATION_INSPECT_TOOL_NAME,
+                tool_version=EVALUATION_INSPECT_TOOL_VERSION,
                 stage="inspect",
-                description="Inspect persisted Phase 6 run counts and calibration artifacts.",
-                dependencies=(PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID,),
+                description="Inspect persisted evaluation run counts and audit artifacts.",
                 metadata={"final_only": True},
             ),
         )
@@ -296,7 +393,7 @@ def build_phase6_tool_registry() -> Phase6ToolRegistry:
 def phase6_evaluation_tool_plan(
     registry: Phase6ToolRegistry | None = None,
 ) -> JsonObject:
-    """Return a registry-derived Phase 6 tool plan."""
+    """Return a registry-derived public evaluation tool plan."""
 
     return (registry or build_phase6_tool_registry()).as_plan()
 
@@ -333,8 +430,140 @@ class Phase6Service:
     def store(self) -> SQLiteStore:
         return self._store
 
-    def list_phase6_tool_plan(self) -> JsonObject:
+    def list_evaluation_tool_plan(self) -> JsonObject:
         return phase6_evaluation_tool_plan(self.registry)
+
+    def list_phase6_tool_plan(self) -> JsonObject:
+        return self.list_evaluation_tool_plan()
+
+    def evaluation_materialize_outcome(
+        self,
+        *,
+        run_id: str,
+        candidate_id: str,
+        point_in_time_cutoff: str,
+        evaluation_window_start: str,
+        evaluation_window_end: str,
+        artifact_dir: str | None = None,
+        report_date: str | None = None,
+        market_artifact_ids: Sequence[str] = (),
+        created_at: str | None = None,
+        evaluated_at: str | None = None,
+    ) -> JsonObject:
+        return self.phase7_live_outcome_materialization(
+            run_id=run_id,
+            candidate_id=candidate_id,
+            point_in_time_cutoff=point_in_time_cutoff,
+            evaluation_window_start=evaluation_window_start,
+            evaluation_window_end=evaluation_window_end,
+            artifact_dir=artifact_dir,
+            report_date=report_date,
+            market_artifact_ids=market_artifact_ids,
+            created_at=created_at,
+            evaluated_at=evaluated_at,
+        )
+
+    def evaluation_load_outcomes(self, *, run_id: str) -> JsonObject:
+        return self.phase6_load_outcome_evaluations(run_id=run_id)
+
+    def evaluation_ablation(
+        self,
+        *,
+        run_id: str,
+        cohort_id: str,
+        point_in_time_cutoff: str,
+        artifact_dir: str | None = None,
+        families: Sequence[str] | None = None,
+        prediction_type: str | None = None,
+        horizon: str | None = None,
+    ) -> JsonObject:
+        return self.phase6_signal_family_ablation(
+            run_id=run_id,
+            cohort_id=cohort_id,
+            point_in_time_cutoff=point_in_time_cutoff,
+            artifact_dir=artifact_dir,
+            families=families,
+            prediction_type=prediction_type,
+            horizon=horizon,
+        )
+
+    def evaluation_walk_forward(
+        self,
+        *,
+        run_id: str,
+        cohort_id: str,
+        point_in_time_cutoff: str,
+        minimum_train_size: int,
+        artifact_dir: str | None = None,
+        test_size: int = 1,
+        step_size: int = 1,
+        prediction_type: str | None = None,
+        horizon: str | None = None,
+    ) -> JsonObject:
+        return self.phase6_walk_forward_evaluation(
+            run_id=run_id,
+            cohort_id=cohort_id,
+            point_in_time_cutoff=point_in_time_cutoff,
+            minimum_train_size=minimum_train_size,
+            artifact_dir=artifact_dir,
+            test_size=test_size,
+            step_size=step_size,
+            prediction_type=prediction_type,
+            horizon=horizon,
+        )
+
+    def evaluation_calibration(
+        self,
+        *,
+        run_id: str,
+        cohort_id: str,
+        as_of: str,
+        artifact_dir: str | None = None,
+        bin_edges: Sequence[float] = DEFAULT_CALIBRATION_BIN_EDGES,
+        families: Sequence[str] | None = None,
+        prediction_type: str | None = None,
+        horizon: str | None = None,
+    ) -> JsonObject:
+        return self.phase6_calibration_summary(
+            run_id=run_id,
+            cohort_id=cohort_id,
+            as_of=as_of,
+            artifact_dir=artifact_dir,
+            bin_edges=bin_edges,
+            families=families,
+            prediction_type=prediction_type,
+            horizon=horizon,
+        )
+
+    def evaluation_calibration_drift(
+        self,
+        *,
+        run_id: str,
+        prior_calibration_id: str,
+        current_calibration_id: str,
+        as_of: str,
+        artifact_dir: str | None = None,
+        signal_family: str | None = None,
+        min_resolved_count: int = 10,
+        watch_delta: float = 0.05,
+        degraded_delta: float = 0.10,
+        improved_delta: float = 0.10,
+    ) -> JsonObject:
+        return self.phase7_calibration_drift_check(
+            run_id=run_id,
+            prior_calibration_id=prior_calibration_id,
+            current_calibration_id=current_calibration_id,
+            as_of=as_of,
+            artifact_dir=artifact_dir,
+            signal_family=signal_family,
+            min_resolved_count=min_resolved_count,
+            watch_delta=watch_delta,
+            degraded_delta=degraded_delta,
+            improved_delta=improved_delta,
+        )
+
+    def evaluation_inspect(self, *, run_id: str) -> JsonObject:
+        return self.inspect_phase6_run(run_id=run_id)
 
     def phase7_live_outcome_materialization(
         self,
@@ -539,6 +768,246 @@ class Phase6Service:
             "sources": [source.as_summary() for source in sources],
         }
 
+    def evaluation_outcome_summary(
+        self,
+        *,
+        run_id: str,
+        artifact_dir: str | None = None,
+        created_at: str | None = None,
+    ) -> JsonObject:
+        self._require_run(run_id)
+        created = _parse_optional_aware_datetime(created_at, "created_at") or datetime.now(UTC)
+        sources = self._outcome_sources(run_id)
+        summaries = tuple(
+            _outcome_review_summary_from_source(source, created_at=created) for source in sources
+        )
+        source_outcome_evaluation_ids = tuple(
+            summary.outcome_evaluation_id for summary in summaries
+        )
+        tool_run_id = _evaluation_tool_run_id(
+            tool_name=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
+            run_id=run_id,
+            created_at=created,
+            material=source_outcome_evaluation_ids,
+        )
+        self._record_successful_tool_run(
+            tool_run_id=tool_run_id,
+            run_id=run_id,
+            tool_name=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
+            tool_version=EVALUATION_OUTCOME_SUMMARY_TOOL_VERSION,
+            at=created,
+            inputs={
+                "run_id": run_id,
+                "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
+            },
+        )
+        artifact_id = _evaluation_artifact_id(
+            prefix="outcome-summary",
+            run_id=run_id,
+            created_at=created,
+            material=source_outcome_evaluation_ids,
+        )
+        payload: JsonObject = {
+            "schema_version": "outcome-review-summary-artifact.v1",
+            "run_id": run_id,
+            "created_at": created.isoformat(),
+            "outcome_review_summaries": [
+                cast(JsonObject, summary.model_dump(mode="json")) for summary in summaries
+            ],
+            "metadata": {
+                "source_artifact_ids": [source.artifact.artifact_id for source in sources],
+                "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
+            },
+        }
+        artifact = ArtifactIndex.for_directory(
+            store=self.store,
+            repo_root=self.repo_root,
+            base_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            created_at=created,
+            produced_by=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
+            tool_run_id=tool_run_id,
+            schema_version="outcome-review-summary-artifact.v1",
+        ).write_json(
+            artifact_id=artifact_id,
+            artifact_type="outcome_review_summary",
+            filename=(
+                "outcome-summary/"
+                f"{slug(run_id, allow_file_safe_punctuation=True)}-{artifact_id[-8:]}.json"
+            ),
+            payload=payload,
+            record_count=len(summaries),
+            metadata={
+                "run_id": run_id,
+                "summary_count": len(summaries),
+                "summary_ids": [summary.summary_id for summary in summaries],
+                "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
+            },
+        )
+        return {
+            "run_id": run_id,
+            "tool_run_id": tool_run_id,
+            "artifact_id": artifact.artifact_id,
+            "artifact_path": Path(artifact.path).as_posix(),
+            "summary_count": len(summaries),
+            "summary_ids": [summary.summary_id for summary in summaries],
+            "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
+        }
+
+    def evaluation_stale_artifacts(
+        self,
+        *,
+        run_id: str,
+        artifact_dir: str | None = None,
+        reviewed_at: str | None = None,
+    ) -> JsonObject:
+        self._require_run(run_id)
+        reviewed = _parse_optional_aware_datetime(reviewed_at, "reviewed_at") or datetime.now(UTC)
+        artifacts = self.store.list_artifacts_for_run(run_id)
+        reviews = tuple(
+            review_artifact_freshness(artifact=artifact, reviewed_at=reviewed)
+            for artifact in artifacts
+        )
+        artifact_ids = tuple(artifact.artifact_id for artifact in artifacts)
+        tool_run_id = _evaluation_tool_run_id(
+            tool_name=EVALUATION_STALE_ARTIFACTS_TOOL_NAME,
+            run_id=run_id,
+            created_at=reviewed,
+            material=artifact_ids,
+        )
+        self._record_successful_tool_run(
+            tool_run_id=tool_run_id,
+            run_id=run_id,
+            tool_name=EVALUATION_STALE_ARTIFACTS_TOOL_NAME,
+            tool_version=EVALUATION_STALE_ARTIFACTS_TOOL_VERSION,
+            at=reviewed,
+            inputs={"run_id": run_id, "artifact_ids": list(artifact_ids)},
+        )
+        written = write_artifact_freshness_review_artifact(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            run_id=run_id,
+            reviews=reviews,
+            created_at=reviewed,
+            tool_run_id=tool_run_id,
+            metadata={"source_artifact_ids": list(artifact_ids)},
+        )
+        freshness_counts: dict[str, int] = {}
+        for review in reviews:
+            freshness_counts[review.freshness_status] = (
+                freshness_counts.get(review.freshness_status, 0) + 1
+            )
+        return {
+            "run_id": run_id,
+            "tool_run_id": tool_run_id,
+            "artifact_id": written.artifact.artifact_id,
+            "artifact_path": Path(written.artifact.path).as_posix(),
+            "review_count": len(reviews),
+            "freshness_counts": cast(JsonObject, freshness_counts),
+            "reviewed_artifact_ids": list(artifact_ids),
+        }
+
+    def evaluation_source_reliability(
+        self,
+        *,
+        run_id: str,
+        artifact_dir: str | None = None,
+        created_at: str | None = None,
+    ) -> JsonObject:
+        self._require_run(run_id)
+        created = _parse_optional_aware_datetime(created_at, "created_at") or datetime.now(UTC)
+        evidence_records = self.store.list_evidence_for_run(run_id)
+        if not evidence_records:
+            raise ValueError(f"No evidence records were found for run: {run_id}")
+        notes = build_source_reliability_notes(evidence_records)
+        tool_run_id = _evaluation_tool_run_id(
+            tool_name=EVALUATION_SOURCE_RELIABILITY_TOOL_NAME,
+            run_id=run_id,
+            created_at=created,
+            material=tuple(note.note_id for note in notes),
+        )
+        self._record_successful_tool_run(
+            tool_run_id=tool_run_id,
+            run_id=run_id,
+            tool_name=EVALUATION_SOURCE_RELIABILITY_TOOL_NAME,
+            tool_version=EVALUATION_SOURCE_RELIABILITY_TOOL_VERSION,
+            at=created,
+            inputs={
+                "run_id": run_id,
+                "evidence_ids": [record.evidence_id for record in evidence_records],
+            },
+        )
+        artifacts = write_source_reliability_note_artifacts(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            run_id=run_id,
+            tool_run_id=tool_run_id,
+            notes=notes,
+            created_at=created,
+        )
+        reliability_counts: dict[str, int] = {}
+        for note in notes:
+            reliability_counts[note.reliability] = reliability_counts.get(note.reliability, 0) + 1
+        return {
+            "run_id": run_id,
+            "tool_run_id": tool_run_id,
+            "note_count": len(notes),
+            "artifact_ids": [artifact.artifact_id for artifact in artifacts],
+            "artifact_paths": [Path(artifact.path).as_posix() for artifact in artifacts],
+            "note_ids": [note.note_id for note in notes],
+            "reliability_counts": cast(JsonObject, reliability_counts),
+        }
+
+    def evaluation_provider_playbook(
+        self,
+        *,
+        run_id: str,
+        artifact_dir: str | None = None,
+        created_at: str | None = None,
+    ) -> JsonObject:
+        self._require_run(run_id)
+        created = _parse_optional_aware_datetime(created_at, "created_at") or datetime.now(UTC)
+        playbooks = default_provider_replacement_playbooks(created_at=created)
+        tool_run_id = _evaluation_tool_run_id(
+            tool_name=EVALUATION_PROVIDER_PLAYBOOK_TOOL_NAME,
+            run_id=run_id,
+            created_at=created,
+            material=tuple(playbook.playbook_id for playbook in playbooks),
+        )
+        self._record_successful_tool_run(
+            tool_run_id=tool_run_id,
+            run_id=run_id,
+            tool_name=EVALUATION_PROVIDER_PLAYBOOK_TOOL_NAME,
+            tool_version=EVALUATION_PROVIDER_PLAYBOOK_TOOL_VERSION,
+            at=created,
+            inputs={"run_id": run_id, "playbook_ids": [item.playbook_id for item in playbooks]},
+        )
+        artifacts = write_provider_replacement_playbook_artifacts(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            run_id=run_id,
+            tool_run_id=tool_run_id,
+            playbooks=playbooks,
+            created_at=created,
+        )
+        compatibility_counts: dict[str, int] = {}
+        for playbook in playbooks:
+            for note in playbook.compatibility_notes:
+                compatibility_counts[note.compatibility_status] = (
+                    compatibility_counts.get(note.compatibility_status, 0) + 1
+                )
+        return {
+            "run_id": run_id,
+            "tool_run_id": tool_run_id,
+            "playbook_count": len(playbooks),
+            "artifact_ids": [artifact.artifact_id for artifact in artifacts],
+            "artifact_paths": [Path(artifact.path).as_posix() for artifact in artifacts],
+            "playbook_ids": [playbook.playbook_id for playbook in playbooks],
+            "compatibility_counts": cast(JsonObject, compatibility_counts),
+        }
+
     def phase6_signal_family_ablation(
         self,
         *,
@@ -738,7 +1207,7 @@ class Phase6Service:
         calibration_runs = self.store.list_calibration_runs_for_run(run_id)
         calibration_drift_checks = self.store.list_calibration_drift_checks_for_run(run_id)
         tool_runs = self.store.list_tool_runs_for_run(run_id)
-        registered_tool_names = {tool.tool_name for tool in self.registry.specs()}
+        registered_tool_names = _registry_tool_run_names(self.registry)
         raw_status_counts: dict[str, int] = {}
         for record in outcome_evaluations:
             raw_status_counts[record.status] = raw_status_counts.get(record.status, 0) + 1
@@ -815,12 +1284,41 @@ class Phase6Service:
     def _resolve_write_path(self, path: Path) -> Path:
         return self.write_policy.resolve(path)
 
+    def _record_successful_tool_run(
+        self,
+        *,
+        tool_run_id: str,
+        run_id: str,
+        tool_name: str,
+        tool_version: str,
+        at: datetime,
+        inputs: JsonObject,
+    ) -> None:
+        self.store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                status="successful",
+                started_at=at,
+                completed_at=at,
+                inputs=inputs,
+            )
+        )
+
 
 def _parse_aware_datetime(value: str, field_name: str) -> datetime:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{field_name} must include a timezone offset")
     return parsed.astimezone(UTC)
+
+
+def _parse_optional_aware_datetime(value: str | None, field_name: str) -> datetime | None:
+    if value is None or not value.strip():
+        return None
+    return _parse_aware_datetime(value, field_name)
 
 
 def _parse_optional_date(value: str | None, field_name: str) -> date | None:
@@ -883,7 +1381,134 @@ def _non_empty_unique_strings(values: Sequence[str], field_name: str) -> tuple[s
     return tuple(dict.fromkeys(resolved))
 
 
+def _registry_tool_run_names(registry: Phase6ToolRegistry) -> set[str]:
+    names: set[str] = set()
+    for tool in registry.specs():
+        names.add(tool.tool_name)
+        source_tool_name = tool.metadata.get("source_tool_name")
+        if isinstance(source_tool_name, str) and source_tool_name.strip():
+            names.add(source_tool_name.strip())
+    return names
+
+
+def _outcome_review_summary_from_source(
+    source: Phase6OutcomeEvaluationSource,
+    *,
+    created_at: datetime,
+) -> OutcomeReviewSummary:
+    target = source.payload.target
+    outcome_evaluation = source.payload.outcome_evaluation
+    outcome = outcome_evaluation.outcome
+    phase7_records = phase7_freshness_records_from_target(target)
+    outcome_evidence_ids = tuple(
+        dict.fromkeys(
+            (
+                *(reference.evidence_id for reference in outcome.outcome_evidence),
+                *(reference.evidence_id for reference in outcome_evaluation.evidence),
+            )
+        )
+    )
+    artifact_ids = tuple(
+        dict.fromkeys(
+            (
+                source.artifact.artifact_id,
+                *(artifact.artifact_id for artifact in target.signal_artifacts),
+                *outcome.artifact_ids,
+                *outcome_evaluation.artifact_ids,
+            )
+        )
+    )
+    summary_material = "|".join(
+        (
+            source.record.run_id or target.run_id,
+            outcome_evaluation.outcome_evaluation_id,
+            created_at.isoformat(),
+        )
+    )
+    limitations = tuple(
+        dict.fromkeys(
+            (
+                *outcome.limitations,
+                *outcome_evaluation.limitations,
+                *phase7_records.limitations,
+            )
+        )
+    )
+    if outcome_evaluation.quality_score is None and not limitations:
+        limitations = ("Outcome evaluation has not resolved to a quality score.",)
+    return OutcomeReviewSummary(
+        summary_id=(
+            "outcome-summary-"
+            f"{slug(outcome_evaluation.outcome_evaluation_id)}-{digest(summary_material)[:8]}"
+        ),
+        run_id=source.record.run_id or target.run_id,
+        candidate_id=outcome_evaluation.candidate_id,
+        instrument_id=outcome_evaluation.instrument_id,
+        symbol=outcome_evaluation.symbol,
+        prediction_type=target.prediction_type,
+        horizon=target.horizon,
+        direction=target.direction or Direction.UNKNOWN,
+        created_at=created_at,
+        prior_run_id=None,
+        outcome_id=outcome.outcome_id,
+        outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
+        outcome_status=outcome.status,
+        outcome_evaluation_status=outcome_evaluation.status,
+        quality_score=outcome_evaluation.quality_score,
+        outcome_evidence_ids=outcome_evidence_ids,
+        artifact_ids=artifact_ids,
+        evidence_aging_records=phase7_records.evidence_aging_records,
+        artifact_freshness_reviews=phase7_records.artifact_freshness_reviews,
+        source_calibration_artifact_ids=(),
+        limitations=limitations,
+        metadata={
+            "target_id": target.target_id,
+            "source_artifact_id": source.artifact.artifact_id,
+            "source_artifact_path": source.artifact_path.as_posix(),
+        },
+    )
+
+
+def _evaluation_tool_run_id(
+    *,
+    tool_name: str,
+    run_id: str,
+    created_at: datetime,
+    material: Sequence[str],
+) -> str:
+    resolved_material = "|".join((tool_name, run_id, created_at.isoformat(), *material))
+    return (
+        f"tool-{slug(tool_name)}-{slug(run_id, allow_file_safe_punctuation=True)}-"
+        f"{digest(resolved_material)[:8]}"
+    )
+
+
+def _evaluation_artifact_id(
+    *,
+    prefix: str,
+    run_id: str,
+    created_at: datetime,
+    material: Sequence[str],
+) -> str:
+    resolved_material = "|".join((prefix, run_id, created_at.isoformat(), *material))
+    return (
+        f"artifact-{prefix}-{slug(run_id, allow_file_safe_punctuation=True)}-"
+        f"{digest(resolved_material)[:8]}"
+    )
+
+
 __all__ = [
+    "EVALUATION_ABLATION_TOOL_NAME",
+    "EVALUATION_CALIBRATION_DRIFT_TOOL_NAME",
+    "EVALUATION_CALIBRATION_TOOL_NAME",
+    "EVALUATION_INSPECT_TOOL_NAME",
+    "EVALUATION_LOAD_OUTCOMES_TOOL_NAME",
+    "EVALUATION_MATERIALIZE_OUTCOME_TOOL_NAME",
+    "EVALUATION_OUTCOME_SUMMARY_TOOL_NAME",
+    "EVALUATION_PROVIDER_PLAYBOOK_TOOL_NAME",
+    "EVALUATION_SOURCE_RELIABILITY_TOOL_NAME",
+    "EVALUATION_STALE_ARTIFACTS_TOOL_NAME",
+    "EVALUATION_WALK_FORWARD_TOOL_NAME",
     "PHASE6_ABLATION_TOOL_ID",
     "PHASE6_CALIBRATION_TOOL_ID",
     "PHASE6_INSPECT_TOOL_ID",

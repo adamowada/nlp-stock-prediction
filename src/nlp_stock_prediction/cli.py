@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from collections.abc import Sequence
@@ -11,6 +12,8 @@ from pathlib import Path
 
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.environment import load_local_dotenv
+from nlp_stock_prediction.evaluation.calibration import DEFAULT_CALIBRATION_BIN_EDGES
+from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
 from nlp_stock_prediction.pipeline import generate_daily_report
 
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
@@ -26,6 +29,16 @@ Configuration:
   A local .env file is loaded automatically without overriding exported shell variables.
   Keep provider credentials in environment variables or ignored local .env files;
   see docs/configuration.md.
+"""
+_EVALUATION_EPILOG = """Examples:
+  python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 \\
+    inspect --run-id phase4-msft-2026-05-14
+  python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 \\
+    calibration --run-id phase4-msft-2026-05-14 --cohort-id msft-swing \\
+    --as-of 2026-05-22T00:00:00+00:00 --artifact-root reports/phase4-msft-2026-05-14/audit
+
+Evaluation commands read an explicit SQLite run database and require --run-id.
+Commands that write audit artifacts require --artifact-root and use the repository write policy.
 """
 
 
@@ -97,7 +110,160 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use live providers and public-source adapters without fixture fallback.",
     )
+    _add_evaluation_parser(subparsers)
     return parser
+
+
+def _add_evaluation_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    evaluation_parser = subparsers.add_parser(
+        "evaluation",
+        help="Inspect and harden persisted prediction evaluations.",
+        description=("Run public evaluation workflows over an existing research SQLite database."),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_EVALUATION_EPILOG,
+    )
+    evaluation_parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=Path.cwd(),
+        help="Repository root used for write-policy checks. Defaults to the current directory.",
+    )
+    evaluation_parser.add_argument(
+        "--database",
+        required=True,
+        type=Path,
+        help="Existing research SQLite database path, relative to --repo-root unless absolute.",
+    )
+    evaluation_subparsers = evaluation_parser.add_subparsers(
+        dest="evaluation_command",
+        required=True,
+    )
+
+    inspect_parser = evaluation_subparsers.add_parser(
+        "inspect",
+        help="Inspect persisted evaluation counts for one run.",
+    )
+    _add_run_id(inspect_parser)
+
+    materialize_parser = evaluation_subparsers.add_parser(
+        "materialize-outcome",
+        help="Materialize one outcome from real post-window market data.",
+    )
+    _add_run_id(materialize_parser)
+    materialize_parser.add_argument("--candidate-id", required=True)
+    materialize_parser.add_argument("--point-in-time-cutoff", required=True)
+    materialize_parser.add_argument("--evaluation-window-start", required=True)
+    materialize_parser.add_argument("--evaluation-window-end", required=True)
+    _add_artifact_root(materialize_parser)
+    materialize_parser.add_argument("--report-date")
+    materialize_parser.add_argument("--market-artifact-id", action="append", default=[])
+    materialize_parser.add_argument("--created-at")
+    materialize_parser.add_argument("--evaluated-at")
+
+    load_parser = evaluation_subparsers.add_parser(
+        "load-outcomes",
+        help="Load persisted outcome-evaluation artifacts for one run.",
+    )
+    _add_run_id(load_parser)
+
+    outcome_summary_parser = evaluation_subparsers.add_parser(
+        "outcome-summary",
+        help="Write outcome review summary artifacts for one run.",
+    )
+    _add_run_id(outcome_summary_parser)
+    _add_artifact_root(outcome_summary_parser)
+    outcome_summary_parser.add_argument("--created-at")
+
+    stale_artifacts_parser = evaluation_subparsers.add_parser(
+        "stale-artifacts",
+        help="Write artifact freshness reviews for one run.",
+    )
+    _add_run_id(stale_artifacts_parser)
+    _add_artifact_root(stale_artifacts_parser)
+    stale_artifacts_parser.add_argument("--reviewed-at")
+
+    source_reliability_parser = evaluation_subparsers.add_parser(
+        "source-reliability",
+        help="Write source reliability notes for stored live evidence.",
+    )
+    _add_run_id(source_reliability_parser)
+    _add_artifact_root(source_reliability_parser)
+    source_reliability_parser.add_argument("--created-at")
+
+    provider_playbook_parser = evaluation_subparsers.add_parser(
+        "provider-playbook",
+        help="Write provider replacement playbooks.",
+    )
+    _add_run_id(provider_playbook_parser)
+    _add_artifact_root(provider_playbook_parser)
+    provider_playbook_parser.add_argument("--created-at")
+
+    calibration_parser = evaluation_subparsers.add_parser(
+        "calibration",
+        help="Write calibration reliability bins from stored outcomes.",
+    )
+    _add_run_id(calibration_parser)
+    _add_artifact_root(calibration_parser)
+    calibration_parser.add_argument("--cohort-id", required=True)
+    calibration_parser.add_argument("--as-of", required=True)
+    calibration_parser.add_argument("--bin-edge", dest="bin_edges", action="append", type=float)
+    calibration_parser.add_argument("--family", dest="families", action="append")
+    calibration_parser.add_argument("--prediction-type")
+    calibration_parser.add_argument("--horizon")
+
+    walk_forward_parser = evaluation_subparsers.add_parser(
+        "walk-forward",
+        help="Write chronological walk-forward folds from stored outcomes.",
+    )
+    _add_run_id(walk_forward_parser)
+    _add_artifact_root(walk_forward_parser)
+    walk_forward_parser.add_argument("--cohort-id", required=True)
+    walk_forward_parser.add_argument("--point-in-time-cutoff", required=True)
+    walk_forward_parser.add_argument("--minimum-train-size", required=True, type=int)
+    walk_forward_parser.add_argument("--test-size", type=int, default=1)
+    walk_forward_parser.add_argument("--step-size", type=int, default=1)
+    walk_forward_parser.add_argument("--prediction-type")
+    walk_forward_parser.add_argument("--horizon")
+
+    ablation_parser = evaluation_subparsers.add_parser(
+        "ablation",
+        help="Write signal-family ablation slices from stored outcomes.",
+    )
+    _add_run_id(ablation_parser)
+    _add_artifact_root(ablation_parser)
+    ablation_parser.add_argument("--cohort-id", required=True)
+    ablation_parser.add_argument("--point-in-time-cutoff", required=True)
+    ablation_parser.add_argument("--family", dest="families", action="append")
+    ablation_parser.add_argument("--prediction-type")
+    ablation_parser.add_argument("--horizon")
+
+    drift_parser = evaluation_subparsers.add_parser(
+        "calibration-drift",
+        help="Write a calibration drift check comparing two calibration summaries.",
+    )
+    _add_run_id(drift_parser)
+    _add_artifact_root(drift_parser)
+    drift_parser.add_argument("--prior-calibration-id", required=True)
+    drift_parser.add_argument("--current-calibration-id", required=True)
+    drift_parser.add_argument("--as-of", required=True)
+    drift_parser.add_argument("--signal-family")
+    drift_parser.add_argument("--min-resolved-count", type=int, default=10)
+    drift_parser.add_argument("--watch-delta", type=float, default=0.05)
+    drift_parser.add_argument("--degraded-delta", type=float, default=0.10)
+    drift_parser.add_argument("--improved-delta", type=float, default=0.10)
+
+
+def _add_run_id(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--run-id", required=True, help="Research run ID to evaluate.")
+
+
+def _add_artifact_root(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--artifact-root",
+        required=True,
+        type=Path,
+        help="Audit artifact root to write under; checked against the repository write policy.",
+    )
 
 
 def build_research_config(args: argparse.Namespace) -> RunConfig:
@@ -111,6 +277,113 @@ def build_research_config(args: argparse.Namespace) -> RunConfig:
         source_mode="offline" if args.offline else "live",
         live_providers=args.live,
     )
+
+
+def build_evaluation_service(args: argparse.Namespace) -> Phase6Service:
+    repo_root = args.repo_root.resolve()
+    database_path = args.database if args.database.is_absolute() else repo_root / args.database
+    if not database_path.exists():
+        raise ValueError(
+            "--database must reference an existing research SQLite database; "
+            f"not found: {database_path}"
+        )
+    return Phase6Service(repo_root=repo_root, database_path=database_path)
+
+
+def run_evaluation_command(args: argparse.Namespace) -> int:
+    service = build_evaluation_service(args)
+    command = args.evaluation_command
+    if command == "inspect":
+        result = service.evaluation_inspect(run_id=args.run_id)
+    elif command == "materialize-outcome":
+        result = service.evaluation_materialize_outcome(
+            run_id=args.run_id,
+            candidate_id=args.candidate_id,
+            point_in_time_cutoff=args.point_in_time_cutoff,
+            evaluation_window_start=args.evaluation_window_start,
+            evaluation_window_end=args.evaluation_window_end,
+            artifact_dir=args.artifact_root.as_posix(),
+            report_date=args.report_date,
+            market_artifact_ids=tuple(args.market_artifact_id),
+            created_at=args.created_at,
+            evaluated_at=args.evaluated_at,
+        )
+    elif command == "load-outcomes":
+        result = service.evaluation_load_outcomes(run_id=args.run_id)
+    elif command == "outcome-summary":
+        result = service.evaluation_outcome_summary(
+            run_id=args.run_id,
+            artifact_dir=args.artifact_root.as_posix(),
+            created_at=args.created_at,
+        )
+    elif command == "stale-artifacts":
+        result = service.evaluation_stale_artifacts(
+            run_id=args.run_id,
+            artifact_dir=args.artifact_root.as_posix(),
+            reviewed_at=args.reviewed_at,
+        )
+    elif command == "source-reliability":
+        result = service.evaluation_source_reliability(
+            run_id=args.run_id,
+            artifact_dir=args.artifact_root.as_posix(),
+            created_at=args.created_at,
+        )
+    elif command == "provider-playbook":
+        result = service.evaluation_provider_playbook(
+            run_id=args.run_id,
+            artifact_dir=args.artifact_root.as_posix(),
+            created_at=args.created_at,
+        )
+    elif command == "calibration":
+        result = service.evaluation_calibration(
+            run_id=args.run_id,
+            cohort_id=args.cohort_id,
+            as_of=args.as_of,
+            artifact_dir=args.artifact_root.as_posix(),
+            bin_edges=tuple(args.bin_edges) if args.bin_edges else DEFAULT_CALIBRATION_BIN_EDGES,
+            families=args.families,
+            prediction_type=args.prediction_type,
+            horizon=args.horizon,
+        )
+    elif command == "walk-forward":
+        result = service.evaluation_walk_forward(
+            run_id=args.run_id,
+            cohort_id=args.cohort_id,
+            point_in_time_cutoff=args.point_in_time_cutoff,
+            minimum_train_size=args.minimum_train_size,
+            artifact_dir=args.artifact_root.as_posix(),
+            test_size=args.test_size,
+            step_size=args.step_size,
+            prediction_type=args.prediction_type,
+            horizon=args.horizon,
+        )
+    elif command == "ablation":
+        result = service.evaluation_ablation(
+            run_id=args.run_id,
+            cohort_id=args.cohort_id,
+            point_in_time_cutoff=args.point_in_time_cutoff,
+            artifact_dir=args.artifact_root.as_posix(),
+            families=args.families,
+            prediction_type=args.prediction_type,
+            horizon=args.horizon,
+        )
+    elif command == "calibration-drift":
+        result = service.evaluation_calibration_drift(
+            run_id=args.run_id,
+            prior_calibration_id=args.prior_calibration_id,
+            current_calibration_id=args.current_calibration_id,
+            as_of=args.as_of,
+            artifact_dir=args.artifact_root.as_posix(),
+            signal_family=args.signal_family,
+            min_resolved_count=args.min_resolved_count,
+            watch_delta=args.watch_delta,
+            degraded_delta=args.degraded_delta,
+            improved_delta=args.improved_delta,
+        )
+    else:  # pragma: no cover - argparse constrains the command set.
+        raise ValueError(f"unknown evaluation command: {command}")
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -130,12 +403,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Wrote JSON report: {bundle.json_path}")
         print(f"Wrote audit artifacts: {bundle.audit_dir}")
         return 0
+    if args.command == "evaluation":
+        try:
+            return run_evaluation_command(args)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
     parser.error(f"unknown command: {args.command}")
 
 
 __all__ = [
     "CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE",
+    "build_evaluation_service",
     "build_parser",
     "build_research_config",
     "main",
+    "run_evaluation_command",
 ]

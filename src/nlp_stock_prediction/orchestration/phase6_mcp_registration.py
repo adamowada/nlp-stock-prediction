@@ -1,4 +1,4 @@
-"""FastMCP registration adapter for Phase 6 evaluation and calibration tools."""
+"""FastMCP registration adapter for public evaluation tools."""
 
 from __future__ import annotations
 
@@ -10,21 +10,22 @@ from nlp_stock_prediction.orchestration.phase6_service import (
     build_phase6_tool_registry,
 )
 
-PHASE6_MCP_TOOL_NAMES: tuple[str, ...] = (
-    "list_phase6_tool_plan",
+EVALUATION_MCP_TOOL_NAMES: tuple[str, ...] = (
+    "list_evaluation_tool_plan",
     *(tool.tool_name for tool in build_phase6_tool_registry().specs()),
 )
+PHASE6_MCP_TOOL_NAMES = EVALUATION_MCP_TOOL_NAMES
 
 
 def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
-    """Register Phase 6 tools on a FastMCP-compatible server."""
+    """Register public evaluation tools on a FastMCP-compatible server."""
 
-    def list_phase6_tool_plan() -> dict[str, object]:
-        """List the real Phase 6 tools Codex should call."""
+    def list_evaluation_tool_plan() -> dict[str, object]:
+        """List the real public evaluation tools Codex should call."""
 
-        return dict(service.list_phase6_tool_plan())
+        return dict(service.list_evaluation_tool_plan())
 
-    def phase7_live_outcome_materialization(
+    def evaluation_materialize_outcome(
         run_id: str,
         candidate_id: str,
         point_in_time_cutoff: str,
@@ -39,7 +40,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         """Materialize an outcome from real post-window market data."""
 
         return dict(
-            service.phase7_live_outcome_materialization(
+            service.evaluation_materialize_outcome(
                 run_id=run_id,
                 candidate_id=candidate_id,
                 point_in_time_cutoff=point_in_time_cutoff,
@@ -53,57 +54,72 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
             )
         )
 
-    def phase6_point_in_time_outcome_evaluation(
-        run_id: str,
-        candidate_id: str,
-        point_in_time_cutoff: str,
-        evaluation_window_start: str,
-        evaluation_window_end: str,
-        artifact_dir: str | None = None,
-        report_date: str | None = None,
-        status: str | None = None,
-        observed_result: str | None = None,
-        observed_at: str | None = None,
-        result_summary: str | None = None,
-        result_value: float | None = None,
-        baseline_value: float | None = None,
-        outcome_evidence_ids: list[str] | None = None,
-        market_artifact_ids: list[str] | None = None,
-        limitations: list[str] | None = None,
-        created_at: str | None = None,
-        evaluated_at: str | None = None,
-    ) -> dict[str, object]:
-        """Persist a point-in-time outcome evaluation for a stored prediction candidate."""
-
-        return dict(
-            service.phase6_point_in_time_outcome_evaluation(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                point_in_time_cutoff=point_in_time_cutoff,
-                evaluation_window_start=evaluation_window_start,
-                evaluation_window_end=evaluation_window_end,
-                artifact_dir=artifact_dir,
-                report_date=report_date,
-                status=status,
-                observed_result=observed_result,
-                observed_at=observed_at,
-                result_summary=result_summary,
-                result_value=result_value,
-                baseline_value=baseline_value,
-                outcome_evidence_ids=() if outcome_evidence_ids is None else outcome_evidence_ids,
-                market_artifact_ids=() if market_artifact_ids is None else market_artifact_ids,
-                limitations=() if limitations is None else limitations,
-                created_at=created_at,
-                evaluated_at=evaluated_at,
-            )
-        )
-
-    def phase6_load_outcome_evaluations(run_id: str) -> dict[str, object]:
+    def evaluation_load_outcomes(run_id: str) -> dict[str, object]:
         """Load persisted outcome-evaluation artifacts for a research run."""
 
-        return dict(service.phase6_load_outcome_evaluations(run_id=run_id))
+        return dict(service.evaluation_load_outcomes(run_id=run_id))
 
-    def phase6_signal_family_ablation(
+    def evaluation_outcome_summary(
+        run_id: str,
+        artifact_dir: str | None = None,
+        created_at: str | None = None,
+    ) -> dict[str, object]:
+        """Persist cross-run outcome review summaries from stored outcomes."""
+
+        return dict(
+            service.evaluation_outcome_summary(
+                run_id=run_id,
+                artifact_dir=artifact_dir,
+                created_at=created_at,
+            )
+        )
+
+    def evaluation_stale_artifacts(
+        run_id: str,
+        artifact_dir: str | None = None,
+        reviewed_at: str | None = None,
+    ) -> dict[str, object]:
+        """Persist artifact freshness reviews for a research run."""
+
+        return dict(
+            service.evaluation_stale_artifacts(
+                run_id=run_id,
+                artifact_dir=artifact_dir,
+                reviewed_at=reviewed_at,
+            )
+        )
+
+    def evaluation_source_reliability(
+        run_id: str,
+        artifact_dir: str | None = None,
+        created_at: str | None = None,
+    ) -> dict[str, object]:
+        """Persist source reliability notes from stored live evidence."""
+
+        return dict(
+            service.evaluation_source_reliability(
+                run_id=run_id,
+                artifact_dir=artifact_dir,
+                created_at=created_at,
+            )
+        )
+
+    def evaluation_provider_playbook(
+        run_id: str,
+        artifact_dir: str | None = None,
+        created_at: str | None = None,
+    ) -> dict[str, object]:
+        """Persist provider replacement playbooks."""
+
+        return dict(
+            service.evaluation_provider_playbook(
+                run_id=run_id,
+                artifact_dir=artifact_dir,
+                created_at=created_at,
+            )
+        )
+
+    def evaluation_ablation(
         run_id: str,
         cohort_id: str,
         point_in_time_cutoff: str,
@@ -115,7 +131,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         """Persist signal-family ablation metrics from stored outcome evaluations."""
 
         return dict(
-            service.phase6_signal_family_ablation(
+            service.evaluation_ablation(
                 run_id=run_id,
                 cohort_id=cohort_id,
                 point_in_time_cutoff=point_in_time_cutoff,
@@ -126,7 +142,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
             )
         )
 
-    def phase6_walk_forward_evaluation(
+    def evaluation_walk_forward(
         run_id: str,
         cohort_id: str,
         point_in_time_cutoff: str,
@@ -140,7 +156,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         """Persist chronological walk-forward folds from stored outcome evaluations."""
 
         return dict(
-            service.phase6_walk_forward_evaluation(
+            service.evaluation_walk_forward(
                 run_id=run_id,
                 cohort_id=cohort_id,
                 point_in_time_cutoff=point_in_time_cutoff,
@@ -153,7 +169,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
             )
         )
 
-    def phase6_calibration_summary(
+    def evaluation_calibration(
         run_id: str,
         cohort_id: str,
         as_of: str,
@@ -166,7 +182,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         """Persist calibration reliability bins from stored outcome evaluations."""
 
         return dict(
-            service.phase6_calibration_summary(
+            service.evaluation_calibration(
                 run_id=run_id,
                 cohort_id=cohort_id,
                 as_of=as_of,
@@ -180,23 +196,56 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
             )
         )
 
-    def inspect_phase6_run(run_id: str) -> dict[str, object]:
-        """Inspect stored Phase 6 counts for verification."""
+    def evaluation_calibration_drift(
+        run_id: str,
+        prior_calibration_id: str,
+        current_calibration_id: str,
+        as_of: str,
+        artifact_dir: str | None = None,
+        signal_family: str | None = None,
+        min_resolved_count: int = 10,
+        watch_delta: float = 0.05,
+        degraded_delta: float = 0.10,
+        improved_delta: float = 0.10,
+    ) -> dict[str, object]:
+        """Persist a calibration drift check for two stored calibration summaries."""
 
-        return dict(service.inspect_phase6_run(run_id=run_id))
+        return dict(
+            service.evaluation_calibration_drift(
+                run_id=run_id,
+                prior_calibration_id=prior_calibration_id,
+                current_calibration_id=current_calibration_id,
+                as_of=as_of,
+                artifact_dir=artifact_dir,
+                signal_family=signal_family,
+                min_resolved_count=min_resolved_count,
+                watch_delta=watch_delta,
+                degraded_delta=degraded_delta,
+                improved_delta=improved_delta,
+            )
+        )
+
+    def evaluation_inspect(run_id: str) -> dict[str, object]:
+        """Inspect stored evaluation counts for verification."""
+
+        return dict(service.evaluation_inspect(run_id=run_id))
 
     functions = {
-        "list_phase6_tool_plan": list_phase6_tool_plan,
-        "phase7_live_outcome_materialization": phase7_live_outcome_materialization,
-        "phase6_point_in_time_outcome_evaluation": phase6_point_in_time_outcome_evaluation,
-        "phase6_load_outcome_evaluations": phase6_load_outcome_evaluations,
-        "phase6_signal_family_ablation": phase6_signal_family_ablation,
-        "phase6_walk_forward_evaluation": phase6_walk_forward_evaluation,
-        "phase6_calibration_summary": phase6_calibration_summary,
-        "inspect_phase6_run": inspect_phase6_run,
+        "list_evaluation_tool_plan": list_evaluation_tool_plan,
+        "evaluation_materialize_outcome": evaluation_materialize_outcome,
+        "evaluation_load_outcomes": evaluation_load_outcomes,
+        "evaluation_outcome_summary": evaluation_outcome_summary,
+        "evaluation_stale_artifacts": evaluation_stale_artifacts,
+        "evaluation_source_reliability": evaluation_source_reliability,
+        "evaluation_provider_playbook": evaluation_provider_playbook,
+        "evaluation_ablation": evaluation_ablation,
+        "evaluation_walk_forward": evaluation_walk_forward,
+        "evaluation_calibration": evaluation_calibration,
+        "evaluation_calibration_drift": evaluation_calibration_drift,
+        "evaluation_inspect": evaluation_inspect,
     }
-    for tool_name in PHASE6_MCP_TOOL_NAMES:
+    for tool_name in EVALUATION_MCP_TOOL_NAMES:
         server.tool()(functions[tool_name])
 
 
-__all__ = ["PHASE6_MCP_TOOL_NAMES", "register_phase6_mcp_tools"]
+__all__ = ["EVALUATION_MCP_TOOL_NAMES", "PHASE6_MCP_TOOL_NAMES", "register_phase6_mcp_tools"]
