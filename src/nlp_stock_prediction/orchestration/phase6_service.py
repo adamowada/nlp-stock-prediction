@@ -28,6 +28,13 @@ from nlp_stock_prediction.evaluation.calibration import (
     PHASE6_CALIBRATION_TOOL_VERSION,
     write_calibration_summary_artifact,
 )
+from nlp_stock_prediction.evaluation.live_outcomes import (
+    PHASE7_LIVE_OUTCOME_TOOL_NAME,
+    PHASE7_LIVE_OUTCOME_TOOL_VERSION,
+    DefaultLiveOutcomeProviderFactory,
+    LiveOutcomeProviderFactory,
+    materialize_live_prediction_outcome_artifacts,
+)
 from nlp_stock_prediction.evaluation.outcomes import (
     PHASE6_OUTCOME_TOOL_NAME,
     PHASE6_OUTCOME_TOOL_VERSION,
@@ -62,7 +69,9 @@ PHASE6_ABLATION_TOOL_ID = "phase6.signal_family_ablation"
 PHASE6_WALK_FORWARD_TOOL_ID = "phase6.walk_forward_evaluation"
 PHASE6_CALIBRATION_TOOL_ID = "phase6.calibration_summary"
 PHASE6_INSPECT_TOOL_ID = "phase6.inspect_run"
+PHASE7_LIVE_OUTCOME_MATERIALIZATION_TOOL_ID = "phase7.live_outcome_materialization"
 PHASE6_OUTCOME_EVALUATION_PUBLIC_TOOL_NAME = "phase6_point_in_time_outcome_evaluation"
+PHASE7_LIVE_OUTCOME_MATERIALIZATION_PUBLIC_TOOL_NAME = "phase7_live_outcome_materialization"
 PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_NAME = "phase6_load_outcome_evaluations"
 PHASE6_INSPECT_TOOL_NAME = "inspect_phase6_run"
 
@@ -88,8 +97,6 @@ class Phase6ToolMetadata(ContractModel):
             raise ValueError("phase6 tools cannot depend on themselves")
         if len(set(self.dependencies)) != len(self.dependencies):
             raise ValueError("phase6 tool dependencies must be unique")
-        if self.requires_network:
-            raise ValueError("phase6 evaluation tools must run from persisted research data")
         return self
 
     def as_plan_item(self) -> JsonObject:
@@ -192,6 +199,25 @@ def build_phase6_tool_registry() -> Phase6ToolRegistry:
     return Phase6ToolRegistry(
         (
             Phase6ToolMetadata(
+                tool_id=PHASE7_LIVE_OUTCOME_MATERIALIZATION_TOOL_ID,
+                tool_name=PHASE7_LIVE_OUTCOME_MATERIALIZATION_PUBLIC_TOOL_NAME,
+                tool_version=PHASE7_LIVE_OUTCOME_TOOL_VERSION,
+                stage="evaluate",
+                description=(
+                    "Fetch or reuse real post-window market data and materialize an outcome "
+                    "without caller-supplied result shortcuts."
+                ),
+                artifact_kinds=(
+                    "market_data",
+                    "prediction_outcome",
+                    "prediction_outcome_evaluation",
+                ),
+                offline_capable=False,
+                live_capable=True,
+                requires_network=True,
+                metadata={"source_tool_name": PHASE7_LIVE_OUTCOME_TOOL_NAME},
+            ),
+            Phase6ToolMetadata(
                 tool_id=PHASE6_OUTCOME_EVALUATION_TOOL_ID,
                 tool_name=PHASE6_OUTCOME_EVALUATION_PUBLIC_TOOL_NAME,
                 tool_version=PHASE6_OUTCOME_TOOL_VERSION,
@@ -279,6 +305,7 @@ class Phase6Service:
     database_path: Path = DEFAULT_RESEARCH_DATABASE_PATH
     extra_write_roots: tuple[Path, ...] = ()
     registry: Phase6ToolRegistry = field(default_factory=build_phase6_tool_registry)
+    live_outcome_provider_factory: LiveOutcomeProviderFactory | None = None
     _store: SQLiteStore = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -304,6 +331,97 @@ class Phase6Service:
 
     def list_phase6_tool_plan(self) -> JsonObject:
         return phase6_evaluation_tool_plan(self.registry)
+
+    def phase7_live_outcome_materialization(
+        self,
+        *,
+        run_id: str,
+        candidate_id: str,
+        point_in_time_cutoff: str,
+        evaluation_window_start: str,
+        evaluation_window_end: str,
+        artifact_dir: str | None = None,
+        report_date: str | None = None,
+        market_artifact_ids: Sequence[str] = (),
+        created_at: str | None = None,
+        evaluated_at: str | None = None,
+    ) -> JsonObject:
+        self._require_run(run_id)
+        resolved_created_at = (
+            None
+            if created_at is None or not created_at.strip()
+            else _parse_aware_datetime(created_at, "created_at")
+        )
+        resolved_evaluated_at = (
+            datetime.now(UTC)
+            if evaluated_at is None or not evaluated_at.strip()
+            else _parse_aware_datetime(evaluated_at, "evaluated_at")
+        )
+        result = materialize_live_prediction_outcome_artifacts(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            run_id=run_id,
+            candidate_id=candidate_id,
+            point_in_time_cutoff=_parse_aware_datetime(
+                point_in_time_cutoff,
+                "point_in_time_cutoff",
+            ),
+            evaluation_window_start=_parse_aware_datetime(
+                evaluation_window_start,
+                "evaluation_window_start",
+            ),
+            evaluation_window_end=_parse_aware_datetime(
+                evaluation_window_end,
+                "evaluation_window_end",
+            ),
+            report_date=_parse_optional_date(report_date, "report_date"),
+            market_artifact_ids=_non_empty_unique_strings(
+                market_artifact_ids,
+                "market_artifact_ids",
+            ),
+            created_at=resolved_created_at,
+            evaluated_at=resolved_evaluated_at,
+            provider_factory=(
+                self.live_outcome_provider_factory
+                or DefaultLiveOutcomeProviderFactory(
+                    cache_root=self.repo_root / "data" / "provider-cache",
+                    now=lambda: resolved_evaluated_at,
+                )
+            ),
+        )
+        return {
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "target_id": result.target.target_id,
+            "evaluation_attempt_id": result.evaluation_attempt_id,
+            "tool_run_id": result.written.tool_run_id,
+            "outcome_id": result.outcome.outcome_id,
+            "outcome_evaluation_id": result.outcome_evaluation.outcome_evaluation_id,
+            "outcome_status": result.outcome.status.value,
+            "observed_result": (
+                result.outcome.observed_result.value if result.outcome.observed_result else None
+            ),
+            "status": result.outcome_evaluation.status.value,
+            "quality_score": result.outcome_evaluation.quality_score,
+            "observed_at": (
+                None
+                if result.outcome.observed_at is None
+                else result.outcome.observed_at.isoformat()
+            ),
+            "result_value": result.outcome.result_value,
+            "baseline_value": result.outcome.baseline_value,
+            "market_artifact_ids": list(result.market_artifact_ids),
+            "outcome_evidence_ids": list(result.outcome_evidence_ids),
+            "provider_attempts": [dict(attempt) for attempt in result.provider_attempts],
+            "outcome_artifact_id": result.outcome_artifact_id,
+            "outcome_evaluation_artifact_id": result.outcome_evaluation_artifact_id,
+            "outcome_artifact_path": Path(result.written.outcome_artifact.path).as_posix(),
+            "outcome_evaluation_artifact_path": Path(
+                result.written.outcome_evaluation_artifact.path
+            ).as_posix(),
+            "limitations": list(result.outcome_evaluation.limitations),
+        }
 
     def phase6_point_in_time_outcome_evaluation(
         self,
@@ -698,6 +816,8 @@ __all__ = [
     "PHASE6_OUTCOME_EVALUATION_TOOL_ID",
     "PHASE6_STAGE_ORDER",
     "PHASE6_WALK_FORWARD_TOOL_ID",
+    "PHASE7_LIVE_OUTCOME_MATERIALIZATION_PUBLIC_TOOL_NAME",
+    "PHASE7_LIVE_OUTCOME_MATERIALIZATION_TOOL_ID",
     "Phase6OutcomeEvaluationSource",
     "Phase6Service",
     "Phase6ToolMetadata",

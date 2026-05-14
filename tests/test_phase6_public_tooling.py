@@ -272,6 +272,7 @@ def test_phase6_registry_exposes_live_evaluation_tool_suite() -> None:
     tool_names = [str(tool["tool_name"]) for tool in tools]
 
     assert tool_names == [
+        "phase7_live_outcome_materialization",
         "phase6_point_in_time_outcome_evaluation",
         "phase6_load_outcome_evaluations",
         "phase6_signal_family_ablation",
@@ -280,7 +281,16 @@ def test_phase6_registry_exposes_live_evaluation_tool_suite() -> None:
         "inspect_phase6_run",
     ]
     assert not any("dummy" in tool_name for tool_name in tool_names)
-    assert {str(tool["requires_network"]) for tool in tools} == {"False"}
+    requires_network = {str(tool["tool_name"]): bool(tool["requires_network"]) for tool in tools}
+    assert requires_network == {
+        "phase7_live_outcome_materialization": True,
+        "phase6_point_in_time_outcome_evaluation": False,
+        "phase6_load_outcome_evaluations": False,
+        "phase6_signal_family_ablation": False,
+        "phase6_walk_forward_evaluation": False,
+        "phase6_calibration_summary": False,
+        "inspect_phase6_run": False,
+    }
 
 
 @pytest.mark.unit

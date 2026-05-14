@@ -24,6 +24,35 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
 
         return dict(service.list_phase6_tool_plan())
 
+    def phase7_live_outcome_materialization(
+        run_id: str,
+        candidate_id: str,
+        point_in_time_cutoff: str,
+        evaluation_window_start: str,
+        evaluation_window_end: str,
+        artifact_dir: str | None = None,
+        report_date: str | None = None,
+        market_artifact_ids: list[str] | None = None,
+        created_at: str | None = None,
+        evaluated_at: str | None = None,
+    ) -> dict[str, object]:
+        """Materialize an outcome from real post-window market data."""
+
+        return dict(
+            service.phase7_live_outcome_materialization(
+                run_id=run_id,
+                candidate_id=candidate_id,
+                point_in_time_cutoff=point_in_time_cutoff,
+                evaluation_window_start=evaluation_window_start,
+                evaluation_window_end=evaluation_window_end,
+                artifact_dir=artifact_dir,
+                report_date=report_date,
+                market_artifact_ids=() if market_artifact_ids is None else market_artifact_ids,
+                created_at=created_at,
+                evaluated_at=evaluated_at,
+            )
+        )
+
     def phase6_point_in_time_outcome_evaluation(
         run_id: str,
         candidate_id: str,
@@ -158,6 +187,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
 
     functions = {
         "list_phase6_tool_plan": list_phase6_tool_plan,
+        "phase7_live_outcome_materialization": phase7_live_outcome_materialization,
         "phase6_point_in_time_outcome_evaluation": phase6_point_in_time_outcome_evaluation,
         "phase6_load_outcome_evaluations": phase6_load_outcome_evaluations,
         "phase6_signal_family_ablation": phase6_signal_family_ablation,

@@ -316,6 +316,9 @@ def write_point_in_time_outcome_evaluation_artifacts(
     outcome_evaluation_artifact_filename: str | None = None,
     tool_run_id: str | None = None,
     record_tool_run: bool = True,
+    evaluation_attempt_id: str | None = None,
+    outcome_id: str | None = None,
+    outcome_evaluation_id: str | None = None,
 ) -> PointInTimeOutcomeEvaluationArtifacts:
     """Write and persist point-in-time outcome and review artifacts."""
 
@@ -346,6 +349,7 @@ def write_point_in_time_outcome_evaluation_artifacts(
         outcome_evidence=validated_outcome_evidence,
         artifact_ids=observed_artifact_ids,
         limitations=limitations,
+        outcome_id=outcome_id,
         metadata={
             **({} if metadata is None else metadata),
             "target_id": target.target_id,
@@ -355,6 +359,7 @@ def write_point_in_time_outcome_evaluation_artifacts(
         target=target,
         outcome=outcome,
         evaluated_at=evaluated,
+        outcome_evaluation_id=outcome_evaluation_id,
         artifact_ids=observed_artifact_ids,
         limitations=limitations,
         metadata={
@@ -516,6 +521,7 @@ def write_point_in_time_outcome_evaluation_artifacts(
             market_artifact_ids=observed_artifact_ids,
             outcome_created_at=created,
             review_created_at=evaluated,
+            evaluation_attempt_id=evaluation_attempt_id,
         )
         return PointInTimeOutcomeEvaluationArtifacts(
             target=target,

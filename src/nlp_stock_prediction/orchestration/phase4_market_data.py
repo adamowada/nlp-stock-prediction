@@ -119,6 +119,10 @@ class Phase4MarketDataProviderTool(Protocol):
         adjusted: bool = True,
         source_url: str | Path | None = None,
         options: JsonObject | None = None,
+        tool_run_id: str | None = None,
+        artifact_id: str | None = None,
+        artifact_filename: str | None = None,
+        source_query_id: str | None = None,
     ) -> MarketDataToolResult: ...
 
 
@@ -145,6 +149,10 @@ class Phase4MarketDataTool:
         adjusted: bool = True,
         source_url: str | Path | None = None,
         options: JsonObject | None = None,
+        tool_run_id: str | None = None,
+        artifact_id: str | None = None,
+        artifact_filename: str | None = None,
+        source_query_id: str | None = None,
     ) -> MarketDataToolResult:
         normalized_symbol = _normalize_symbol(symbol)
         started_at = self.now()
@@ -157,8 +165,8 @@ class Phase4MarketDataTool:
             adjusted=adjusted,
             options={} if options is None else options,
         )
-        tool_run_id = _market_data_tool_run_id(run_id, normalized_symbol)
-        artifact_id = _market_data_artifact_id(run_id, normalized_symbol)
+        resolved_tool_run_id = tool_run_id or _market_data_tool_run_id(run_id, normalized_symbol)
+        resolved_artifact_id = artifact_id or _market_data_artifact_id(run_id, normalized_symbol)
         mode_metadata = report_data_mode_metadata_for_run_id(self.store, run_id)
         inputs: JsonObject = {
             "symbol": normalized_symbol,
@@ -172,7 +180,7 @@ class Phase4MarketDataTool:
         with safe_phase4_tool_execution(
             store=self.store,
             artifact_roots=(self.artifact_dir,),
-            tool_run_id=tool_run_id,
+            tool_run_id=resolved_tool_run_id,
             run_id=run_id,
             tool_name=PHASE4_MARKET_DATA_TOOL_NAME,
             tool_version=PHASE4_MARKET_DATA_TOOL_VERSION,
@@ -187,10 +195,11 @@ class Phase4MarketDataTool:
             retrieval_method = self.retrieval_method or retrieval_method_for_provider(
                 provider_result.provider_name
             )
-            source_query_id = _market_data_source_query_id(
+            resolved_source_query_id = source_query_id or _market_data_source_query_id(
                 run_id=run_id,
                 provider_name=provider_result.provider_name,
                 symbol=normalized_symbol,
+                request_id=request.request_id,
             )
             resolved_source_url = _source_url(
                 source_url=source_url,
@@ -204,7 +213,7 @@ class Phase4MarketDataTool:
 
             self.store.record_tool_run(
                 ToolRunRecord(
-                    tool_run_id=tool_run_id,
+                    tool_run_id=resolved_tool_run_id,
                     run_id=run_id,
                     tool_name=PHASE4_MARKET_DATA_TOOL_NAME,
                     tool_version=PHASE4_MARKET_DATA_TOOL_VERSION,
@@ -221,8 +230,8 @@ class Phase4MarketDataTool:
             )
             self.store.record_source_query(
                 SourceQueryRecord(
-                    source_query_id=source_query_id,
-                    tool_run_id=tool_run_id,
+                    source_query_id=resolved_source_query_id,
+                    tool_run_id=resolved_tool_run_id,
                     provider=provider_result.provider_name,
                     query=normalized_symbol,
                     url=resolved_source_url,
@@ -243,11 +252,11 @@ class Phase4MarketDataTool:
 
             artifact_payload = build_market_data_artifact(
                 run_id=run_id,
-                tool_run_id=tool_run_id,
-                artifact_id=artifact_id,
+                tool_run_id=resolved_tool_run_id,
+                artifact_id=resolved_artifact_id,
                 generated_at=completed_at,
                 provider_result=provider_result,
-                source_query_id=source_query_id,
+                source_query_id=resolved_source_query_id,
                 source_url=resolved_source_url,
                 retrieval_method=retrieval_method,
                 instrument_id=instrument_id,
@@ -258,13 +267,13 @@ class Phase4MarketDataTool:
                 base_dir=self.artifact_dir,
                 created_at=completed_at,
                 produced_by=PHASE4_MARKET_DATA_TOOL_NAME,
-                tool_run_id=tool_run_id,
+                tool_run_id=resolved_tool_run_id,
                 schema_version=PHASE4_MARKET_DATA_SCHEMA_VERSION,
                 default_metadata=mode_metadata,
             ).write_json(
-                artifact_id=artifact_id,
+                artifact_id=resolved_artifact_id,
                 artifact_type="market_data",
-                filename=f"market-data/{symbol_slug(normalized_symbol)}.json",
+                filename=artifact_filename or f"market-data/{symbol_slug(normalized_symbol)}.json",
                 payload=market_data_artifact_payload(artifact_payload),
                 record_count=artifact_payload.bar_count,
                 metadata={
@@ -276,7 +285,7 @@ class Phase4MarketDataTool:
                     "latest_usable_bar": (
                         calendar_date(latest_bar.timestamp).isoformat() if latest_bar else None
                     ),
-                    "source_query_id": source_query_id,
+                    "source_query_id": resolved_source_query_id,
                     "warning_count": len(warnings),
                     **_data_quality_metadata(provider_result),
                 },
@@ -285,8 +294,8 @@ class Phase4MarketDataTool:
                 provider_result=provider_result,
                 artifact=artifact,
                 artifact_payload=artifact_payload,
-                tool_run_id=tool_run_id,
-                source_query_id=source_query_id,
+                tool_run_id=resolved_tool_run_id,
+                source_query_id=resolved_source_query_id,
             )
 
 
@@ -572,8 +581,17 @@ def _market_data_artifact_id(run_id: str, symbol: str) -> str:
     return f"artifact-market-data-{stable_digest(f'{run_id}:{symbol}')}"
 
 
-def _market_data_source_query_id(*, run_id: str, provider_name: str, symbol: str) -> str:
-    return f"query-market-data-{stable_digest(f'{run_id}:{provider_name}:{symbol}')}"
+def _market_data_source_query_id(
+    *,
+    run_id: str,
+    provider_name: str,
+    symbol: str,
+    request_id: str | None = None,
+) -> str:
+    identity = f"{run_id}:{provider_name}:{symbol}"
+    if request_id:
+        identity = f"{identity}:{request_id}"
+    return f"query-market-data-{stable_digest(identity)}"
 
 
 def _normalize_symbol(symbol: str) -> str:
