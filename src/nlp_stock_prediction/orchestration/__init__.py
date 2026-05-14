@@ -15,6 +15,19 @@ from nlp_stock_prediction.orchestration.dummy import (
     generate_dummy_report_bundle,
 )
 from nlp_stock_prediction.orchestration.phase2_service import Phase2McpService
+from nlp_stock_prediction.orchestration.phase4_common import Phase4ToolResult
+from nlp_stock_prediction.orchestration.phase4_fundamentals import (
+    Phase4FundamentalsTool,
+    run_phase4_fundamentals_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_news import (
+    Phase4NewsCatalystTool,
+    run_phase4_news_catalyst_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_sector_macro import (
+    Phase4SectorMacroTool,
+    run_phase4_sector_macro_tool,
+)
 from nlp_stock_prediction.orchestration.phase4_service import (
     PHASE4_STAGE_ORDER,
     Phase4Service,
@@ -26,6 +39,10 @@ from nlp_stock_prediction.orchestration.phase4_service import (
     build_phase4_tool_registry,
     execute_phase4_tool,
     phase4_research_tool_plan,
+)
+from nlp_stock_prediction.orchestration.phase4_social import (
+    Phase4SocialEvidenceTool,
+    run_phase4_social_evidence_tool,
 )
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationExecutionError,
@@ -53,10 +70,15 @@ __all__ = [
     "OrchestrationState",
     "OrchestrationTool",
     "Phase2McpService",
+    "Phase4FundamentalsTool",
+    "Phase4NewsCatalystTool",
+    "Phase4SectorMacroTool",
     "Phase4Service",
+    "Phase4SocialEvidenceTool",
     "Phase4ToolExecutionError",
     "Phase4ToolMetadata",
     "Phase4ToolRegistry",
+    "Phase4ToolResult",
     "Phase4ToolRunContext",
     "Phase4ToolRunOutcome",
     "ReportBundle",
@@ -73,4 +95,8 @@ __all__ = [
     "execute_phase4_tool",
     "generate_dummy_report_bundle",
     "phase4_research_tool_plan",
+    "run_phase4_fundamentals_tool",
+    "run_phase4_news_catalyst_tool",
+    "run_phase4_sector_macro_tool",
+    "run_phase4_social_evidence_tool",
 ]
