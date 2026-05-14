@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from nlp_stock_prediction.contracts.instruments import Instrument
-from nlp_stock_prediction.contracts.provenance import ProviderWarning
+from nlp_stock_prediction.contracts.provenance import DataReference, ProviderWarning
 from nlp_stock_prediction.contracts.report import (
     AuditArtifact,
     AuditManifest,
@@ -24,11 +24,13 @@ class ReportView:
     candidates_by_id: dict[str, PredictionCandidate]
     provider_warnings: tuple[ProviderWarning, ...]
     audit_artifacts: tuple[AuditArtifact, ...]
+    audit_reference: DataReference | None
 
     @classmethod
     def from_report(cls, report: DailyReport) -> ReportView:
         manifest = report.audit_manifest
         audit_artifacts = manifest.artifacts if isinstance(manifest, AuditManifest) else ()
+        audit_reference = manifest if isinstance(manifest, DataReference) else None
         return cls(
             report=report,
             instruments_by_id={
@@ -41,6 +43,7 @@ class ReportView:
                 warning for health in report.provider_health for warning in health.warnings
             ),
             audit_artifacts=audit_artifacts,
+            audit_reference=audit_reference,
         )
 
     def instrument_for_section(self, section: InstrumentReportSection) -> Instrument | None:

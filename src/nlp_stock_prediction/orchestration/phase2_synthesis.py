@@ -41,7 +41,7 @@ def synthesize_prediction_candidates(
     evidence_for = tuple(
         record.evidence_id
         for record in evidence
-        if evidence_stance_from_record(record) in {"supports", "neutral"}
+        if evidence_stance_from_record(record) == "supports"
     )
     evidence_against = tuple(
         record.evidence_id

@@ -373,7 +373,7 @@ def test_public_news_provider_maps_rate_limit_transport_failure() -> None:
     assert result.warnings[0].provider_error_type == "http_error"
     assert result.health.status == ProviderStatus.RATE_LIMITED
     assert result.health.rate_limit_remaining == 0
-    assert len(transport.calls) == 1
+    assert len(transport.calls) == 3
 
 
 @pytest.mark.contract
@@ -407,7 +407,7 @@ def test_public_news_provider_maps_upstream_unavailable_transport_failure() -> N
     assert result.warnings[0].provider_status_code == 503
     assert result.warnings[0].provider_error_type == "http_error"
     assert result.health.status == ProviderStatus.FAILED
-    assert len(transport.calls) == 1
+    assert len(transport.calls) == 3
 
 
 @pytest.mark.contract

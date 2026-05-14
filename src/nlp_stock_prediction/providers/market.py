@@ -124,6 +124,7 @@ class AlphaVantageMarketDataProvider:
                 fetched_at=fetched_at,
                 cache=self._cache,
                 timeout=self._timeout,
+                cacheable_payload=_is_alpha_vantage_cacheable,
             )
             snapshot = self._map_daily_payload(ticker, fetched.payload)
         except ProviderTransportError as exc:
@@ -237,18 +238,23 @@ class AlphaVantageMarketDataProvider:
                 raise MalformedProviderResponse(
                     "Alpha Vantage daily bar has missing or invalid OHLCV fields"
                 )
-            bars.append(
-                PriceBar(
-                    ticker=ticker,
-                    timestamp=bar_date,
-                    open=open_price or Decimal("0"),
-                    high=high or Decimal("0"),
-                    low=low or Decimal("0"),
-                    close=close or Decimal("0"),
-                    adjusted_close=adjusted_close,
-                    volume=volume,
+            try:
+                bars.append(
+                    PriceBar(
+                        ticker=ticker,
+                        timestamp=bar_date,
+                        open=open_price or Decimal("0"),
+                        high=high or Decimal("0"),
+                        low=low or Decimal("0"),
+                        close=close or Decimal("0"),
+                        adjusted_close=adjusted_close,
+                        volume=volume,
+                    )
                 )
-            )
+            except ValueError as exc:
+                raise MalformedProviderResponse(
+                    "Alpha Vantage daily bar has invalid OHLCV price relationships"
+                ) from exc
         return MarketSnapshot(
             ticker=ticker,
             bars=tuple(bars),
@@ -321,6 +327,7 @@ class AlphaVantageFundamentalsProvider:
                 fetched_at=fetched_at,
                 cache=self._cache,
                 timeout=self._timeout,
+                cacheable_payload=_is_alpha_vantage_cacheable,
             )
             snapshot = self._map_overview_payload(ticker, fetched)
         except ProviderTransportError as exc:
@@ -435,6 +442,10 @@ def _raise_for_alpha_vantage_message(payload: dict[str, object]) -> None:
         raise AlphaVantageRateLimitNotice("Alpha Vantage response indicates rate limit or notice")
     if "Error Message" in payload:
         raise MalformedProviderResponse("Alpha Vantage response contains an error message")
+
+
+def _is_alpha_vantage_cacheable(payload: dict[str, object]) -> bool:
+    return not any(key in payload for key in ("Note", "Information", "Error Message"))
 
 
 def _liquidity_metrics(bars: list[PriceBar]) -> tuple[ProviderMetric, ...]:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import cast
 
@@ -11,9 +11,11 @@ from nlp_stock_prediction.contracts.enums import (
     CredentialState,
     Direction,
     PredictionStatus,
+    ProviderStatus,
     TimeHorizon,
 )
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
+from nlp_stock_prediction.contracts.instruments import Instrument
 from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderHealth
 from nlp_stock_prediction.contracts.report import (
     AuditArtifact,
@@ -23,6 +25,7 @@ from nlp_stock_prediction.contracts.report import (
     InstrumentReportSection,
     PredictionCandidate,
 )
+from nlp_stock_prediction.instruments.repository import instrument_from_record
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex, ArtifactType
 from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
@@ -54,7 +57,7 @@ def render_phase2_prediction_report(
     now = utc_now()
     evidence_records = store.list_evidence_for_run(run.run_id)
     evidence_sources = tuple(source_evidence_from_record(record) for record in evidence_records)
-    instrument = phase2_instrument(symbol.upper(), now)
+    instrument = _primary_instrument(store, symbol=symbol, fallback_generated_at=now)
     candidates = store.list_prediction_candidates_for_run(run.run_id)
     prediction_candidates = tuple(
         _report_candidate(candidate, evidence_sources) for candidate in candidates
@@ -89,6 +92,8 @@ def render_phase2_prediction_report(
         _audit_artifact_from_record(record, repo_root)
         for record in store.list_artifacts_for_run(run.run_id)
     )
+    has_codex_search_evidence = bool(evidence_sources)
+    provider_status = ProviderStatus.OK if has_codex_search_evidence else ProviderStatus.EMPTY
     report = DailyReport(
         schema_version="daily-report.v2",
         run_id=run.run_id,
@@ -101,12 +106,17 @@ def render_phase2_prediction_report(
         instruments=(instrument,),
         data_freshness=DataFreshnessSummary(
             as_of=now,
-            summary="Codex smoke used live web search plus deterministic dummy tools.",
+            summary=(
+                "Codex smoke used live web search plus deterministic dummy tools."
+                if has_codex_search_evidence
+                else "Codex smoke has no imported live-search evidence for this run."
+            ),
+            missing_provider_names=() if has_codex_search_evidence else ("codex-web-search",),
         ),
         provider_health=(
             ProviderHealth(
                 provider_name="codex-web-search",
-                status="ok",
+                status=provider_status,
                 checked_at=now,
                 credential_state=CredentialState.NOT_REQUIRED,
             ),
@@ -153,19 +163,22 @@ def render_phase2_prediction_report(
         tool_run_id=report_tool_run_id,
         schema_version="phase2-report.v1",
     )
-    report_index.write_text(
+    markdown_artifact = report_index.write_text(
         artifact_id=f"artifact-report-md-{stable_digest(run.run_id)}",
         artifact_type="markdown_report",
         filename=paths.report_path.name,
         content=render_markdown_report(report),
         metadata={"run_id": run.run_id},
     )
-    report_index.write_text(
+    json_artifact = report_index.write_text(
         artifact_id=f"artifact-report-json-{stable_digest(run.run_id)}",
         artifact_type="json_report",
         filename=paths.json_path.name,
         content=render_json_report(report),
         metadata={"run_id": run.run_id},
+    )
+    final_manifest = manifest.model_copy(
+        update={"artifacts": (*manifest.artifacts, markdown_artifact, json_artifact)}
     )
     ArtifactIndex.for_directory(
         store=store,
@@ -179,7 +192,7 @@ def render_phase2_prediction_report(
         artifact_id=f"artifact-audit-manifest-{stable_digest(run.run_id)}",
         artifact_type="audit_manifest",
         filename=paths.audit_manifest_path.name,
-        payload=cast(JsonObject, manifest.model_dump(mode="json")),
+        payload=cast(JsonObject, final_manifest.model_dump(mode="json")),
         metadata={"run_id": run.run_id},
     )
     store.upsert_research_run(
@@ -199,6 +212,19 @@ def render_phase2_prediction_report(
         "json_path": paths.json_path.as_posix(),
         "audit_manifest_path": paths.audit_manifest_path.as_posix(),
     }
+
+
+def _primary_instrument(
+    store: SQLiteStore,
+    *,
+    symbol: str,
+    fallback_generated_at: datetime,
+) -> Instrument:
+    instrument_id = f"instrument:codex:{symbol.upper()}"
+    record = store.get_instrument(instrument_id)
+    if record is not None:
+        return instrument_from_record(record)
+    return phase2_instrument(symbol.upper(), fallback_generated_at)
 
 
 def _report_candidate(

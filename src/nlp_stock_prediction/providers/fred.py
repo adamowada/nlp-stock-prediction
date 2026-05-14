@@ -127,13 +127,19 @@ class FredMacroProvider:
                 warnings.append(stale_warning)
         if not series:
             if warnings:
+                status = (
+                    ProviderStatus.RATE_LIMITED
+                    if all(warning.code == WarningCode.RATE_LIMITED for warning in warnings)
+                    else ProviderStatus.FAILED
+                )
                 return provider_result(
                     provider_name=self.provider_name,
-                    status=ProviderStatus.FAILED,
+                    status=status,
                     request=request,
                     fetched_at=fetched_at,
                     credential_state=CredentialState.CONFIGURED,
                     warnings=tuple(warnings),
+                    rate_limit_remaining=0 if status == ProviderStatus.RATE_LIMITED else None,
                 )
             return no_data_result(
                 provider_name=self.provider_name,

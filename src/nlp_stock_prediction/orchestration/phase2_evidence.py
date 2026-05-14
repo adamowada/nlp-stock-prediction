@@ -80,7 +80,12 @@ def record_codex_search_evidence(
         permalink=url,
         matched_tickers=((source_ticker,) if source_ticker else ()),
         provenance=provenance,
-        metadata={"codex_search": True, "stance": normalized_stance},
+        metadata={
+            "codex_search": True,
+            "stance": normalized_stance,
+            "extraction_confidence": 0.7,
+            "source_reliability": "codex_search_source",
+        },
     )
     payload: JsonObject = {
         "schema_version": "codex-search-evidence.v1",
@@ -162,7 +167,15 @@ def record_codex_search_evidence(
 def source_evidence_from_record(record: EvidenceRecord) -> SourceEvidence:
     source_evidence = record.metadata.get("source_evidence")
     if isinstance(source_evidence, dict):
-        return SourceEvidence.model_validate(source_evidence)
+        source_evidence_payload = dict(source_evidence)
+        raw_metadata = source_evidence.get("metadata")
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        if record.extraction_confidence is not None:
+            metadata["extraction_confidence"] = record.extraction_confidence
+        if record.source_reliability is not None:
+            metadata["source_reliability"] = record.source_reliability
+        source_evidence_payload["metadata"] = metadata
+        return SourceEvidence.model_validate(source_evidence_payload)
     provenance = SourceProvenance.model_validate(record.provenance_json)
     raw_ticker = (
         record.instruments[0].removeprefix("instrument:codex:") if record.instruments else None
@@ -177,7 +190,11 @@ def source_evidence_from_record(record: EvidenceRecord) -> SourceEvidence:
         permalink=record.url,
         matched_tickers=((ticker,) if ticker else ()),
         provenance=provenance,
-        metadata=record.metadata,
+        metadata={
+            **record.metadata,
+            "extraction_confidence": record.extraction_confidence,
+            "source_reliability": record.source_reliability,
+        },
     )
 
 

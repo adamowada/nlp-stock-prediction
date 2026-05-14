@@ -168,6 +168,25 @@ class APNewsProvider:
                 error=exc,
                 credential_state=CredentialState.NOT_REQUIRED,
             )
+        except MalformedProviderResponse as exc:
+            warning = provider_warning(
+                provider_name=self.provider_name,
+                code=WarningCode.SCRAPING_DRIFT,
+                severity=WarningSeverity.ERROR,
+                message=str(exc),
+                occurred_at=fetched_at,
+                source_url=self._hub_url,
+                metadata={"validation": "malformed_ap_hub"},
+            )
+            return provider_result(
+                provider_name=self.provider_name,
+                status=ProviderStatus.MALFORMED,
+                request=request,
+                fetched_at=fetched_at,
+                credential_state=CredentialState.NOT_REQUIRED,
+                warnings=(warning,),
+                cache_key=hub_cache_key,
+            )
 
         try:
             article_links = _extract_hub_article_links(hub_fetch.text, base_url=self._hub_url)
@@ -272,8 +291,7 @@ class APNewsProvider:
                 )
                 continue
 
-            combined_text = f"{article.headline} {article.text}"
-            matched_tickers, spans = find_ticker_matches(combined_text, request.tickers)
+            matched_tickers, spans = find_ticker_matches(article.text, request.tickers)
             if request.tickers and not matched_tickers:
                 unmatched_article_count += 1
                 continue

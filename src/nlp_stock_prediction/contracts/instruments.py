@@ -214,15 +214,16 @@ class InstrumentResolution(ContractModel):
                 raise ValueError("selected_instrument_id must reference one of the matches")
         if self.status == InstrumentResolutionStatus.AMBIGUOUS and len(self.matches) < 2:
             raise ValueError("ambiguous instrument resolutions require at least two matches")
-        if (
-            self.status
-            in {
-                InstrumentResolutionStatus.UNSUPPORTED,
-                InstrumentResolutionStatus.UNAVAILABLE,
-            }
-            and self.selected_instrument_id is not None
-        ):
-            raise ValueError("unsupported or unavailable resolutions cannot select an instrument")
+        if self.status in {
+            InstrumentResolutionStatus.UNSUPPORTED,
+            InstrumentResolutionStatus.UNAVAILABLE,
+        }:
+            if self.selected_instrument_id is not None:
+                raise ValueError(
+                    "unsupported or unavailable resolutions cannot select an instrument"
+                )
+            if self.matches:
+                raise ValueError("unsupported or unavailable resolutions cannot include matches")
         return self
 
 

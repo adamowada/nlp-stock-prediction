@@ -159,6 +159,7 @@ def build_timesfm_dataset(
         for window, split in zip(raw_windows, split_assignments, strict=True)
         if split is not None
     )
+    _validate_split_purges(windows)
     dataset_hash = _hash_dataset(
         ticker=ticker,
         target_field=target_field,
@@ -242,7 +243,7 @@ def _split_windows(
     config: TimesFmDatasetConfig,
 ) -> tuple[tuple[TimesFmSplitName | None, ...], int]:
     total_windows = len(windows)
-    purge_gap = config.horizon_length if config.purge_between_splits else 0
+    purge_gap = _purge_gap_window_count(config)
     minimum_windows = 3 + (2 * purge_gap)
     if total_windows < minimum_windows:
         raise DatasetValidationError(
@@ -273,6 +274,33 @@ def _split_windows(
         assignments[index] = "test"
     purged_window_count = assignments.count(None)
     return tuple(assignments), purged_window_count
+
+
+def _purge_gap_window_count(config: TimesFmDatasetConfig) -> int:
+    if not config.purge_between_splits:
+        return 0
+    lookback_and_label_span = config.context_length + config.horizon_length - 1
+    return lookback_and_label_span // config.stride
+
+
+def _validate_split_purges(windows: Sequence[TimesFmWindow]) -> None:
+    train_windows = tuple(window for window in windows if window.split == "train")
+    validation_windows = tuple(window for window in windows if window.split == "validation")
+    test_windows = tuple(window for window in windows if window.split == "test")
+    _validate_adjacent_split_purge(train_windows, validation_windows)
+    _validate_adjacent_split_purge(validation_windows, test_windows)
+
+
+def _validate_adjacent_split_purge(
+    previous_split: Sequence[TimesFmWindow],
+    next_split: Sequence[TimesFmWindow],
+) -> None:
+    if not previous_split or not next_split:
+        return
+    if previous_split[-1].horizon_end_index >= next_split[0].context_start_index:
+        raise DatasetValidationError(
+            "lookahead leakage: TimesFM split purge does not separate labels from features"
+        )
 
 
 def _validate_bars(

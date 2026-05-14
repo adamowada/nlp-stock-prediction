@@ -278,12 +278,14 @@ def test_generate_dummy_report_bundle_writes_markdown_json_and_manifest(tmp_path
         resolution["status"] == "ambiguous"
         for resolution in report_payload["instrument_resolutions"]
     )
-    assert [artifact["artifact_id"] for artifact in manifest_payload["artifacts"]] == [
+    artifact_ids = [artifact["artifact_id"] for artifact in manifest_payload["artifacts"]]
+    assert artifact_ids[:4] == [
         "instrument-universe",
         "normalized-evidence",
         "analysis-contexts",
         "prediction-inputs",
     ]
+    assert artifact_ids[-2:] == ["report-markdown", "report-json"]
     assert "not a buy or sell instruction" in markdown
     assert bundle.tool_records[-1].updated_keys == ("daily_report",)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -66,6 +67,8 @@ class Phase2McpService:
         parsed_date = date.fromisoformat(run_date)
         normalized_symbol = symbol.strip().upper()
         run_id = phase2_run_id(parsed_date, normalized_symbol)
+        if self.store.get_research_run(run_id) is not None:
+            raise ValueError(f"research run already exists: {run_id}")
         paths = self._paths(parsed_date, output_dir)
         now = utc_now()
         self.store.upsert_research_run(
@@ -239,8 +242,13 @@ class Phase2McpService:
         normalized_symbol = self._validated_symbol(run, symbol)
         run_date = run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]))
-        with self.store.transaction():
-            return action(run, normalized_symbol, paths, run_date)
+        files_before = _existing_files(paths.run_dir)
+        try:
+            with self.store.transaction():
+                return action(run, normalized_symbol, paths, run_date)
+        except Exception:
+            _remove_new_files(paths.run_dir, files_before)
+            raise
 
     def _validated_symbol(self, run: ResearchRunRecord, symbol: str) -> str:
         stored_symbol = run.metadata.get("symbol")
@@ -260,6 +268,32 @@ class Phase2McpService:
 
     def _resolve_write_path(self, path: Path) -> Path:
         return self.write_policy.resolve(path)
+
+
+def _existing_files(root: Path) -> frozenset[Path]:
+    if not root.exists():
+        return frozenset()
+    return frozenset(path.resolve() for path in root.rglob("*") if path.is_file())
+
+
+def _remove_new_files(root: Path, files_before: frozenset[Path]) -> None:
+    if not root.exists():
+        return
+    for path in sorted(
+        (candidate for candidate in root.rglob("*") if candidate.is_file()),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
+        resolved = path.resolve()
+        if resolved not in files_before:
+            path.unlink(missing_ok=True)
+    for directory in sorted(
+        (candidate for candidate in root.rglob("*") if candidate.is_dir()),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
+        with suppress(OSError):
+            directory.rmdir()
 
 
 __all__ = ["ALLOWED_WRITE_ROOTS", "Phase2McpService", "Phase2RunPaths"]

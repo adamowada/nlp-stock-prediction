@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from nlp_stock_prediction.contracts import (
     AnalysisSignal,
+    AuditArtifact,
     AuditManifest,
     CredentialState,
     DailyReport,
@@ -367,9 +370,30 @@ def generate_dummy_report_bundle(config: RunConfig) -> ReportBundle:
     manifest = report.audit_manifest
     if not isinstance(manifest, AuditManifest):
         raise TypeError("dummy orchestration reports must include an AuditManifest")
+    final_manifest = manifest.model_copy(
+        update={
+            "artifacts": (
+                *manifest.artifacts,
+                _file_audit_artifact(
+                    artifact_id="report-markdown",
+                    artifact_type="markdown_report",
+                    path=markdown_path,
+                    created_at=context.generated_at,
+                    produced_by="dummy.report-bundle",
+                ),
+                _file_audit_artifact(
+                    artifact_id="report-json",
+                    artifact_type="json_report",
+                    path=json_path,
+                    created_at=context.generated_at,
+                    produced_by="dummy.report-bundle",
+                ),
+            )
+        }
+    )
     write_json_artifact(
         audit_manifest_path,
-        cast(JsonObject, manifest.model_dump(mode="json")),
+        cast(JsonObject, final_manifest.model_dump(mode="json")),
     )
 
     return ReportBundle(
@@ -380,6 +404,24 @@ def generate_dummy_report_bundle(config: RunConfig) -> ReportBundle:
         audit_manifest_path=audit_manifest_path,
         report=report,
         tool_records=result.tool_records,
+    )
+
+
+def _file_audit_artifact(
+    *,
+    artifact_id: str,
+    artifact_type: Literal["markdown_report", "json_report"],
+    path: Path,
+    created_at: datetime,
+    produced_by: str,
+) -> AuditArtifact:
+    return AuditArtifact(
+        artifact_id=artifact_id,
+        artifact_type=artifact_type,
+        path=path.as_posix(),
+        created_at=created_at,
+        produced_by=produced_by,
+        sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
     )
 
 

@@ -109,16 +109,14 @@ def test_timesfm_dataset_falls_back_to_close_and_preserves_temporal_split_purge(
     assert dataset.windows[0].context_values == tuple(float(bar.close) for bar in bars[:4])
     assert dataset.windows[0].future_values == tuple(float(bar.close) for bar in bars[4:6])
     assert (
-        dataset.validation_windows[0].context_start_index
-        - dataset.train_windows[-1].context_start_index
-        == dataset.horizon_length + 1
+        dataset.train_windows[-1].horizon_end_index
+        < dataset.validation_windows[0].context_start_index
     )
     assert (
-        dataset.test_windows[0].context_start_index
-        - dataset.validation_windows[-1].context_start_index
-        == dataset.horizon_length + 1
+        dataset.validation_windows[-1].horizon_end_index
+        < dataset.test_windows[0].context_start_index
     )
-    assert dataset.metadata["purged_window_count"] == 4
+    assert dataset.metadata["purged_window_count"] == 10
 
 
 @pytest.mark.unit

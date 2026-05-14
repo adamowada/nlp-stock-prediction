@@ -253,6 +253,13 @@ def test_unresolved_resolution_shapes_do_not_select_instruments(
             selected_instrument_id="instrument-missing",
         )
 
+    with pytest.raises(ValidationError, match="cannot include matches"):
+        InstrumentResolution(
+            query="OTC:MISSING",
+            status=status,
+            matches=(_instrument(),),
+        )
+
 
 def test_watchlist_entries_dedupe_aliases_and_require_entries() -> None:
     watchlist = Watchlist(

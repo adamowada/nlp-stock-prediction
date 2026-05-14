@@ -68,6 +68,11 @@ class SourceEvidence(ContractModel):
             and self.instrument_id not in self.matched_instrument_ids
         ):
             raise ValueError("instrument_id must be included in matched_instrument_ids")
+        for span in self.match_spans:
+            if span.end_char > len(self.text):
+                raise ValueError("match_spans must stay within evidence text")
+            if self.text[span.start_char : span.end_char] != span.text:
+                raise ValueError("match_spans text must match evidence text")
         return self
 
 

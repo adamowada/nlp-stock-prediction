@@ -78,9 +78,7 @@ class SourceProvenance(ContractModel):
 
     @model_validator(mode="after")
     def validate_external_traceability(self) -> SourceProvenance:
-        if self.source_kind == SourceKind.INTERNAL_ANALYSIS or (
-            self.retrieval_method == RetrievalMethod.DERIVED
-        ):
+        if self.source_kind == SourceKind.INTERNAL_ANALYSIS:
             return self
         if not (self.source_url or self.permalink):
             raise ValueError("external provenance requires source_url or permalink")
@@ -104,6 +102,10 @@ class EvidenceReference(ContractModel):
 
     @model_validator(mode="after")
     def validate_span_order(self) -> EvidenceReference:
+        if (self.start_char is None) != (self.end_char is None):
+            raise ValueError("evidence reference offsets must include both start_char and end_char")
+        if self.start_char is not None and self.end_char is not None and self.quote is None:
+            raise ValueError("evidence reference offsets require a quote")
         if (
             self.start_char is not None
             and self.end_char is not None

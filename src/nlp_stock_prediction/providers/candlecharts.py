@@ -549,7 +549,7 @@ def _walk_ohlcv_collections(
 def _looks_like_bar_list(value: object) -> bool:
     if not isinstance(value, list) or not value:
         return False
-    return isinstance(value[0], Mapping) and _is_bar_mapping(value[0])
+    return all(isinstance(item, Mapping) for item in value) and _is_bar_mapping(value[0])
 
 
 def _is_bar_mapping(value: Mapping[object, object]) -> bool:

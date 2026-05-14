@@ -243,6 +243,15 @@ class XRecentSearchProvider:
             if created_at is None:
                 freshness = FreshnessStatus.MISSING
                 freshness_seconds = None
+                warnings.append(
+                    partial_item_warning(
+                        provider_name=self.provider_name,
+                        fetched_at=fetched_at,
+                        raw_snapshot_id=fetched.raw_snapshot_id,
+                        index=index,
+                        message="X response item missing created_at timestamp",
+                    )
+                )
             else:
                 freshness, freshness_seconds = freshness_status(
                     observed_at=created_at,

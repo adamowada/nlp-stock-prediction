@@ -126,8 +126,8 @@ def validate_ohlcv_fields(bar: PriceBar) -> None:
 
 def timestamp_key_for(value: date | datetime) -> int:
     if isinstance(value, datetime):
-        return int(value.timestamp())
-    return value.toordinal()
+        return _datetime_key(utc_datetime(value))
+    return _datetime_key(datetime(value.year, value.month, value.day, tzinfo=UTC))
 
 
 def calendar_date(value: date | datetime) -> date:
@@ -150,6 +150,12 @@ def utc_datetime(value: datetime) -> datetime:
 def require_aware_datetime(value: datetime, *, field_name: str) -> None:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{field_name} datetime must include a timezone")
+
+
+def _datetime_key(value: datetime) -> int:
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    delta = value - epoch
+    return ((delta.days * 86_400 + delta.seconds) * 1_000_000) + delta.microseconds
 
 
 def as_decimal(value: object) -> Decimal:

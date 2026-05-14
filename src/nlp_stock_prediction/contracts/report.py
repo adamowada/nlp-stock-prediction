@@ -70,6 +70,7 @@ class PredictionCandidate(ContractModel):
         if self.status in {
             PredictionStatus.CONTRADICTED,
             PredictionStatus.INSUFFICIENT_EVIDENCE,
+            PredictionStatus.UNAVAILABLE,
         } and not (self.evidence_for or self.evidence_against or self.uncertainties):
             raise ValueError("non-supported predictions require evidence or uncertainty context")
         return self
@@ -225,6 +226,12 @@ class DailyReport(ContractModel):
             raise ValueError("instrument sections must cover each report instrument exactly once")
         if section_instrument_ids != instrument_ids:
             raise ValueError("instrument sections must match report instruments in order")
+        symbol_by_instrument_id = {
+            instrument.instrument_id: instrument.symbol for instrument in self.instruments
+        }
+        for section in self.instrument_sections:
+            if section.symbol != symbol_by_instrument_id[section.instrument_id]:
+                raise ValueError("instrument section symbol must match report instrument symbol")
 
         candidate_ids = tuple(candidate.candidate_id for candidate in self.prediction_candidates)
         if len(set(candidate_ids)) != len(candidate_ids):
@@ -237,6 +244,7 @@ class DailyReport(ContractModel):
         source_evidence_ids = tuple(evidence.evidence_id for evidence in self.evidence_sources)
         if len(set(source_evidence_ids)) != len(source_evidence_ids):
             raise ValueError("report evidence_sources ids must be unique")
+        evidence_by_id = {evidence.evidence_id: evidence for evidence in self.evidence_sources}
 
         selected_resolution_ids = {
             resolution.selected_instrument_id
@@ -286,6 +294,8 @@ class DailyReport(ContractModel):
         for candidate in self.prediction_candidates:
             if candidate.instrument_id not in valid_instrument_ids:
                 raise ValueError("prediction candidates must reference report instruments")
+            if candidate.symbol != symbol_by_instrument_id[candidate.instrument_id]:
+                raise ValueError("prediction candidate symbol must match report instrument symbol")
             if section_references.get(candidate.candidate_id) != candidate.instrument_id:
                 raise ValueError(
                     "instrument section prediction_candidate_ids must match candidate instrument_id"
@@ -305,6 +315,7 @@ class DailyReport(ContractModel):
                     "report evidence_sources must include related instrument evidence_ids"
                 )
             raise ValueError("report evidence_sources must include every cited evidence_id")
+        _validate_evidence_references_against_sources(self, evidence_by_id)
         return self
 
 
@@ -315,6 +326,43 @@ def _analysis_evidence_ids(
     if isinstance(component, FundamentalAnalysis) and component.agent_signal is not None:
         ids.extend(component.agent_signal.source_evidence_ids)
     return tuple(ids)
+
+
+def _validate_evidence_references_against_sources(
+    report: DailyReport,
+    evidence_by_id: dict[str, SourceEvidence],
+) -> None:
+    for reference in _iter_report_evidence_references(report):
+        evidence = evidence_by_id.get(reference.evidence_id)
+        if evidence is None:
+            continue
+        if reference.quote is not None and reference.quote not in evidence.text:
+            raise ValueError("evidence reference quote must appear in source evidence text")
+        if reference.start_char is not None and reference.end_char is not None:
+            if reference.end_char > len(evidence.text):
+                raise ValueError("evidence reference span must stay within source evidence text")
+            if evidence.text[reference.start_char : reference.end_char] != reference.quote:
+                raise ValueError("evidence reference span must match source evidence text")
+
+
+def _iter_report_evidence_references(report: DailyReport) -> tuple[EvidenceReference, ...]:
+    references: list[EvidenceReference] = []
+    for section in report.instrument_sections:
+        references.extend(section.evidence)
+        for cluster in section.strategy_clusters:
+            references.extend(cluster.evidence)
+        for component in (
+            section.technical_analysis,
+            section.fundamental_analysis,
+            section.sector_context,
+            section.macro_context,
+        ):
+            if component is not None:
+                references.extend(component.evidence)
+    for candidate in report.prediction_candidates:
+        references.extend(candidate.evidence_for)
+        references.extend(candidate.evidence_against)
+    return tuple(references)
 
 
 __all__ = [

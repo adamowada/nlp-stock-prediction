@@ -31,6 +31,7 @@ def test_phase2_mcp_service_records_search_evidence_and_renders_report(tmp_path:
         claim="Example source says TSLA investors debated delivery expectations.",
         query="TSLA delivery expectations",
         published_at="2026-05-13T12:00:00Z",
+        stance="supports",
     )
     universe = service.run_dummy_universe_tool(run_id=run_id, symbol="TSLA")
     analysis = service.run_dummy_analysis_tool(run_id=run_id, symbol="TSLA")
@@ -149,6 +150,7 @@ def test_phase2_mcp_service_synthesizes_contradictory_evidence(tmp_path: Path) -
     report_candidate = payload["prediction_candidates"][0]
 
     assert run_id == "codex-smoke-2026-05-13-btc-usd"
+    assert payload["instruments"][0]["asset_class"] == "crypto"
     assert str(candidate["candidate_id"]).startswith("candidate-btc-usd-")
     assert report_candidate["symbol"] == "BTC:USD"
     assert report_candidate["status"] == "contradicted"

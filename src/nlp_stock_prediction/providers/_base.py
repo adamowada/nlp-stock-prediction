@@ -35,6 +35,7 @@ from nlp_stock_prediction.reddit.matching import (
 from nlp_stock_prediction.reddit.matching import (
     matched_tickers,
 )
+from nlp_stock_prediction.reliability import retry_call
 
 T = TypeVar("T")
 JsonPayload = dict[str, Any]
@@ -116,6 +117,14 @@ class UrllibJsonTransport:
             ) from exc
         except URLError as exc:
             raise ProviderTransportError(str(exc), retryable=True, error_type="url_error") from exc
+        except TimeoutError as exc:
+            raise ProviderTransportError(str(exc), retryable=True, error_type="timeout") from exc
+        except (OSError, UnicodeDecodeError, LookupError) as exc:
+            raise ProviderTransportError(
+                str(exc),
+                retryable=True,
+                error_type="read_decode_error",
+            ) from exc
         except json.JSONDecodeError as exc:
             raise MalformedProviderResponse("provider returned invalid JSON") from exc
 
@@ -343,6 +352,7 @@ def fetch_json(
     cache: ProviderCache | None = None,
     headers: Mapping[str, str] | None = None,
     timeout: float = 10.0,
+    cacheable_payload: Callable[[JsonPayload], bool] | None = None,
 ) -> JsonFetch:
     if cache is not None:
         cached = cache.load_json(
@@ -351,7 +361,7 @@ def fetch_json(
             source=source,
             cache_key=cache_key,
         )
-        if cached is not None:
+        if cached is not None and (cacheable_payload is None or cacheable_payload(cached.payload)):
             return JsonFetch(
                 payload=cached.payload,
                 raw_snapshot_id=cached.raw_snapshot_id,
@@ -359,8 +369,20 @@ def fetch_json(
                 cache_hit=True,
                 status_code=200,
             )
-    response = transport.get_json(url, headers=headers, timeout=timeout)
+    response = retry_call(
+        lambda: transport.get_json(url, headers=headers, timeout=timeout),
+        should_retry=lambda exc: isinstance(exc, ProviderTransportError) and exc.retryable,
+        sleep=lambda _delay: None,
+    )
     if cache is None:
+        return JsonFetch(
+            payload=response.payload,
+            raw_snapshot_id=raw_snapshot_id_for_payload(source, response.payload),
+            cache_key=cache_key,
+            cache_hit=False,
+            status_code=response.status_code,
+        )
+    if cacheable_payload is not None and not cacheable_payload(response.payload):
         return JsonFetch(
             payload=response.payload,
             raw_snapshot_id=raw_snapshot_id_for_payload(source, response.payload),

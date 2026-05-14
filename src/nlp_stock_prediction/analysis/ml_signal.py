@@ -17,6 +17,7 @@ from nlp_stock_prediction.contracts import (
     TechnicalMlSignal,
 )
 from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.ml.ohlcv import timestamp_key_for as _timestamp_key
 from nlp_stock_prediction.ml.timesfm.contracts import TimesFmForecastArtifact
 from nlp_stock_prediction.ml.training import EvaluationResult, TechnicalLogisticModel
 
@@ -34,6 +35,28 @@ def build_technical_ml_signal(
 ) -> TechnicalMlSignal:
     """Map a local model/evaluation result into a report-safe technical sidecar."""
 
+    if evaluation.model_hash != model.model_hash:
+        return TechnicalMlSignal(
+            model_hash=model.model_hash,
+            dataset_hash=model.dataset_hash,
+            as_of=as_of,
+            feature_end=as_of,
+            prediction_horizon_sessions=model.label_horizon_sessions,
+            probability_positive=0.5,
+            calibrated_confidence=0.0,
+            signal=AnalysisSignal.UNKNOWN,
+            status="unavailable",
+            freshness_status=FreshnessStatus.UNKNOWN,
+            validation_accuracy=evaluation.metrics.accuracy,
+            validation_brier_score=evaluation.metrics.brier_score,
+            warning_ids=("ml-technical-signal:model_hash_mismatch",),
+            metadata={
+                "model_kind": model.model_kind,
+                "threshold": model.threshold,
+                "validation_samples": evaluation.metrics.samples,
+                "evaluation_model_hash": evaluation.model_hash,
+            },
+        )
     if not evaluation.predictions:
         return TechnicalMlSignal(
             model_hash=model.model_hash,
@@ -301,12 +324,6 @@ def _calibrated_confidence(probability: float, validation_accuracy: float) -> fl
     probability_edge = abs(probability - 0.5) * 2.0
     accuracy_edge = max(0.0, validation_accuracy - 0.5) * 2.0
     return clamp((probability_edge * 0.70) + (accuracy_edge * 0.30))
-
-
-def _timestamp_key(value: date | datetime) -> int:
-    if isinstance(value, datetime):
-        return int(value.timestamp())
-    return value.toordinal()
 
 
 __all__ = [

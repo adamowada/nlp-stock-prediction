@@ -196,11 +196,15 @@ class SQLiteStore:
                     ON p.instrument_id = i.instrument_id
                 WHERE p.provider_lower = ?
                   AND p.namespace_lower = ?
-                  AND p.identifier = ?
+                  AND lower(p.identifier) = ?
                 ORDER BY i.instrument_id
                 LIMIT 1
                 """,
-                (_normalize_lookup(provider), _normalize_lookup(namespace), identifier),
+                (
+                    _normalize_lookup(provider),
+                    _normalize_lookup(namespace),
+                    _normalize_lookup(identifier),
+                ),
             ).fetchone()
         if row is None:
             return None
@@ -1271,20 +1275,26 @@ def _replace_instrument_children(
             (record.instrument_id, alias, _normalize_lookup(alias), _format_datetime(now)),
         )
 
+    seen_provider_ids: set[tuple[str, str, str]] = set()
     for provider_id in record.provider_ids:
         provider = _json_required_text(provider_id, "provider")
         namespace = _json_optional_text(provider_id, "namespace") or "default"
         identifier = _json_required_text(provider_id, "identifier")
         provider_lower = _normalize_lookup(provider)
         namespace_lower = _normalize_lookup(namespace)
+        identifier_lower = _normalize_lookup(identifier)
+        provider_key = (provider_lower, namespace_lower, identifier_lower)
+        if provider_key in seen_provider_ids:
+            raise ValueError("instrument provider ids must be unique case-insensitively")
+        seen_provider_ids.add(provider_key)
         existing_provider_row = connection.execute(
             """
             SELECT instrument_id FROM instrument_provider_ids
             WHERE provider_lower = ?
               AND namespace_lower = ?
-              AND identifier = ?
+              AND lower(identifier) = ?
             """,
-            (provider_lower, namespace_lower, identifier),
+            (provider_lower, namespace_lower, identifier_lower),
         ).fetchone()
         if (
             existing_provider_row is not None
@@ -1519,7 +1529,7 @@ def _open_sqlite_connection(path: Path, *, create: bool) -> sqlite3.Connection:
         path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(str(path))
     else:
-        connection = sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=rw", uri=True)
+        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=rw", uri=True)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
@@ -1603,7 +1613,10 @@ def _format_optional_datetime(value: datetime | None) -> str | None:
 
 
 def _parse_datetime(value: str) -> datetime:
-    return datetime.fromisoformat(value).astimezone(UTC)
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("datetimes stored in SQLite must be timezone-aware")
+    return parsed.astimezone(UTC)
 
 
 def _parse_optional_datetime(value: str | None) -> datetime | None:

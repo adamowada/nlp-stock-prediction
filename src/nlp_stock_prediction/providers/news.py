@@ -244,14 +244,22 @@ class PublicNewsProvider:
             if published_at is None:
                 freshness = FreshnessStatus.MISSING
                 freshness_seconds = None
+                warnings.append(
+                    partial_item_warning(
+                        provider_name=self.provider_name,
+                        fetched_at=fetched_at,
+                        raw_snapshot_id=fetched.raw_snapshot_id,
+                        index=index,
+                        message=f"{self.provider_name} article missing published timestamp",
+                    )
+                )
             else:
                 freshness, freshness_seconds = freshness_status(
                     observed_at=published_at,
                     fetched_at=fetched_at,
                     stale_after_seconds=self._stale_after_seconds,
                 )
-            combined_text = f"{title or ''} {text}"
-            matched_tickers, spans = find_ticker_matches(combined_text, request.tickers)
+            matched_tickers, spans = find_ticker_matches(text, request.tickers)
             if request.tickers and not matched_tickers:
                 continue
             source = raw_article.get("source")

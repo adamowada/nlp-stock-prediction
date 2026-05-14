@@ -45,6 +45,17 @@ def evidence_result_from_records(
     """Build a provider result for source evidence with consistent degradation policy."""
 
     if not evidence:
+        if warnings:
+            return provider_result(
+                provider_name=provider_name,
+                status=ProviderStatus.MALFORMED,
+                request=request,
+                fetched_at=fetched_at,
+                credential_state=credential_state,
+                warnings=warnings,
+                raw_snapshot_id=raw_snapshot_id,
+                cache_key=cache_key,
+            )
         return no_data_result(
             provider_name=provider_name,
             request=request,

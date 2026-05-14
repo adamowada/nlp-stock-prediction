@@ -156,11 +156,18 @@ class FundamentalAgentProvider:
             )
             response = FundamentalNlpAnalysisResponse.model_validate(payload)
         except (ValueError, ValidationError) as error:
+            warning_code = _schema_validation_warning_code(error)
+            message = (
+                "Fundamental agent response has missing citations or invalid evidence "
+                f"references: {error}"
+                if warning_code == WarningCode.LLM_EVIDENCE_MISMATCH
+                else f"Fundamental agent response failed schema validation: {error}"
+            )
             warning = _warning(
                 provider_name=self.provider_name,
-                code=WarningCode.LLM_SCHEMA_INVALID,
+                code=warning_code,
                 severity=WarningSeverity.ERROR,
-                message=f"Fundamental agent response failed schema validation: {error}",
+                message=message,
                 occurred_at=fetched_at,
                 raw_snapshot_id=raw_response_id,
             )
@@ -415,6 +422,13 @@ def validate_fundamental_agent_response(
         warnings.append(contradiction_warning)
 
     return FundamentalAgentValidation(warnings=tuple(warnings), hard_failure=hard_failure)
+
+
+def _schema_validation_warning_code(error: ValueError | ValidationError) -> WarningCode:
+    message = str(error).lower()
+    if "citation" in message or "source_evidence_id" in message:
+        return WarningCode.LLM_EVIDENCE_MISMATCH
+    return WarningCode.LLM_SCHEMA_INVALID
 
 
 def _validate_citations(

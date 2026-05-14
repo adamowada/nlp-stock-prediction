@@ -177,7 +177,10 @@ def build_technical_dataset(
         metadata={
             "source": "ohlcv_bars",
             "feature_window": settings.feature_window,
-            "feature_policy": "features use current and historical bars only",
+            "feature_policy": (
+                "features use current, historical, and one prior bar for return baselines"
+            ),
+            "feature_lookback_includes_prior_bar": True,
             "label_policy": "binary target is based on forward close return",
             "latest_bar_timestamp": _timestamp_to_string(sorted_bars[-1].timestamp),
             "as_of": _timestamp_to_string(settings.as_of) if settings.as_of is not None else None,
@@ -239,7 +242,7 @@ def _build_feature_row(
     current = bars[feature_end_index]
     previous = bars[feature_end_index - 1]
     label = bars[feature_end_index + config.label_horizon_sessions]
-    feature_start_index = feature_end_index - config.feature_window + 1
+    feature_start_index = feature_end_index - config.feature_window
     returns = [
         _close_to_close_return(bars[index - 1], bars[index])
         for index in range(feature_end_index - config.feature_window + 1, feature_end_index + 1)

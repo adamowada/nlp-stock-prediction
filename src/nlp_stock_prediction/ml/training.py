@@ -160,20 +160,37 @@ def detect_training_device(requested_device: DeviceRequest = "auto") -> Training
     cuda_available = False
     gpu_name: str | None = None
     cuda_version: str | None = None
+    if requested_device == "cpu":
+        return TrainingDeviceMetadata(
+            requested_device=requested_device,
+            selected_device="cpu",
+            cuda_available=False,
+            backend="pure-python-logistic-regression",
+            notes=(),
+        )
     try:
         torch_module = importlib.import_module("torch")
-    except ImportError:
+    except (ImportError, OSError, RuntimeError) as exc:
+        if requested_device == "cuda":
+            raise RuntimeError("CUDA was requested but torch could not be imported") from exc
         notes.append("torch is not installed; using the pure-Python CPU baseline")
     else:
         cuda = getattr(torch_module, "cuda", None)
-        if cuda is not None and bool(cuda.is_available()):
-            cuda_available = True
-            gpu_name = str(cuda.get_device_name(0))
-            version = getattr(torch_module, "version", None)
-            version_cuda = getattr(version, "cuda", None)
-            cuda_version = str(version_cuda) if version_cuda is not None else None
-        else:
-            notes.append("torch is installed but CUDA is not available")
+        try:
+            cuda_available = bool(cuda is not None and cuda.is_available())
+            if cuda_available:
+                assert cuda is not None
+                gpu_name = str(cuda.get_device_name(0))
+                version = getattr(torch_module, "version", None)
+                version_cuda = getattr(version, "cuda", None)
+                cuda_version = str(version_cuda) if version_cuda is not None else None
+            else:
+                notes.append("torch is installed but CUDA is not available")
+        except (OSError, RuntimeError) as exc:
+            if requested_device == "cuda":
+                raise RuntimeError("CUDA was requested but CUDA probing failed") from exc
+            cuda_available = False
+            notes.append("torch CUDA probing failed; using the pure-Python CPU baseline")
 
     if requested_device == "cuda" and not cuda_available:
         raise RuntimeError("CUDA was requested but no CUDA device is available")
