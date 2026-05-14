@@ -161,9 +161,11 @@ Generated payloads are local working state by default. Keep `artifacts/`, `repor
 should be deleted or archived outside the repository rather than treated as source artifacts.
 
 The SQLite foundation is implemented in `nlp_stock_prediction.storage`. The planning database is
-`plans/planning.sqlite3` and is tracked in git. The research database is
-`data/prediction-research.sqlite3` and is generated local state ignored by git. Create or verify both
-with:
+`plans/planning.sqlite3` and is tracked in git. The default service research database is
+`data/prediction-research.sqlite3` and is generated local state ignored by git. The CLI `research`
+command writes isolated runtime databases named
+`data/phase4-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3` so separate report
+invocations do not silently share stored evidence. Create or verify the default databases with:
 
 ```python
 from pathlib import Path

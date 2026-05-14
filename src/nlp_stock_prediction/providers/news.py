@@ -139,6 +139,10 @@ class PublicNewsProvider:
                 fetched_at=fetched_at,
                 cache=self._cache,
                 timeout=self._timeout,
+                cacheable_payload=lambda payload: isinstance(
+                    payload.get(self._config.articles_key),
+                    list,
+                ),
             )
             evidence, partial_warnings = self._map_payload(request, fetched, query, url, fetched_at)
         except ProviderTransportError as exc:

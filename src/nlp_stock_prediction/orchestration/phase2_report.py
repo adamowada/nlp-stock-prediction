@@ -193,7 +193,11 @@ def _render_phase2_prediction_report_core(
             OFFLINE_FIXTURE_REPORT_DATA_MODE if is_phase4_report else CODEX_SMOKE_REPORT_DATA_MODE
         ),
     )
-    enforce_live_report_input_boundary(store=store, run=run)
+    enforce_live_report_input_boundary(
+        store=store,
+        run=run,
+        report_data_mode=resolved_report_data_mode,
+    )
     mode_metadata = report_data_mode_metadata(resolved_report_data_mode)
     evidence_records = store.list_evidence_for_run(run.run_id)
     evidence_sources = tuple(source_evidence_from_record(record) for record in evidence_records)
@@ -227,6 +231,7 @@ def _render_phase2_prediction_report_core(
         prediction_candidate_from_record(
             candidate,
             evidence_sources,
+            candidate_evidence_links=store.list_candidate_evidence_links(candidate.candidate_id),
             prefer_evaluated_references=True,
         )
         for candidate in assembly_state.usable_candidate_records
@@ -247,6 +252,7 @@ def _render_phase2_prediction_report_core(
         prediction_candidates=prediction_candidates,
         missing_provider_names=missing_provider_names,
         stale_provider_names=stale_provider_names,
+        report_data_mode=resolved_report_data_mode,
     )
     prediction_candidates = prior_outcome_context.prediction_candidates
     section_refs = tuple(

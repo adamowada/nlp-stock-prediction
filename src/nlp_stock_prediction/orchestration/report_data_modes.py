@@ -194,8 +194,6 @@ def report_data_mode_from_run(
         return CODEX_SMOKE_REPORT_DATA_MODE
     if "dummy" in run_kind:
         return DUMMY_SMOKE_REPORT_DATA_MODE
-    if "phase4" in run_kind:
-        return OFFLINE_FIXTURE_REPORT_DATA_MODE
     raise ValueError(f"research run is missing report_data_mode metadata: {run.run_id}")
 
 
@@ -230,11 +228,18 @@ def enforce_live_report_input_boundary(
     *,
     store: SQLiteStore,
     run: ResearchRunRecord,
+    report_data_mode: ReportDataMode | None = None,
 ) -> tuple[ReportInputBoundaryViolation, ...]:
     """Raise when a live report run tries to assemble fixture, dummy, or smoke inputs."""
 
-    report_data_mode = report_data_mode_from_run(run)
-    if report_data_mode != LIVE_REPORT_DATA_MODE:
+    run_report_data_mode = report_data_mode_from_run(run)
+    if report_data_mode is not None and report_data_mode != run_report_data_mode:
+        raise ValueError(
+            f"report_data_mode override {report_data_mode!r} does not match run metadata "
+            f"{run_report_data_mode!r}"
+        )
+    resolved_mode = report_data_mode or run_report_data_mode
+    if resolved_mode != LIVE_REPORT_DATA_MODE:
         return ()
     violations = find_non_live_report_input_violations(store=store, run=run)
     if violations:
@@ -376,6 +381,7 @@ def _metadata_violations(
     )
     violations.extend(provenance.non_live_violations())
     for key, value in metadata.items():
+        normalized_key = key.lower()
         if key in _MODE_KEYS:
             if _mode_value_is_non_live(value) and key not in {
                 REPORT_DATA_MODE_KEY,
@@ -389,10 +395,10 @@ def _metadata_violations(
         if key in _PROVENANCE_KEYS and isinstance(value, str) and _text_is_non_live(value):
             violations.append(ReportInputBoundaryViolation(record_type, record_id, key, value))
             continue
-        if key.lower() in _BOOLEAN_MARKER_KEYS and value is True:
+        if normalized_key in _BOOLEAN_MARKER_KEYS and value is True:
             violations.append(ReportInputBoundaryViolation(record_type, record_id, key, str(value)))
             continue
-        if isinstance(value, dict) and key in {"metadata", "provider_metadata", "provenance"}:
+        if isinstance(value, dict):
             violations.extend(
                 _metadata_violations(
                     record_type,
@@ -400,6 +406,34 @@ def _metadata_violations(
                     value,
                 )
             )
+            continue
+        if isinstance(value, list | tuple):
+            violations.extend(
+                _metadata_sequence_violations(
+                    record_type,
+                    record_id,
+                    key,
+                    value,
+                )
+            )
+    return violations
+
+
+def _metadata_sequence_violations(
+    record_type: str,
+    record_id: str,
+    field: str,
+    values: list[JsonValue] | tuple[JsonValue, ...],
+) -> list[ReportInputBoundaryViolation]:
+    violations: list[ReportInputBoundaryViolation] = []
+    for index, value in enumerate(values):
+        nested_id = f"{record_id}:{field}:{index}"
+        if isinstance(value, dict):
+            violations.extend(_metadata_violations(record_type, nested_id, value))
+        elif isinstance(value, list | tuple):
+            violations.extend(_metadata_sequence_violations(record_type, nested_id, field, value))
+        elif isinstance(value, str) and _text_is_non_live(value):
+            violations.append(ReportInputBoundaryViolation(record_type, nested_id, field, value))
     return violations
 
 

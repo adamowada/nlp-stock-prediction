@@ -53,6 +53,7 @@ def test_contract_namespace_star_import_matches_public_all() -> None:
         "discovery",
         "enums",
         "evidence",
+        "evaluation",
         "extraction",
         "fixtures",
         "instruments",
@@ -60,6 +61,8 @@ def test_contract_namespace_star_import_matches_public_all() -> None:
         "provenance",
         "providers",
         "report",
+        "signal_artifact_references",
+        "signal_artifacts",
     ),
 )
 def test_contract_submodules_define_unique_public_exports(module_name: str) -> None:

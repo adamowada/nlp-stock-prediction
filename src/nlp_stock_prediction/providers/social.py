@@ -31,6 +31,7 @@ from nlp_stock_prediction.providers._base import (
     first_ticker,
     freshness_status,
     missing_credentials_result,
+    no_data_result,
     parse_optional_provider_datetime,
     provider_health,
     provider_warning,
@@ -102,6 +103,14 @@ class XRecentSearchProvider:
                 credential_name="X bearer token",
             )
         ticker = first_ticker(request)
+        if not request.query and not ticker:
+            return no_data_result(
+                provider_name=self.provider_name,
+                request=request,
+                fetched_at=fetched_at,
+                message="X recent search requires a query or ticker.",
+                credential_state=CredentialState.CONFIGURED,
+            )
         query = request.query or build_x_recent_search_query(ticker or "")
         url = append_query_params(
             self._endpoint,
@@ -140,6 +149,7 @@ class XRecentSearchProvider:
                 cache=self._cache,
                 headers={"Authorization": f"Bearer {self._bearer_token}"},
                 timeout=self._timeout,
+                cacheable_payload=_is_x_recent_search_cacheable,
             )
             evidence, partial_warnings = self._map_payload(
                 request,
@@ -210,6 +220,8 @@ class XRecentSearchProvider:
         fetched_at: datetime,
         sort_order: str,
     ) -> tuple[tuple[SourceEvidence, ...], tuple[ProviderWarning, ...]]:
+        if "data" not in payload and "meta" in payload:
+            return (), ()
         if "data" not in payload:
             raise MalformedProviderResponse("X response missing data")
         items = payload.get("data")
@@ -342,6 +354,12 @@ def _validate_limit(limit: int) -> int:
     if limit < 10 or limit > 100:
         raise ValueError("X recent-search default_limit must be between 10 and 100")
     return limit
+
+
+def _is_x_recent_search_cacheable(payload: dict[str, object]) -> bool:
+    if "data" in payload:
+        return isinstance(payload["data"], list)
+    return "meta" in payload
 
 
 __all__ = ["XRecentSearchProvider", "build_x_recent_search_query"]

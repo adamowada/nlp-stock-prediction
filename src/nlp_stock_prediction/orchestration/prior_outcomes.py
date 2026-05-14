@@ -28,6 +28,7 @@ from nlp_stock_prediction.contracts.evaluation import (
 )
 from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.orchestration.phase2_common import file_sha256, stable_digest
+from nlp_stock_prediction.orchestration.report_data_modes import ReportDataMode
 from nlp_stock_prediction.reporting.json import load_json_report
 from nlp_stock_prediction.storage.records import ReportArtifactRecord, ResearchRunRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
@@ -66,6 +67,7 @@ def apply_prior_outcome_context(
     prediction_candidates: tuple[PredictionCandidate, ...],
     missing_provider_names: tuple[str, ...] = (),
     stale_provider_names: tuple[str, ...] = (),
+    report_data_mode: ReportDataMode | None = None,
 ) -> PriorOutcomeContext:
     """Attach prior-report review IDs and concrete change triggers to candidates."""
 
@@ -84,6 +86,7 @@ def apply_prior_outcome_context(
         run=run,
         report_date=report_date,
         instrument=instrument,
+        report_data_mode=report_data_mode,
     )
     updated_candidates: list[PredictionCandidate] = []
     reviews: list[PriorOutcomeReview] = []
@@ -150,6 +153,7 @@ def _load_prior_report(
     run: ResearchRunRecord,
     report_date: date,
     instrument: Instrument,
+    report_data_mode: ReportDataMode | None,
 ) -> _LoadedPriorReport | None:
     explicit_artifact_id = _explicit_prior_report_artifact_id(run.metadata)
     artifact = (
@@ -171,6 +175,17 @@ def _load_prior_report(
         )
     if artifact is None:
         return None
+    if report_data_mode is not None and artifact.report_data_mode != report_data_mode:
+        return _LoadedPriorReport(
+            artifact=artifact,
+            report=None,
+            audit_artifact=None,
+            warnings=(
+                f"Prior report artifact {artifact.artifact_id} uses report_data_mode "
+                f"{artifact.report_data_mode!r}, which is incompatible with current "
+                f"report_data_mode {report_data_mode!r}.",
+            ),
+        )
 
     artifact_path = artifact.path if artifact.path.is_absolute() else repo_root / artifact.path
     audit_artifact = AuditArtifact(
@@ -242,7 +257,7 @@ def _prior_outcome_review(
             limitations=("This appears to be the first indexed report for the instrument.",),
             metadata={"prior_report_available": False},
         )
-    artifact_ids = (prior.artifact.artifact_id,)
+    artifact_ids = (prior.artifact.artifact_id,) if prior.audit_artifact is not None else ()
     if prior.report is None:
         return PriorOutcomeReview(
             review_id=review_id,

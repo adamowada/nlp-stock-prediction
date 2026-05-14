@@ -10,7 +10,6 @@ from nlp_stock_prediction.orchestration.context import RunContext, deterministic
 from nlp_stock_prediction.orchestration.dummy import (
     DEFAULT_STAGE_ORDER,
     DUMMY_ORCHESTRATION_DISABLED_MESSAGE,
-    ReportBundle,
     build_dummy_tool_registry,
     generate_dummy_report_bundle,
 )
@@ -62,6 +61,7 @@ from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
     Phase4UniverseDiscoveryTool,
     Phase4UniverseDiscoveryToolResult,
 )
+from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
 from nlp_stock_prediction.orchestration.report_data_modes import (
     CODEX_SMOKE_REPORT_DATA_MODE,
     DUMMY_SMOKE_REPORT_DATA_MODE,

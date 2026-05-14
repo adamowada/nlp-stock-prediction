@@ -196,13 +196,26 @@ class ReportSourceReference(ContractModel):
 
     @model_validator(mode="after")
     def validate_reference_targets(self) -> ReportSourceReference:
-        if not (
+        has_source_target = bool(
             self.evidence_ids
             or self.artifact_ids
             or self.provider_names
             or self.prior_outcome_review_ids
-        ):
+        )
+        if not has_source_target:
             raise ValueError("report source references require at least one source target")
+        if self.reference_type == "source_evidence" and not self.evidence_ids:
+            raise ValueError("source_evidence references require evidence_ids")
+        if self.reference_type == "tool_artifact" and not self.artifact_ids:
+            raise ValueError("tool_artifact references require artifact_ids")
+        if self.reference_type == "prediction_evaluation" and not self.artifact_ids:
+            raise ValueError("prediction_evaluation references require artifact_ids")
+        if self.reference_type == "prior_outcome" and not self.prior_outcome_review_ids:
+            raise ValueError("prior_outcome references require prior_outcome_review_ids")
+        if self.reference_type == "provider_health" and not self.provider_names:
+            raise ValueError("provider_health references require provider_names")
+        if self.reference_type == "instrument_resolution" and not self.artifact_ids:
+            raise ValueError("instrument_resolution references require artifact_ids")
         _validate_report_authored_language(self.label)
         return self
 
@@ -247,6 +260,14 @@ class MaterialClaimTrace(ContractModel):
                 raise ValueError("labeled inference claim traces require rationale")
         elif not has_references:
             raise ValueError("material claim traces require trace references")
+        if self.claim_type == "prediction_evaluation" and not self.candidate_ids:
+            raise ValueError("prediction_evaluation claim traces require candidate_ids")
+        if self.claim_type == "provider_health" and not self.provider_names:
+            raise ValueError("provider_health claim traces require provider_names")
+        if self.claim_type == "prior_outcome" and not self.prior_outcome_review_ids:
+            raise ValueError("prior_outcome claim traces require prior_outcome_review_ids")
+        if self.claim_type == "baseline" and not self.candidate_ids:
+            raise ValueError("baseline claim traces require candidate_ids")
         _validate_report_authored_language(self.claim, self.rationale)
         return self
 
@@ -285,6 +306,11 @@ class PredictionCandidate(ContractModel):
             self.uncertainties or self.uncertainty_drivers
         ):
             raise ValueError("evidence-supported predictions require uncertainty context")
+        if self.status == PredictionStatus.CONTRADICTED and not (
+            self.evidence_against
+            or any(dissent.impact == "contradicts" for dissent in self.dissenting_evidence)
+        ):
+            raise ValueError("contradicted predictions require opposing evidence")
         if self.status in {
             PredictionStatus.CONTRADICTED,
             PredictionStatus.INSUFFICIENT_EVIDENCE,
@@ -314,6 +340,12 @@ class PredictionCandidate(ContractModel):
         typed_signal_ids = tuple(reference.artifact_id for reference in self.signal_artifacts)
         if len(set(typed_signal_ids)) != len(typed_signal_ids):
             raise ValueError("prediction candidate signal artifact references must be unique")
+        if len(set(self.signal_artifact_ids)) != len(self.signal_artifact_ids):
+            raise ValueError("prediction candidate signal_artifact_ids must be unique")
+        if typed_signal_ids and self.signal_artifact_ids != typed_signal_ids:
+            raise ValueError(
+                "prediction candidate signal_artifact_ids must match typed signal_artifacts"
+            )
         _validate_report_authored_language(
             self.thesis,
             self.baseline,
@@ -349,6 +381,10 @@ class InstrumentReportSection(ContractModel):
             self.observed_discussion_summary,
             self.social_news_summary,
             self.analysis_summary,
+            *_analysis_component_report_text(self.technical_analysis),
+            *_analysis_component_report_text(self.fundamental_analysis),
+            *_analysis_component_report_text(self.sector_context),
+            *_analysis_component_report_text(self.macro_context),
         )
         return self
 
@@ -395,6 +431,20 @@ class AuditManifest(ContractModel):
     config_hash: str | None = None
     command_args: JsonObject = Field(default_factory=dict)
     prediction_trace_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+    @model_validator(mode="after")
+    def validate_manifest_uniqueness(self) -> AuditManifest:
+        artifact_ids = tuple(artifact.artifact_id for artifact in self.artifacts)
+        if len(set(artifact_ids)) != len(artifact_ids):
+            raise ValueError("audit manifest artifact ids must be unique")
+        provider_names = tuple(health.provider_name for health in self.provider_health)
+        if len(set(provider_names)) != len(provider_names):
+            raise ValueError("audit manifest provider_health provider names must be unique")
+        if len(set(self.provider_run_ids)) != len(self.provider_run_ids):
+            raise ValueError("audit manifest provider_run_ids must be unique")
+        if len(set(self.prediction_trace_ids)) != len(self.prediction_trace_ids):
+            raise ValueError("audit manifest prediction_trace_ids must be unique")
+        return self
 
 
 class MarkdownReportOutline(ContractModel):
@@ -658,6 +708,11 @@ class DailyReport(ContractModel):
         claim_trace_ids = tuple(trace.claim_id for trace in self.material_claim_traces)
         if len(set(claim_trace_ids)) != len(claim_trace_ids):
             raise ValueError("material claim trace ids must be unique")
+        if (
+            isinstance(self.audit_manifest, AuditManifest)
+            and self.audit_manifest.run_id != self.run_id
+        ):
+            raise ValueError("audit manifest run_id must match report run_id")
 
         cited_evidence_ids: set[str] = set()
         related_instrument_evidence_ids: set[str] = set()
@@ -697,6 +752,7 @@ class DailyReport(ContractModel):
             if candidate.symbol != symbol_by_instrument_id[candidate.instrument_id]:
                 raise ValueError("prediction candidate symbol must match report instrument symbol")
             _validate_candidate_evaluation_metadata(candidate)
+            referenced_artifact_ids.update(_candidate_evaluation_artifact_ids(candidate))
             if section_references.get(candidate.candidate_id) != candidate.instrument_id:
                 raise ValueError(
                     "instrument section prediction_candidate_ids must match candidate instrument_id"
@@ -785,6 +841,48 @@ class DailyReport(ContractModel):
             raise ValueError("report audit artifacts must include every cited artifact_id")
         _validate_evidence_references_against_sources(self, evidence_by_id)
         return self
+
+
+def _analysis_component_report_text(
+    component: TechnicalAnalysis | FundamentalAnalysis | SectorContext | MacroContext | None,
+) -> tuple[str | None, ...]:
+    if component is None:
+        return ()
+    values: list[str | None] = [component.summary, *component.assumptions]
+    if isinstance(component, TechnicalAnalysis):
+        values.extend(
+            (
+                component.trend,
+                component.volume_summary,
+                component.volatility_summary,
+                component.gap_summary,
+                component.candlestick_summary,
+            )
+        )
+        if component.ml_signal is not None:
+            values.extend(str(item) for item in component.ml_signal.warning_ids)
+    if isinstance(component, FundamentalAnalysis):
+        values.extend(
+            (
+                component.valuation_summary,
+                component.profitability_summary,
+                component.growth_summary,
+                component.balance_sheet_risk,
+                component.earnings_timing,
+                *component.notable_filings,
+            )
+        )
+        if component.agent_signal is not None:
+            values.extend(
+                (
+                    component.agent_signal.summary,
+                    *component.agent_signal.contradictions,
+                    *component.agent_signal.warning_ids,
+                )
+            )
+    if isinstance(component, MacroContext):
+        values.extend((*component.supportive_factors, *component.conflicting_factors))
+    return tuple(values)
 
 
 def _analysis_evidence_ids(
@@ -915,6 +1013,14 @@ def _validate_candidate_evaluation_metadata(candidate: PredictionCandidate) -> N
     symbol = metadata.get("symbol")
     if isinstance(symbol, str) and symbol.upper() != candidate.symbol.upper():
         raise ValueError("prediction evaluation symbol must match candidate symbol")
+
+
+def _candidate_evaluation_artifact_ids(candidate: PredictionCandidate) -> tuple[str, ...]:
+    metadata = candidate.metadata.get("prediction_evaluation")
+    if not isinstance(metadata, dict):
+        return ()
+    artifact_id = metadata.get("artifact_id")
+    return (artifact_id,) if isinstance(artifact_id, str) and artifact_id else ()
 
 
 __all__ = [

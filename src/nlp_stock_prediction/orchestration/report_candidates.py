@@ -17,13 +17,17 @@ from nlp_stock_prediction.contracts.signal_artifact_references import (
     legacy_signal_artifact_reference,
     metadata_signal_artifact_references,
 )
-from nlp_stock_prediction.storage.records import PredictionCandidateRecord
+from nlp_stock_prediction.storage.records import (
+    CandidateEvidenceLinkRecord,
+    PredictionCandidateRecord,
+)
 
 
 def prediction_candidate_from_record(
     candidate: PredictionCandidateRecord,
     evidence_sources: tuple[SourceEvidence, ...],
     *,
+    candidate_evidence_links: tuple[CandidateEvidenceLinkRecord, ...] = (),
     include_missing_references: bool = False,
     prefer_evaluated_references: bool = False,
 ) -> PredictionCandidate:
@@ -32,6 +36,7 @@ def prediction_candidate_from_record(
     evidence_by_id = {record.evidence_id: record for record in evidence_sources}
     evidence_for_ids, evidence_against_ids = _candidate_evidence_ids(
         candidate,
+        candidate_evidence_links=candidate_evidence_links,
         prefer_evaluated_references=prefer_evaluated_references,
     )
     evidence_for_refs = _evidence_references(
@@ -55,14 +60,7 @@ def prediction_candidate_from_record(
         baseline = "No directional edge is assumed without source-backed evidence."
     uncertainty = candidate.uncertainty or "Evidence coverage and freshness may limit confidence."
     signal_artifacts = _signal_artifact_references(candidate)
-    signal_artifact_ids = tuple(
-        dict.fromkeys(
-            (
-                *candidate.signal_artifacts,
-                *(reference.artifact_id for reference in signal_artifacts),
-            )
-        )
-    )
+    signal_artifact_ids = tuple(reference.artifact_id for reference in signal_artifacts)
     return PredictionCandidate(
         candidate_id=candidate.candidate_id,
         instrument_id=candidate.instrument_id,
@@ -91,16 +89,29 @@ def prediction_candidate_from_record(
 def _candidate_evidence_ids(
     candidate: PredictionCandidateRecord,
     *,
+    candidate_evidence_links: tuple[CandidateEvidenceLinkRecord, ...],
     prefer_evaluated_references: bool,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    record_for_ids = candidate.evidence_for
+    record_against_ids = candidate.evidence_against
     if prefer_evaluated_references:
         metadata = candidate.metadata.get("prediction_evaluation")
         if isinstance(metadata, dict):
             evidence_for_ids = _string_tuple(metadata.get("evidence_for_ids"))
             evidence_against_ids = _string_tuple(metadata.get("evidence_against_ids"))
             if evidence_for_ids or evidence_against_ids:
-                return evidence_for_ids, evidence_against_ids
-    return candidate.evidence_for, candidate.evidence_against
+                record_for_ids = evidence_for_ids
+                record_against_ids = evidence_against_ids
+    linked_for_ids = tuple(
+        link.evidence_id for link in candidate_evidence_links if link.relationship == "supports"
+    )
+    linked_against_ids = tuple(
+        link.evidence_id for link in candidate_evidence_links if link.relationship == "contradicts"
+    )
+    return (
+        tuple(dict.fromkeys((*record_for_ids, *linked_for_ids))),
+        tuple(dict.fromkeys((*record_against_ids, *linked_against_ids))),
+    )
 
 
 def _evidence_references(

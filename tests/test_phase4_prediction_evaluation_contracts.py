@@ -287,7 +287,7 @@ def test_technical_ml_only_support_cannot_create_evidence_supported_evaluation()
 
     assert evaluation.status == PredictionStatus.INSUFFICIENT_EVIDENCE
     assert evaluation.evidence_counts.ml_signal_count == 1
-    assert evaluation.evidence_counts.technical_signal_artifacts == 1
+    assert evaluation.evidence_counts.technical_signal_artifacts == 0
     assert evaluation.evidence_counts.signal_artifacts_by_family.timesfm == 1
     assert evaluation.metadata["technical_or_ml_support_is_sidecar_only"] is True
 
@@ -304,7 +304,10 @@ def test_typed_signal_artifact_reference_counts_by_family() -> None:
         as_of=NOW,
         source_evidence_ids=("evidence-social",),
     )
-    candidate = _candidate(signal_artifacts=(signal_ref,))
+    candidate = _candidate(
+        signal_artifact_ids=(signal_ref.artifact_id,),
+        signal_artifacts=(signal_ref,),
+    )
 
     evaluation = evaluate_prediction_candidate(
         candidate,

@@ -86,8 +86,6 @@ class SourceProvenance(ContractModel):
             raise ValueError("external provenance requires raw_identifier")
         if not self.raw_snapshot_id:
             raise ValueError("external provenance requires raw_snapshot_id")
-        if self.freshness_status == FreshnessStatus.UNKNOWN:
-            raise ValueError("external provenance requires explicit freshness_status")
         return self
 
 

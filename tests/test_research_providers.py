@@ -243,6 +243,49 @@ def test_x_provider_returns_unconfigured_warning_without_credentials() -> None:
 
 
 @pytest.mark.contract
+def test_x_provider_returns_empty_without_query_or_ticker() -> None:
+    transport = _FakeJsonTransport({})
+    provider = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="x-empty-query-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=(),
+    )
+
+    result = provider.fetch_social_posts(request)
+
+    assert result.status == ProviderStatus.EMPTY
+    assert result.warnings[0].code == WarningCode.NO_DATA
+    assert transport.calls == []
+
+
+@pytest.mark.contract
+def test_x_provider_treats_no_result_meta_as_empty() -> None:
+    transport = _FakeJsonTransport(
+        {"tweets/search/recent": JsonResponse(payload={"meta": {"result_count": 0}})}
+    )
+    provider = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="x-no-results-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_social_posts(request)
+
+    assert result.status == ProviderStatus.EMPTY
+    assert result.warnings[0].code == WarningCode.NO_DATA
+
+
+@pytest.mark.contract
 def test_public_news_provider_uses_configured_mapping_and_normalizes_articles() -> None:
     config = PublicNewsProviderConfig(
         provider_name="fixture-news",
@@ -511,6 +554,35 @@ def test_public_news_provider_maps_upstream_unavailable_transport_failure() -> N
     assert result.warnings[0].provider_error_type == "http_error"
     assert result.health.status == ProviderStatus.FAILED
     assert len(transport.calls) == 3
+
+
+@pytest.mark.contract
+def test_public_news_provider_maps_timeout_transport_failure() -> None:
+    transport = _FailingJsonTransport(
+        ProviderTransportError(
+            "fixture news timed out",
+            retryable=True,
+            error_type="timeout",
+        )
+    )
+    provider = PublicNewsProvider(
+        config=PublicNewsProviderConfig(provider_name="fixture-news"),
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-timeout-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.FAILED
+    assert result.warnings[0].code == WarningCode.TIMEOUT
+    assert result.warnings[0].provider_error_type == "timeout"
+    assert result.health.status == ProviderStatus.FAILED
 
 
 @pytest.mark.contract
@@ -884,7 +956,7 @@ def test_fred_macro_provider_returns_warning_result_when_all_mapping_fails() -> 
 
     result = provider.fetch_macro(request)
 
-    assert result.status == ProviderStatus.FAILED
+    assert result.status == ProviderStatus.MALFORMED
     assert result.data is None
     assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
     assert result.warnings[0].metadata["series_id"] == "UNRATE"

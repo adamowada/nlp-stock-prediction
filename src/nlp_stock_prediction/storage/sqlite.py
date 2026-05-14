@@ -520,6 +520,7 @@ class SQLiteStore:
                     _format_datetime(created_at),
                 ),
             )
+            self._sync_candidate_links_for_artifact(connection, record.artifact_id)
 
     def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
         _validate_required(artifact_id, "artifact_id")
@@ -558,6 +559,16 @@ class SQLiteStore:
         created_at = record.created_at or _utc_now()
         with self.connect() as connection:
             _ensure_initialized(connection)
+            artifact_row = connection.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ?",
+                (record.artifact_id,),
+            ).fetchone()
+            if artifact_row is None:
+                raise ValueError(
+                    "report artifact index rows require an existing artifact ledger row"
+                )
+            artifact = _artifact_from_row(artifact_row)
+            _validate_report_artifact_matches_ledger(record, artifact)
             connection.execute(
                 """
                 INSERT INTO report_artifact_index (
@@ -809,6 +820,7 @@ class SQLiteStore:
                     _dump_json(record.metadata),
                 ),
             )
+            self._sync_candidate_links_for_evidence(connection, record.evidence_id)
 
     def get_evidence(self, evidence_id: str) -> EvidenceRecord | None:
         _validate_required(evidence_id, "evidence_id")
@@ -1115,6 +1127,68 @@ class SQLiteStore:
                     _dump_json({"source": "prediction_candidate_record"}),
                     created_at,
                     artifact_id,
+                ),
+            )
+
+    def _sync_candidate_links_for_evidence(
+        self,
+        connection: sqlite3.Connection,
+        evidence_id: str,
+    ) -> None:
+        created_at = _format_datetime(_utc_now())
+        rows = connection.execute("SELECT * FROM prediction_candidates").fetchall()
+        for row in rows:
+            candidate = _prediction_candidate_from_row(row)
+            relationships: list[str] = []
+            if evidence_id in candidate.evidence_for:
+                relationships.append("supports")
+            if evidence_id in candidate.evidence_against:
+                relationships.append("contradicts")
+            for relationship in relationships:
+                connection.execute(
+                    """
+                    INSERT INTO candidate_evidence_links (
+                        candidate_id, evidence_id, relationship, metadata_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(candidate_id, evidence_id, relationship) DO UPDATE SET
+                        metadata_json = excluded.metadata_json
+                    """,
+                    (
+                        candidate.candidate_id,
+                        evidence_id,
+                        relationship,
+                        _dump_json({"source": "prediction_candidate_record"}),
+                        created_at,
+                    ),
+                )
+
+    def _sync_candidate_links_for_artifact(
+        self,
+        connection: sqlite3.Connection,
+        artifact_id: str,
+    ) -> None:
+        created_at = _format_datetime(_utc_now())
+        rows = connection.execute("SELECT * FROM prediction_candidates").fetchall()
+        for row in rows:
+            candidate = _prediction_candidate_from_row(row)
+            if artifact_id not in candidate.signal_artifacts:
+                continue
+            connection.execute(
+                """
+                INSERT INTO candidate_artifact_links (
+                    candidate_id, artifact_id, relationship, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(candidate_id, artifact_id, relationship) DO UPDATE SET
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    candidate.candidate_id,
+                    artifact_id,
+                    "signal",
+                    _dump_json({"source": "prediction_candidate_record"}),
+                    created_at,
                 ),
             )
 
@@ -1903,10 +1977,40 @@ def _validate_required(value: str, field_name: str) -> None:
 
 
 def _validate_relative_artifact_path(path: Path) -> None:
-    if path.is_absolute():
+    path_text = str(path).strip()
+    if not path_text or path_text == ".":
+        raise ValueError("artifact path must name a file")
+    if path.is_absolute() or path.anchor or path.drive or path.root:
         raise ValueError("artifact path must be relative")
-    if any(part == ".." for part in path.parts):
+    if any(part in {"..", "."} for part in path.parts):
         raise ValueError("artifact path must not contain parent traversal")
+
+
+def _validate_report_artifact_matches_ledger(
+    record: ReportArtifactRecord,
+    artifact: ArtifactRecord,
+) -> None:
+    expected = {
+        "artifact_type": artifact.artifact_type,
+        "path": str(artifact.path),
+        "sha256": artifact.sha256,
+        "schema_version": artifact.schema_version,
+        "tool_run_id": artifact.tool_run_id,
+    }
+    observed = {
+        "artifact_type": record.artifact_type,
+        "path": str(record.path),
+        "sha256": record.sha256,
+        "schema_version": record.schema_version,
+        "tool_run_id": record.tool_run_id,
+    }
+    mismatched = tuple(
+        field for field, expected_value in expected.items() if observed[field] != expected_value
+    )
+    if mismatched:
+        raise ValueError(
+            "report artifact index row must match artifact ledger fields: " + ", ".join(mismatched)
+        )
 
 
 def _validate_confidence(value: float | None) -> None:

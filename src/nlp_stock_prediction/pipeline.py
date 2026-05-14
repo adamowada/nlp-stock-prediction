@@ -7,11 +7,9 @@ from typing import Any, cast
 
 from nlp_stock_prediction.contracts import DailyReport
 from nlp_stock_prediction.contracts.providers import RunConfig
-from nlp_stock_prediction.orchestration import (
-    ReportBundle,
-)
 from nlp_stock_prediction.orchestration.phase2_common import stable_digest
 from nlp_stock_prediction.orchestration.phase4_service import Phase4Service
+from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
 
 LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
     "Live report generation requires source_mode='live' or live_providers=True; "
@@ -84,13 +82,19 @@ def _project_root() -> Path:
 
 def _fixture_project_root(fixture_dir: Path | None, default: Path) -> Path:
     if fixture_dir is None:
+        if not (default / "tests" / "fixtures").exists():
+            raise ValueError(
+                "offline fixture runs require --fixture-dir when repository fixtures are absent"
+            )
         return default
     resolved = fixture_dir.resolve()
     if (resolved / "tests" / "fixtures").exists():
         return resolved
     if resolved.name == "fixtures" and resolved.parent.name == "tests":
         return resolved.parent.parent
-    return default
+    raise ValueError(
+        "--fixture-dir must point to the repository root or to its tests/fixtures directory"
+    )
 
 
 def _write_root_for_output(output_dir: Path, project_root: Path) -> Path:

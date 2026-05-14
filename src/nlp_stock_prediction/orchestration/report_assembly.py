@@ -17,6 +17,7 @@ from nlp_stock_prediction.contracts.enums import (
     WarningSeverity,
 )
 from nlp_stock_prediction.contracts.evaluation import PredictionEvaluationArtifactPayload
+from nlp_stock_prediction.contracts.instruments import InstrumentUniverse
 from nlp_stock_prediction.contracts.provenance import (
     EvidenceReference,
     ProviderHealth,
@@ -115,9 +116,18 @@ class _AssemblyBuilder:
         }
         required_artifact_ids = tuple(
             dict.fromkeys(
-                artifact_id
-                for requirements in requirements_by_candidate.values()
-                for artifact_id in requirements.artifact_ids
+                (
+                    *(
+                        artifact_id
+                        for requirements in requirements_by_candidate.values()
+                        for artifact_id in requirements.artifact_ids
+                    ),
+                    *(
+                        record.artifact_id
+                        for record in self.artifact_records
+                        if record.artifact_type == "instrument_universe"
+                    ),
+                )
             )
         )
         validation_by_artifact_id: dict[str, tuple[str, ...]] = {}
@@ -179,7 +189,6 @@ class _AssemblyBuilder:
     ) -> _CandidateRequirements:
         artifact_ids: list[str] = []
         evidence_ids = _candidate_evidence_ids(candidate)
-        self.candidate_evidence_ids[candidate.candidate_id] = evidence_ids
         for evidence_id in evidence_ids:
             self._append_map_value(
                 self.evidence_candidate_ids,
@@ -191,10 +200,22 @@ class _AssemblyBuilder:
                 artifact_ids.append(evidence.artifact_id)
 
         artifact_ids.extend(candidate.signal_artifacts)
+        for evidence_link in self.store.list_candidate_evidence_links(candidate.candidate_id):
+            self._append_map_value(
+                self.evidence_candidate_ids,
+                evidence_link.evidence_id,
+                candidate.candidate_id,
+            )
+            if evidence_link.evidence_id not in evidence_ids:
+                evidence_ids = tuple(dict.fromkeys((*evidence_ids, evidence_link.evidence_id)))
+            evidence = evidence_by_id.get(evidence_link.evidence_id)
+            if evidence is not None and evidence.artifact_id:
+                artifact_ids.append(evidence.artifact_id)
+        self.candidate_evidence_ids[candidate.candidate_id] = evidence_ids
         for artifact_id in _evaluation_artifact_ids(candidate):
             artifact_ids.append(artifact_id)
-        for link in self.store.list_candidate_artifact_links(candidate.candidate_id):
-            artifact_ids.append(link.artifact_id)
+        for artifact_link in self.store.list_candidate_artifact_links(candidate.candidate_id):
+            artifact_ids.append(artifact_link.artifact_id)
 
         unique_artifact_ids = tuple(dict.fromkeys(artifact_ids))
         self.candidate_artifact_ids[candidate.candidate_id] = unique_artifact_ids
@@ -570,6 +591,16 @@ def _validate_json_artifact_payload(record: ArtifactRecord, path: Path) -> None:
         return
     if record.artifact_type == "prediction_evaluation":
         PredictionEvaluationArtifactPayload.model_validate_json(path.read_text(encoding="utf-8"))
+        return
+    if record.artifact_type == "instrument_universe":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("instrument_universe artifact payload must be an object")
+        universe_payload = payload.get("universe")
+        if isinstance(universe_payload, dict):
+            universe_payload = dict(universe_payload)
+            universe_payload.pop("instrument_ids", None)
+        InstrumentUniverse.model_validate(universe_payload)
         return
     if record.artifact_type == "ml_forecast":
         TimesFmForecastArtifact.model_validate_json(path.read_text(encoding="utf-8"))

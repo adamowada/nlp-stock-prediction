@@ -24,7 +24,7 @@ from nlp_stock_prediction.orchestration.artifacts import (
     ArtifactIndex,
     ArtifactWriter,
 )
-from nlp_stock_prediction.orchestration.context import RunContext
+from nlp_stock_prediction.orchestration.context import RunContext, deterministic_generated_at
 from nlp_stock_prediction.orchestration.phase2_common import (
     ALLOWED_WRITE_ROOTS,
     Phase2RunPaths,
@@ -490,7 +490,8 @@ def execute_phase4_tool(
 ) -> Phase4ToolRunOutcome:
     """Execute one tool in a SQLite transaction and roll back new files on failure."""
 
-    started_at = utc_now()
+    run = store.get_research_run(run_id)
+    started_at = _phase4_timestamp_for_run(run)
     resolved_tool_run_id = tool_run_id or _phase4_tool_run_id(
         run_id=run_id,
         tool=tool,
@@ -510,6 +511,7 @@ def execute_phase4_tool(
         inputs=inputs,
     )
     try:
+        final_outcome: Phase4ToolRunOutcome
         with store.transaction():
             store.record_tool_run(
                 ToolRunRecord(
@@ -525,7 +527,7 @@ def execute_phase4_tool(
             outcome = action(context)
             if outcome.status == "failed":
                 raise _Phase4ToolReturnedFailure(outcome.error_message or "tool returned failed")
-            completed_at = utc_now()
+            completed_at = _phase4_timestamp_for_run(run)
             final_outcome = _with_execution_payload(
                 outcome=outcome,
                 run_id=run_id,
@@ -548,15 +550,15 @@ def execute_phase4_tool(
                     warnings=final_outcome.warnings,
                 )
             )
-            file_transaction.cleanup()
-            return final_outcome
+        file_transaction.cleanup()
+        return final_outcome
     except Exception as exc:
         rollback_errors: list[str] = []
         try:
             file_transaction.rollback_new_files()
         except Exception as rollback_exc:
             rollback_errors.append(str(rollback_exc))
-        completed_at = utc_now()
+        completed_at = _phase4_timestamp_for_run(run)
         error_message = str(exc)
         if rollback_errors:
             error_message = f"{error_message}; artifact rollback errors: " + "; ".join(
@@ -646,6 +648,12 @@ class Phase4Service:
     def fixtures(self) -> Phase4FixtureProviderFactory:
         return Phase4FixtureProviderFactory(cast(Path, self.fixture_root))
 
+    def _fixtures_for_run(self, run: ResearchRunRecord) -> Phase4FixtureProviderFactory:
+        return Phase4FixtureProviderFactory(
+            cast(Path, self.fixture_root),
+            fetched_at=_phase4_timestamp_for_run(run),
+        )
+
     @property
     def live_providers(self) -> Phase4LiveProviderFactoryProtocol:
         if self.live_provider_factory is None:
@@ -669,7 +677,11 @@ class Phase4Service:
         if self.store.get_research_run(run_id) is not None:
             raise ValueError(f"research run already exists: {run_id}")
         paths = self._paths(parsed_date, output_dir, symbol=normalized_symbol)
-        now = utc_now()
+        now = (
+            deterministic_generated_at(parsed_date)
+            if report_data_mode == OFFLINE_FIXTURE_REPORT_DATA_MODE
+            else utc_now()
+        )
         mode_metadata = report_data_mode_metadata(report_data_mode)
         self.store.upsert_research_run(
             ResearchRunRecord(
@@ -747,7 +759,7 @@ class Phase4Service:
             repo_root=self.repo_root,
             artifact_dir=paths.audit_dir,
             provider=market_data.provider,
-            now=utc_now,
+            now=lambda: _phase4_timestamp_for_run(run),
         ).run(
             run_id=run_id,
             run_date=run_date,
@@ -781,7 +793,7 @@ class Phase4Service:
             store=self.store,
             repo_root=self.repo_root,
             artifact_dir=paths.audit_dir,
-            now=utc_now,
+            now=lambda: _phase4_timestamp_for_run(run),
         ).run(
             run_id=run_id,
             symbol=normalized_symbol,
@@ -808,7 +820,7 @@ class Phase4Service:
             run_id=run_id,
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
-            generated_at=utc_now(),
+            generated_at=_phase4_timestamp_for_run(run),
             reddit_provider=providers.reddit_provider,
             x_provider=providers.x_provider,
             instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
@@ -825,7 +837,7 @@ class Phase4Service:
             run_id=run_id,
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
-            generated_at=utc_now(),
+            generated_at=_phase4_timestamp_for_run(run),
             providers=self._mode_adapter(run).news_providers(normalized_symbol),
             instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
         )
@@ -841,7 +853,7 @@ class Phase4Service:
             run_id=run_id,
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
-            generated_at=utc_now(),
+            generated_at=_phase4_timestamp_for_run(run),
             providers=self._mode_adapter(run).fundamentals_providers(normalized_symbol),
             instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
         )
@@ -857,7 +869,7 @@ class Phase4Service:
             run_id=run_id,
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
-            generated_at=utc_now(),
+            generated_at=_phase4_timestamp_for_run(run),
             target_snapshot=FundamentalsSnapshot(ticker=normalized_symbol),
             macro_providers=self._mode_adapter(run).macro_providers(normalized_symbol),
             instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
@@ -885,7 +897,7 @@ class Phase4Service:
                 artifact_dir=context.paths.audit_dir,
                 run_id=run_id,
                 tool_run_id=context.tool_run_id,
-                generated_at=utc_now(),
+                generated_at=_phase4_timestamp_for_run(run),
             )
             return Phase4ToolRunOutcome(
                 status="partial" if result.warnings else "successful",
@@ -955,6 +967,10 @@ class Phase4Service:
             existing_mode = report_data_mode_from_run(existing_run)
             if existing_mode != report_data_mode:
                 raise ValueError(mode_error)
+            raise ValueError(
+                "research run already exists; Phase 4 full flows do not implicitly resume "
+                f"stored evidence: {run_id}"
+            )
         self.phase4_universe_discovery(run_id=run_id, symbol=normalized_symbol)
         self.phase4_market_data(run_id=run_id, symbol=normalized_symbol)
         self.phase4_technical_package(run_id=run_id, symbol=normalized_symbol)
@@ -1294,7 +1310,7 @@ class Phase4Service:
         return self.write_policy.resolve(path)
 
     def _run_context(self, run: ResearchRunRecord, paths: Phase2RunPaths) -> RunContext:
-        generated_at = utc_now()
+        generated_at = _phase4_timestamp_for_run(run)
         return RunContext(
             run_id=run.run_id,
             run_date=run_date_from_run(run),
@@ -1320,7 +1336,7 @@ class Phase4Service:
         return Phase4RunModeAdapter(
             report_data_mode=report_data_mode_from_run(run),
             store=self.store,
-            fixtures=self.fixtures,
+            fixtures=self._fixtures_for_run(run),
             live_providers=self.live_providers,
         )
 
@@ -1476,6 +1492,18 @@ def _phase4_tool_result_payload(result: Phase4ToolResult) -> JsonObject:
         "source_query_ids": list(result.source_query_ids),
         "warnings": list(result.warnings),
     }
+
+
+def _phase4_timestamp_for_run(run: ResearchRunRecord | None) -> datetime:
+    if run is None:
+        return utc_now()
+    try:
+        mode = report_data_mode_from_run(run)
+    except ValueError:
+        return utc_now()
+    if mode == OFFLINE_FIXTURE_REPORT_DATA_MODE:
+        return deterministic_generated_at(run_date_from_run(run))
+    return utc_now()
 
 
 __all__ = [

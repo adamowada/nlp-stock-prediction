@@ -190,8 +190,12 @@ The project uses two SQLite databases:
 
 - `plans/planning.sqlite3`: tracked planning state for plans, decisions, progress, and related
   metadata.
-- `data/prediction-research.sqlite3`: ignored runtime research state for tool runs, artifacts,
-  evidence, and prediction candidates.
+- `data/prediction-research.sqlite3`: ignored default research state for service/tool runs that do
+  not choose a per-run database.
+- `data/phase4-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3`: ignored CLI
+  research databases created by `python -m nlp_stock_prediction research ...`. These isolate report
+  runs by date, symbol, output path, and live/offline mode so one invocation cannot silently reuse
+  another invocation's stored evidence.
 
 Generated reports, provider cache files, research databases, and raw artifacts are local working
 state by default and are ignored unless explicitly promoted as small test fixtures.

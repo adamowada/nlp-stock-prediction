@@ -239,9 +239,9 @@ class PredictionEvaluation(ContractModel):
             raise ValueError(
                 "prediction evaluation signal_artifacts_by_family must match signal_artifacts"
             )
-        if self.evidence_counts.technical_signal_artifacts != len(typed_ids):
+        if self.evidence_counts.technical_signal_artifacts != expected_signal_counts.technicals:
             raise ValueError(
-                "prediction evaluation technical_signal_artifacts must match signal_artifacts"
+                "prediction evaluation technical_signal_artifacts must match technical artifacts"
             )
         return self
 

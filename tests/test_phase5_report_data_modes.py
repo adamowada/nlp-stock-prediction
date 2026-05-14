@@ -28,6 +28,7 @@ from nlp_stock_prediction.orchestration import (
     Phase4Service,
     Phase4ToolExecutionError,
 )
+from nlp_stock_prediction.orchestration.phase4_fixture_providers import _StaticJsonTransport
 from nlp_stock_prediction.orchestration.phase4_live_providers import (
     Phase4LiveProviderFactoryProtocol,
 )
@@ -37,6 +38,7 @@ from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
 )
 from nlp_stock_prediction.orchestration.report_data_modes import (
     ReportInputProvenance,
+    enforce_live_report_input_boundary,
     find_non_live_report_input_violations,
     report_data_mode_metadata,
 )
@@ -44,7 +46,11 @@ from nlp_stock_prediction.pipeline import (
     LIVE_ORCHESTRATION_DISABLED_MESSAGE,
     generate_daily_report,
 )
-from nlp_stock_prediction.providers._base import missing_credentials_result, no_data_result
+from nlp_stock_prediction.providers._base import (
+    ProviderTransportError,
+    missing_credentials_result,
+    no_data_result,
+)
 from nlp_stock_prediction.storage import InstrumentRecord, PredictionCandidateRecord, ToolRunRecord
 
 RUN_DATE = date(2026, 5, 13)
@@ -116,6 +122,104 @@ def test_report_input_provenance_reads_stamped_modes() -> None:
         "provider_mode",
         "input_data_mode",
     }
+
+
+@pytest.mark.unit
+def test_live_boundary_scans_nested_metadata_values(tmp_path: Path) -> None:
+    service = Phase4Service(repo_root=tmp_path)
+    started = service.start_research_run(
+        run_date=RUN_DATE.isoformat(),
+        output_dir="reports/live-nested-leakage",
+        symbol="TSLA",
+        report_data_mode=LIVE_REPORT_DATA_MODE,
+    )
+    run_id = str(started["run_id"])
+    service.store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-nested-fixture-leakage",
+            run_id=run_id,
+            tool_name="live_tool",
+            tool_version="phase4.live.v1",
+            status="successful",
+            started_at=NOW,
+            inputs={
+                "provider_metadata": {
+                    "sources": [
+                        {"provenance": {"report_input_mode": OFFLINE_FIXTURE_REPORT_DATA_MODE}}
+                    ]
+                }
+            },
+        )
+    )
+    run = service.store.get_research_run(run_id)
+    assert run is not None
+
+    violations = find_non_live_report_input_violations(store=service.store, run=run)
+
+    assert any(violation.value == OFFLINE_FIXTURE_REPORT_DATA_MODE for violation in violations)
+
+
+@pytest.mark.unit
+def test_live_boundary_rejects_report_data_mode_override_mismatch(tmp_path: Path) -> None:
+    service = Phase4Service(repo_root=tmp_path)
+    started = service.start_research_run(
+        run_date=RUN_DATE.isoformat(),
+        output_dir="reports/offline-run",
+        symbol="TSLA",
+        report_data_mode=OFFLINE_FIXTURE_REPORT_DATA_MODE,
+    )
+    run = service.store.get_research_run(str(started["run_id"]))
+    assert run is not None
+
+    with pytest.raises(ValueError, match="does not match run metadata"):
+        enforce_live_report_input_boundary(
+            store=service.store,
+            run=run,
+            report_data_mode=LIVE_REPORT_DATA_MODE,
+        )
+
+
+@pytest.mark.unit
+def test_fixture_transport_requires_explicit_url_match() -> None:
+    transport = _StaticJsonTransport({"expected-endpoint": {"ok": True}})
+
+    with pytest.raises(ProviderTransportError, match="No fixture JSON response"):
+        transport.get_json("https://example.invalid/other-endpoint")
+
+
+@pytest.mark.integration
+def test_phase4_full_flow_does_not_implicitly_resume_existing_run(tmp_path: Path) -> None:
+    service = Phase4Service(
+        repo_root=tmp_path,
+        fixture_root=REPO_ROOT,
+        database_path=tmp_path / "runtime.sqlite3",
+        extra_write_roots=(tmp_path,),
+    )
+    service.run_offline_phase4_flow(
+        run_date="2026-05-11",
+        output_dir=str(tmp_path / "reports-a"),
+        symbol="TSLA",
+    )
+
+    with pytest.raises(ValueError, match="do not implicitly resume"):
+        service.run_offline_phase4_flow(
+            run_date="2026-05-11",
+            output_dir=str(tmp_path / "reports-b"),
+            symbol="TSLA",
+        )
+
+
+@pytest.mark.unit
+def test_pipeline_rejects_invalid_fixture_dir(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="--fixture-dir"):
+        generate_daily_report(
+            RunConfig(
+                run_date=RUN_DATE,
+                output_dir=tmp_path / "reports",
+                offline=True,
+                fixture_dir=tmp_path / "typo-fixtures",
+            )
+        )
 
 
 @pytest.mark.integration

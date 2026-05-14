@@ -206,14 +206,20 @@ class InstrumentResolution(ContractModel):
 
     @model_validator(mode="after")
     def validate_resolution_shape(self) -> InstrumentResolution:
-        match_ids = {instrument.instrument_id for instrument in self.matches}
+        match_id_list = tuple(instrument.instrument_id for instrument in self.matches)
+        match_ids = set(match_id_list)
+        if len(match_ids) != len(match_id_list):
+            raise ValueError("instrument resolution matches must be unique")
         if self.status == InstrumentResolutionStatus.RESOLVED:
             if self.selected_instrument_id is None:
                 raise ValueError("resolved instruments require selected_instrument_id")
             if self.selected_instrument_id not in match_ids:
                 raise ValueError("selected_instrument_id must reference one of the matches")
-        if self.status == InstrumentResolutionStatus.AMBIGUOUS and len(self.matches) < 2:
-            raise ValueError("ambiguous instrument resolutions require at least two matches")
+        if self.status == InstrumentResolutionStatus.AMBIGUOUS:
+            if self.selected_instrument_id is not None:
+                raise ValueError("ambiguous instrument resolutions cannot select an instrument")
+            if len(match_ids) < 2:
+                raise ValueError("ambiguous instrument resolutions require at least two matches")
         if self.status in {
             InstrumentResolutionStatus.UNSUPPORTED,
             InstrumentResolutionStatus.UNAVAILABLE,

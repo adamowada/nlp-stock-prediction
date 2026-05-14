@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -14,12 +15,13 @@ from nlp_stock_prediction.contracts.providers import (
     NewsProvider,
     RedditProvider,
 )
-from nlp_stock_prediction.orchestration.phase2_common import utc_now
 from nlp_stock_prediction.providers._base import JsonResponse, ProviderTransportError
 from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
 from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
 from nlp_stock_prediction.providers.social import XRecentSearchProvider
 from nlp_stock_prediction.reddit.provider import FixtureRedditProvider
+
+OFFLINE_FIXTURE_FETCHED_AT = datetime(2026, 5, 14, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class Phase4FixtureProviderFactory:
     """Build offline providers from the repository fixture tree."""
 
     repo_root: Path
+    fetched_at: datetime = OFFLINE_FIXTURE_FETCHED_AT
 
     def market_html_path(self, symbol: str) -> Path | None:
         return self.fixture_path(
@@ -45,7 +48,7 @@ class Phase4FixtureProviderFactory:
             FixtureRedditProvider(
                 ticker_card_html=card_path.read_text(encoding="utf-8"),
                 discussion_records=cast(list[dict[str, object]], records),
-                fetched_at=utc_now(),
+                fetched_at=self.fetched_at,
                 raw_ticker_snapshot_id="raw-reddit-ticker-card",
                 raw_discussion_snapshot_id="raw-reddit-discussion",
             ),
@@ -60,7 +63,7 @@ class Phase4FixtureProviderFactory:
         return XRecentSearchProvider(
             bearer_token="fixture-token",
             transport=_StaticJsonTransport({"tweets/search/recent": cast(JsonObject, payload)}),
-            now=utc_now,
+            now=lambda: self.fetched_at,
         )
 
     def news_providers(self, symbol: str) -> tuple[NewsProvider, ...]:
@@ -81,7 +84,7 @@ class Phase4FixtureProviderFactory:
                 transport=_StaticJsonTransport(
                     {"news.example.invalid/v1/search": cast(JsonObject, payload)}
                 ),
-                now=utc_now,
+                now=lambda: self.fetched_at,
             ),
         )
 
@@ -102,7 +105,7 @@ class Phase4FixtureProviderFactory:
                         "submissions": cast(JsonObject, submissions),
                     }
                 ),
-                now=utc_now,
+                now=lambda: self.fetched_at,
             ),
         )
 
@@ -133,8 +136,6 @@ class _StaticJsonTransport:
         for url_fragment, payload in self.responses.items():
             if url_fragment in url:
                 return JsonResponse(payload=payload)
-        if len(self.responses) == 1:
-            return JsonResponse(payload=next(iter(self.responses.values())))
         raise ProviderTransportError(
             f"No fixture JSON response is registered for URL: {url}",
             error_type="fixture_not_found",

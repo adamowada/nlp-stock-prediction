@@ -32,6 +32,7 @@ from nlp_stock_prediction.contracts import (
     SourceEvidence,
     SourceKind,
     SourceProvenance,
+    TechnicalAnalysis,
     TimeHorizon,
 )
 
@@ -169,6 +170,32 @@ def test_prediction_candidate_requires_evidence_for_supported_status() -> None:
 
 
 @pytest.mark.schema
+def test_contradicted_candidate_requires_opposing_evidence() -> None:
+    payload = _candidate().model_dump(mode="python")
+    payload["status"] = PredictionStatus.CONTRADICTED
+    payload["evidence_for"] = [EvidenceReference(evidence_id="evidence-tsla-1").model_dump()]
+    payload["evidence_against"] = []
+    payload["dissenting_evidence"] = []
+
+    with pytest.raises(ValidationError, match="opposing evidence"):
+        PredictionCandidate.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_nested_analysis_fields_reject_trading_instructions() -> None:
+    payload = _report().model_dump(mode="python")
+    payload["instrument_sections"][0]["technical_analysis"] = TechnicalAnalysis(
+        ticker="TSLA",
+        summary="Technical context is included for evidence review.",
+        trend="Buy TSLA now",
+        evidence=(EvidenceReference(evidence_id="evidence-tsla-1"),),
+    ).model_dump(mode="python")
+
+    with pytest.raises(ValidationError, match="trading instructions"):
+        DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
 def test_daily_report_is_instrument_based_not_fixed_to_six_tickers() -> None:
     report = _report()
 
@@ -301,6 +328,38 @@ def test_daily_report_requires_inline_audit_manifest_for_cited_artifacts() -> No
     ).model_dump(mode="python")
 
     assert DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_daily_report_requires_audit_manifest_run_id_to_match() -> None:
+    payload = _report().model_dump(mode="python")
+    payload["audit_manifest"] = AuditManifest(
+        run_id="different-run",
+        schema_version="audit-manifest.v2",
+        created_at=_now(),
+    ).model_dump(mode="python")
+
+    with pytest.raises(ValidationError, match="run_id"):
+        DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_audit_manifest_rejects_duplicate_artifact_ids() -> None:
+    artifact = AuditArtifact(
+        artifact_id="artifact-duplicate",
+        artifact_type="json_report",
+        path="reports/report.json",
+        created_at=_now(),
+        produced_by="unit-test",
+    )
+
+    with pytest.raises(ValidationError, match="artifact ids"):
+        AuditManifest(
+            run_id="research-2026-05-11",
+            schema_version="audit-manifest.v2",
+            created_at=_now(),
+            artifacts=(artifact, artifact),
+        )
 
 
 @pytest.mark.schema

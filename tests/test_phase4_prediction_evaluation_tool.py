@@ -33,6 +33,10 @@ from nlp_stock_prediction.evaluation import (
     attach_evaluation_metadata,
     write_prediction_evaluation_artifact,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    OFFLINE_FIXTURE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.storage import (
@@ -66,6 +70,7 @@ def _store(tmp_path: Path) -> SQLiteStore:
             objective="Evaluate prediction scenario quality.",
             status="running",
             started_at=NOW,
+            metadata=report_data_mode_metadata(OFFLINE_FIXTURE_REPORT_DATA_MODE),
         )
     )
     store.record_evidence(

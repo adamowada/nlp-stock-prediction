@@ -30,6 +30,9 @@ from nlp_stock_prediction.contracts.signal_artifact_references import (
 )
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    report_data_mode_metadata_for_run_id,
+)
 from nlp_stock_prediction.storage.records import (
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
@@ -74,13 +77,14 @@ def evaluate_prediction_candidate(
     ml_signal_count = _ml_signal_count(analysis_bundle)
     signal_artifacts = _candidate_signal_artifacts(candidate)
     signal_artifact_ids = tuple(reference.artifact_id for reference in signal_artifacts)
+    signal_artifact_counts = SignalArtifactCounts.from_references(signal_artifacts)
     counts = EvaluationEvidenceCounts(
         supporting_source_evidence=len(supporting_refs),
         contradicting_source_evidence=len(contradicting_refs),
         missing_source_references=len(missing_refs),
-        technical_signal_artifacts=len(signal_artifact_ids),
+        technical_signal_artifacts=signal_artifact_counts.technicals,
         ml_signal_count=ml_signal_count,
-        signal_artifacts_by_family=SignalArtifactCounts.from_references(signal_artifacts),
+        signal_artifacts_by_family=signal_artifact_counts,
         supporting_reference_ids=tuple(reference.evidence_id for reference in supporting_refs),
         contradicting_reference_ids=tuple(
             reference.evidence_id for reference in contradicting_refs
@@ -163,10 +167,12 @@ def write_prediction_evaluation_artifact(
         evaluation_id=f"evaluation-{_slug(candidate.candidate_id)}-{digest[:8]}",
     )
     resolved_tool_run_id = tool_run_id or f"tool-prediction-evaluation-{digest[:12]}"
+    mode_metadata = report_data_mode_metadata_for_run_id(store, run_id)
     inputs: JsonObject = {
         "candidate_id": candidate.candidate_id,
         "source_evidence_count": len(evidence_sources),
         "analysis_bundle_id": analysis_bundle.analysis_id if analysis_bundle else None,
+        **mode_metadata,
     }
     payload = PredictionEvaluationArtifactPayload(
         run_id=run_id,
@@ -204,6 +210,7 @@ def write_prediction_evaluation_artifact(
             produced_by=_TOOL_NAME,
             tool_run_id=resolved_tool_run_id,
             schema_version=payload.schema_version,
+            default_metadata=mode_metadata,
         ).write_json(
             artifact_id=artifact_id,
             artifact_type="prediction_evaluation",
@@ -216,6 +223,7 @@ def write_prediction_evaluation_artifact(
                 "evaluation_id": evaluation.evaluation_id,
                 "status": evaluation.status.value,
                 "quality_language": evaluation.quality_language.model_dump(mode="json"),
+                **mode_metadata,
             },
         )
         store.link_candidate_artifact(

@@ -177,9 +177,10 @@ def test_markdown_covers_supported_contradicted_and_neutral_candidate_states(
         }
     )
 
-    markdown = render_markdown_report(
-        report.model_copy(update={"prediction_candidates": (candidate,)})
+    rendered_report = DailyReport.model_validate(
+        report.model_copy(update={"prediction_candidates": (candidate,)}).model_dump(mode="python")
     )
+    markdown = render_markdown_report(rendered_report)
 
     assert f"Status: {status.value}; direction: {direction.value};" in markdown
     assert f"type: {prediction_type.value};" in markdown
@@ -225,6 +226,9 @@ def test_markdown_covers_structured_insufficient_evidence_report(tmp_path: Path)
             "insufficient_evidence": insufficient,
             "insufficient_evidence_summary": insufficient.summary,
         }
+    )
+    candidate_free_report = DailyReport.model_validate(
+        candidate_free_report.model_dump(mode="python")
     )
 
     markdown = render_markdown_report(candidate_free_report)
