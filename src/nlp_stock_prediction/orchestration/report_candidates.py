@@ -51,6 +51,15 @@ def prediction_candidate_from_record(
     if not isinstance(baseline, str) or not baseline.strip():
         baseline = "No directional edge is assumed without source-backed evidence."
     uncertainty = candidate.uncertainty or "Evidence coverage and freshness may limit confidence."
+    signal_artifacts = _signal_artifact_references(candidate)
+    signal_artifact_ids = tuple(
+        dict.fromkeys(
+            (
+                *candidate.signal_artifacts,
+                *(reference.artifact_id for reference in signal_artifacts),
+            )
+        )
+    )
     return PredictionCandidate(
         candidate_id=candidate.candidate_id,
         instrument_id=candidate.instrument_id,
@@ -70,8 +79,8 @@ def prediction_candidate_from_record(
         change_trigger_limitations=(
             "Stored candidate records do not yet include structured change-trigger inputs.",
         ),
-        signal_artifact_ids=candidate.signal_artifacts,
-        signal_artifacts=_signal_artifact_references(candidate.signal_artifacts),
+        signal_artifact_ids=signal_artifact_ids,
+        signal_artifacts=signal_artifacts,
         metadata=candidate.metadata,
     )
 
@@ -202,9 +211,37 @@ def _prediction_type(value: str) -> PredictionType:
 
 
 def _signal_artifact_references(
-    artifact_ids: tuple[str, ...],
+    candidate: PredictionCandidateRecord,
 ) -> tuple[SignalArtifactReference, ...]:
-    return tuple(_signal_artifact_reference(artifact_id) for artifact_id in artifact_ids)
+    references: list[SignalArtifactReference] = []
+    seen: set[str] = set()
+    for reference in _metadata_signal_artifact_references(
+        candidate.metadata.get("signal_artifacts")
+    ):
+        if reference.artifact_id in seen:
+            continue
+        seen.add(reference.artifact_id)
+        references.append(reference)
+    for artifact_id in candidate.signal_artifacts:
+        if artifact_id in seen:
+            continue
+        seen.add(artifact_id)
+        references.append(_signal_artifact_reference(artifact_id))
+    return tuple(references)
+
+
+def _metadata_signal_artifact_references(value: object) -> tuple[SignalArtifactReference, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    references: list[SignalArtifactReference] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        try:
+            references.append(SignalArtifactReference.model_validate(item))
+        except ValueError:
+            continue
+    return tuple(references)
 
 
 def _signal_artifact_reference(artifact_id: str) -> SignalArtifactReference:

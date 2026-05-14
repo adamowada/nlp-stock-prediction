@@ -121,6 +121,7 @@ class XRecentSearchProvider:
             query=query,
             url=url,
         )
+        fetched: JsonFetch | None = None
         try:
             fetched = fetch_json(
                 transport=self._transport,
@@ -158,8 +159,10 @@ class XRecentSearchProvider:
                 fetched_at=fetched_at,
                 message=str(exc),
                 credential_state=CredentialState.CONFIGURED,
-                cache_key=cache_key,
+                raw_snapshot_id=fetched.raw_snapshot_id if fetched is not None else None,
+                cache_key=fetched.cache_key if fetched is not None else cache_key,
             )
+        assert fetched is not None
         return evidence_result_from_records(
             provider_name=self.provider_name,
             request=request,

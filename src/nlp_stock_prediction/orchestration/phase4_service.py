@@ -12,7 +12,13 @@ from typing import Literal, cast
 from pydantic import Field, model_validator
 
 from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr
-from nlp_stock_prediction.contracts.enums import Direction, PredictionType, TimeHorizon
+from nlp_stock_prediction.contracts.enums import (
+    Direction,
+    PredictionType,
+    SignalArtifactFamily,
+    TimeHorizon,
+)
+from nlp_stock_prediction.contracts.evaluation import SignalArtifactReference
 from nlp_stock_prediction.contracts.instruments import InstrumentQuery, InstrumentUniverseRequest
 from nlp_stock_prediction.contracts.providers import FundamentalsSnapshot
 from nlp_stock_prediction.orchestration.artifacts import (
@@ -68,10 +74,12 @@ from nlp_stock_prediction.orchestration.phase4_technical_package import (
     Phase4TechnicalPackageTool,
 )
 from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
-    PHASE4_TOOL_NAME as PHASE4_UNIVERSE_TOOL_NAME,
+    PHASE4_FIXTURE_PROVIDER,
+    PHASE4_LIVE_SYMBOL_PROVIDER,
+    Phase4UniverseDiscoveryTool,
 )
 from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
-    Phase4UniverseDiscoveryTool,
+    PHASE4_TOOL_NAME as PHASE4_UNIVERSE_TOOL_NAME,
 )
 from nlp_stock_prediction.orchestration.report_data_modes import (
     LIVE_REPORT_DATA_MODE,
@@ -86,6 +94,7 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
 from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
 from nlp_stock_prediction.storage.records import (
+    ArtifactRecord,
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
     PredictionCandidateRecord,
@@ -537,6 +546,7 @@ def execute_phase4_tool(
                     warnings=final_outcome.warnings,
                 )
             )
+            file_transaction.cleanup()
             return final_outcome
     except Exception as exc:
         rollback_errors: list[str] = []
@@ -759,7 +769,10 @@ class Phase4Service:
             run_id=run_id,
             run_date=run_date,
             symbol=normalized_symbol,
-            instrument_id=self._instrument_id(normalized_symbol),
+            instrument_id=self._instrument_id(
+                normalized_symbol,
+                report_data_mode=report_data_mode,
+            ),
             source_url=source_url,
             options=options,
         )
@@ -793,7 +806,10 @@ class Phase4Service:
             run_id=run_id,
             symbol=normalized_symbol,
             market_data=market_path,
-            instrument_id=self._instrument_id(normalized_symbol),
+            instrument_id=self._instrument_id(
+                normalized_symbol,
+                report_data_mode=report_data_mode_from_run(run),
+            ),
         )
         return {
             "run_id": run_id,
@@ -825,7 +841,10 @@ class Phase4Service:
                 if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
                 else self.fixtures.x_provider(normalized_symbol)
             ),
-            instrument_id=self._instrument_id(normalized_symbol),
+            instrument_id=self._instrument_id(
+                normalized_symbol,
+                report_data_mode=report_data_mode_from_run(run),
+            ),
         )
         return _phase4_tool_result_payload(result)
 
@@ -845,7 +864,10 @@ class Phase4Service:
                 if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
                 else self.fixtures.news_providers(normalized_symbol)
             ),
-            instrument_id=self._instrument_id(normalized_symbol),
+            instrument_id=self._instrument_id(
+                normalized_symbol,
+                report_data_mode=report_data_mode_from_run(run),
+            ),
         )
         return _phase4_tool_result_payload(result)
 
@@ -865,7 +887,10 @@ class Phase4Service:
                 if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
                 else self.fixtures.fundamentals_providers(normalized_symbol)
             ),
-            instrument_id=self._instrument_id(normalized_symbol),
+            instrument_id=self._instrument_id(
+                normalized_symbol,
+                report_data_mode=report_data_mode_from_run(run),
+            ),
         )
         return _phase4_tool_result_payload(result)
 
@@ -886,7 +911,10 @@ class Phase4Service:
                 if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
                 else ()
             ),
-            instrument_id=self._instrument_id(normalized_symbol),
+            instrument_id=self._instrument_id(
+                normalized_symbol,
+                report_data_mode=report_data_mode_from_run(run),
+            ),
         )
         return _phase4_tool_result_payload(result)
 
@@ -1145,7 +1173,10 @@ class Phase4Service:
             for record in evidence
             if evidence_stance_from_record(record) == "contradicts"
         )
-        instrument_id = self._instrument_id(symbol)
+        instrument_id = self._instrument_id(
+            symbol,
+            report_data_mode=report_data_mode_from_run(self._require_run(run_id)),
+        )
         instrument = self.store.get_instrument(instrument_id)
         if instrument is None:
             raise ValueError(f"phase4 candidate synthesis requires instrument: {instrument_id}")
@@ -1160,6 +1191,9 @@ class Phase4Service:
         )
         confidence = (
             0.42 if evidence_for and not evidence_against else 0.28 if evidence_for else 0.18
+        )
+        signal_artifacts = _signal_artifact_references_for_run(
+            self.store.list_artifacts_for_run(run_id)
         )
         warnings = (
             ()
@@ -1182,6 +1216,7 @@ class Phase4Service:
             status=status,
             evidence_for=evidence_for[:5],
             evidence_against=evidence_against[:5],
+            signal_artifacts=tuple(reference.artifact_id for reference in signal_artifacts),
             baseline={
                 "summary": "No directional edge is assumed without source-backed evidence.",
                 "comparison": "baseline_neutral",
@@ -1195,6 +1230,9 @@ class Phase4Service:
                 "symbol": candidate_symbol.upper(),
                 "requested_symbol": symbol.upper(),
                 "source_evidence_count": len(evidence),
+                "signal_artifacts": [
+                    reference.model_dump(mode="json") for reference in signal_artifacts
+                ],
             },
         )
         artifact_id = f"artifact-phase4-prediction-inputs-{stable_digest(run_id)}"
@@ -1213,6 +1251,9 @@ class Phase4Service:
                 "requested_symbol": symbol.upper(),
                 "evidence_for": list(candidate.evidence_for),
                 "evidence_against": list(candidate.evidence_against),
+                "signal_artifacts": [
+                    reference.model_dump(mode="json") for reference in signal_artifacts
+                ],
                 "status": status,
                 "warnings": list(warnings),
             },
@@ -1349,10 +1390,27 @@ class Phase4Service:
             symbol=cast(str, run.metadata.get("symbol")),
         ).audit_dir
 
-    def _instrument_id(self, symbol: str) -> str:
+    def _instrument_id(
+        self,
+        symbol: str,
+        *,
+        report_data_mode: ReportDataMode | None = None,
+    ) -> str:
         normalized_symbol = symbol.strip().upper()
+        if report_data_mode == LIVE_REPORT_DATA_MODE:
+            instrument = self.store.find_instrument_by_provider_id(
+                PHASE4_LIVE_SYMBOL_PROVIDER,
+                "symbol",
+                normalized_symbol,
+            )
+            if instrument is not None:
+                return instrument.instrument_id
+            for discovered in self.store.find_instruments_by_symbol_or_alias(normalized_symbol):
+                if discovered.metadata.get("live_provider_symbol") is True:
+                    return discovered.instrument_id
+            return f"instrument:live:unknown:{symbol_slug(normalized_symbol)}"
         instrument = self.store.find_instrument_by_provider_id(
-            "phase4-fixture-directory",
+            PHASE4_FIXTURE_PROVIDER,
             "fixture-symbol",
             normalized_symbol,
         )
@@ -1412,6 +1470,81 @@ def _phase4_candidate_scenario(
             "subject to freshness, attribution, and baseline checks."
         )
     return f"Insufficient attributable source evidence is available for {normalized}."
+
+
+def _signal_artifact_references_for_run(
+    artifacts: tuple[ArtifactRecord, ...],
+) -> tuple[SignalArtifactReference, ...]:
+    references: list[SignalArtifactReference] = []
+    seen: set[str] = set()
+    for artifact in artifacts:
+        reference = _signal_artifact_reference_for_artifact(artifact)
+        if reference is None or reference.artifact_id in seen:
+            continue
+        seen.add(reference.artifact_id)
+        references.append(reference)
+    return tuple(references)
+
+
+def _signal_artifact_reference_for_artifact(
+    artifact: ArtifactRecord,
+) -> SignalArtifactReference | None:
+    produced_by = (artifact.produced_by or "").lower()
+    artifact_type = artifact.artifact_type
+    family: SignalArtifactFamily | None = None
+    signal_artifact_type: str | None = None
+    if artifact_type == "market_data":
+        family = SignalArtifactFamily.TECHNICALS
+        signal_artifact_type = "market_data"
+    elif artifact_type == "technical_package":
+        family = SignalArtifactFamily.TECHNICALS
+        signal_artifact_type = "technical_package"
+    elif artifact_type == "ml_forecast":
+        family = SignalArtifactFamily.TIMESFM
+        signal_artifact_type = "ml_forecast"
+    elif artifact_type == "normalized_evidence" and "social" in produced_by:
+        family = SignalArtifactFamily.SOCIAL
+        signal_artifact_type = "normalized_evidence"
+    elif artifact_type == "normalized_evidence" and "news" in produced_by:
+        family = SignalArtifactFamily.NEWS
+        signal_artifact_type = "normalized_evidence"
+    elif artifact_type == "analysis_context" and "fundamental" in produced_by:
+        family = SignalArtifactFamily.FUNDAMENTALS
+        signal_artifact_type = "analysis_context"
+    elif artifact_type == "analysis_context" and (
+        "sector" in produced_by or "macro" in produced_by
+    ):
+        family = SignalArtifactFamily.SECTOR_MACRO
+        signal_artifact_type = "analysis_context"
+    if family is None or signal_artifact_type is None:
+        return None
+    typed_artifact_type = cast(
+        Literal[
+            "market_data",
+            "technical_package",
+            "ml_forecast",
+            "normalized_evidence",
+            "analysis_context",
+        ],
+        signal_artifact_type,
+    )
+    source_evidence_ids = artifact.metadata.get("evidence_ids")
+    return SignalArtifactReference(
+        artifact_id=artifact.artifact_id,
+        family=family,
+        artifact_type=typed_artifact_type,
+        schema_version=artifact.schema_version,
+        tool_run_id=artifact.tool_run_id,
+        produced_by=artifact.produced_by,
+        created_at=artifact.created_at,
+        sha256=artifact.sha256,
+        source_evidence_ids=(
+            tuple(item for item in source_evidence_ids if isinstance(item, str))
+            if isinstance(source_evidence_ids, list | tuple)
+            else ()
+        ),
+        metadata={"derived_from_run_artifact_index": True},
+    )
 
 
 def _failed_phase4_tool_run_id(

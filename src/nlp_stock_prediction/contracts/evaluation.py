@@ -144,6 +144,27 @@ class BaselineComparison(ContractModel):
         "baseline_unavailable",
     ]
 
+    @model_validator(mode="after")
+    def validate_score_delta_and_verdict(self) -> BaselineComparison:
+        if self.verdict == "baseline_unavailable":
+            if self.score_delta != 0.0:
+                raise ValueError("baseline_unavailable comparisons require zero score_delta")
+            return self
+
+        expected_delta = round(self.candidate_score - self.baseline_score, 6)
+        if abs(self.score_delta - expected_delta) > 1e-6:
+            raise ValueError("baseline comparison score_delta must match candidate-baseline score")
+        expected_verdict = (
+            "above_baseline"
+            if expected_delta > 0.05
+            else "below_baseline"
+            if expected_delta < -0.05
+            else "near_baseline"
+        )
+        if self.verdict != expected_verdict:
+            raise ValueError("baseline comparison verdict must match score_delta")
+        return self
+
 
 class PredictionQualityLanguage(ContractModel):
     """Report-safe language metadata for evaluation artifacts."""
@@ -190,11 +211,39 @@ class PredictionEvaluation(ContractModel):
             raise ValueError(
                 "evidence-supported evaluations require attributable supporting source evidence"
             )
+        if self.status == PredictionStatus.EVIDENCE_SUPPORTED and not self.evidence_for:
+            raise ValueError("evidence-supported evaluations require evidence_for references")
         if not self.uncertainty:
             raise ValueError("prediction evaluations require uncertainty context")
+        evidence_for_ids = tuple(reference.evidence_id for reference in self.evidence_for)
+        evidence_against_ids = tuple(reference.evidence_id for reference in self.evidence_against)
+        if self.evidence_counts.supporting_reference_ids != evidence_for_ids:
+            raise ValueError(
+                "prediction evaluation evidence_for must match supporting_reference_ids"
+            )
+        if self.evidence_counts.contradicting_reference_ids != evidence_against_ids:
+            raise ValueError(
+                "prediction evaluation evidence_against must match contradicting_reference_ids"
+            )
         typed_ids = tuple(reference.artifact_id for reference in self.signal_artifacts)
         if len(set(typed_ids)) != len(typed_ids):
             raise ValueError("prediction evaluation signal artifact references must be unique")
+        if self.signal_artifact_ids != typed_ids:
+            raise ValueError(
+                "prediction evaluation signal_artifact_ids must match typed signal_artifacts"
+            )
+        expected_signal_counts = SignalArtifactCounts.from_references(self.signal_artifacts)
+        if (
+            self.evidence_counts.signal_artifacts_by_family.model_dump()
+            != expected_signal_counts.model_dump()
+        ):
+            raise ValueError(
+                "prediction evaluation signal_artifacts_by_family must match signal_artifacts"
+            )
+        if self.evidence_counts.technical_signal_artifacts != len(typed_ids):
+            raise ValueError(
+                "prediction evaluation technical_signal_artifacts must match signal_artifacts"
+            )
         return self
 
 
@@ -238,6 +287,16 @@ class PredictionOutcome(ContractModel):
             if self.observed_result is not None:
                 raise ValueError(
                     "non-observed prediction outcomes must not include observed_result"
+                )
+            if self.observed_at is not None:
+                raise ValueError("non-observed prediction outcomes must not include observed_at")
+            if self.result_value is not None or self.baseline_value is not None:
+                raise ValueError(
+                    "non-observed prediction outcomes must not include observed values"
+                )
+            if self.outcome_evidence:
+                raise ValueError(
+                    "non-observed prediction outcomes must not include outcome_evidence"
                 )
             if not self.limitations:
                 raise ValueError("non-observed prediction outcomes require limitations")

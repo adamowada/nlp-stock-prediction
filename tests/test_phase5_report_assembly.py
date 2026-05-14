@@ -60,6 +60,7 @@ def test_report_assembly_traces_candidates_to_stored_evidence_and_artifacts(
     candidate = candidates[0]
     candidate_id = cast(str, candidate["candidate_id"])
     evidence_for = cast(list[dict[str, Any]], candidate["evidence_for"])
+    signal_artifacts = cast(list[dict[str, Any]], candidate["signal_artifacts"])
     candidate_metadata = cast(dict[str, Any], candidate["metadata"])
     evaluation_metadata = cast(dict[str, Any], candidate_metadata["prediction_evaluation"])
     evaluation_artifact_id = cast(str, evaluation_metadata["artifact_id"])
@@ -70,6 +71,17 @@ def test_report_assembly_traces_candidates_to_stored_evidence_and_artifacts(
     assert all(artifact["path"] for artifact in artifacts.values())
     assert all(artifact["sha256"] for artifact in artifacts.values())
     assert artifacts[evaluation_artifact_id]["artifact_type"] == "prediction_evaluation"
+    assert signal_artifacts
+    assert {
+        "technicals",
+        "social",
+        "news",
+        "fundamentals",
+        "sector_macro",
+    }.issubset({artifact["family"] for artifact in signal_artifacts})
+    assert set(candidate["signal_artifact_ids"]) == {
+        artifact["artifact_id"] for artifact in signal_artifacts
+    }
 
     source_references = cast(list[dict[str, Any]], payload["source_references"])
     assert any(
@@ -99,6 +111,58 @@ def test_report_assembly_traces_candidates_to_stored_evidence_and_artifacts(
     assert any(
         artifact_id in traces[f"claim-{candidate_id}"]["artifact_ids"]
         for artifact_id in prediction_input_ids
+    )
+
+
+@pytest.mark.integration
+def test_report_assembly_rerender_does_not_reingest_final_report_artifacts(
+    tmp_path: Path,
+) -> None:
+    service = Phase4Service(
+        repo_root=tmp_path,
+        fixture_root=REPO_ROOT,
+        database_path=Path("data") / "prediction-research.sqlite3",
+    )
+    result = service.run_offline_phase4_flow(
+        run_date=RUN_DATE.isoformat(),
+        output_dir="reports/phase5-report-rerender",
+        symbol="TSLA",
+    )
+    run_id = str(result["run_id"])
+    first_report = cast(dict[str, object], result["report"])
+    first_payload = _read_report_payload(first_report)
+    first_standalone_manifest = json.loads(
+        Path(str(first_report["audit_manifest_path"])).read_text(encoding="utf-8")
+    )
+
+    second_report = service.render_prediction_report(run_id=run_id, symbol="TSLA")
+    second_payload = _read_report_payload(second_report)
+    second_standalone_manifest = json.loads(
+        Path(str(second_report["audit_manifest_path"])).read_text(encoding="utf-8")
+    )
+
+    first_embedded_artifacts = cast(
+        list[dict[str, Any]], first_payload["audit_manifest"]["artifacts"]
+    )
+    second_embedded_artifacts = cast(
+        list[dict[str, Any]], second_payload["audit_manifest"]["artifacts"]
+    )
+    first_standalone_artifacts = cast(list[dict[str, Any]], first_standalone_manifest["artifacts"])
+    second_standalone_artifacts = cast(
+        list[dict[str, Any]], second_standalone_manifest["artifacts"]
+    )
+
+    assert [artifact["artifact_id"] for artifact in second_embedded_artifacts] == [
+        artifact["artifact_id"] for artifact in first_embedded_artifacts
+    ]
+    assert {artifact["artifact_type"] for artifact in second_embedded_artifacts}.isdisjoint(
+        {"markdown_report", "json_report", "audit_manifest"}
+    )
+    assert [artifact["artifact_id"] for artifact in second_standalone_artifacts] == [
+        artifact["artifact_id"] for artifact in first_standalone_artifacts
+    ]
+    assert len({artifact["artifact_id"] for artifact in second_standalone_artifacts}) == len(
+        second_standalone_artifacts
     )
 
 

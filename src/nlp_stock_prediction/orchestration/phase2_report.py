@@ -11,14 +11,19 @@ from pydantic import ValidationError
 
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.enums import (
+    AssetClass,
     CredentialState,
     InstrumentResolutionStatus,
     ProviderStatus,
+    TradabilityStatus,
 )
 from nlp_stock_prediction.contracts.instruments import (
     Instrument,
+    InstrumentDataAvailability,
     InstrumentResolution,
     InstrumentUniverse,
+    ProviderInstrumentId,
+    TradabilityEvidence,
 )
 from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderHealth
 from nlp_stock_prediction.contracts.report import (
@@ -35,9 +40,13 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
     phase2_instrument,
     stable_digest,
+    symbol_slug,
     utc_now,
 )
 from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
+from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
+    PHASE4_LIVE_SYMBOL_PROVIDER,
+)
 from nlp_stock_prediction.orchestration.prior_outcomes import apply_prior_outcome_context
 from nlp_stock_prediction.orchestration.report_assembly import (
     ReportAssemblyState,
@@ -65,6 +74,8 @@ from nlp_stock_prediction.storage.records import (
     ToolRunRecord,
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
+
+_FINAL_REPORT_ARTIFACT_TYPES = frozenset({"markdown_report", "json_report", "audit_manifest"})
 
 
 def render_phase2_prediction_report(
@@ -98,9 +109,18 @@ def render_phase2_prediction_report(
     mode_metadata = report_data_mode_metadata(resolved_report_data_mode)
     evidence_records = store.list_evidence_for_run(run.run_id)
     evidence_sources = tuple(source_evidence_from_record(record) for record in evidence_records)
-    instrument = _primary_instrument(store, symbol=symbol, fallback_generated_at=now)
+    instrument = _primary_instrument(
+        store,
+        symbol=symbol,
+        fallback_generated_at=now,
+        report_data_mode=resolved_report_data_mode,
+    )
     candidate_records = store.list_prediction_candidates_for_run(run.run_id)
-    artifact_records = store.list_artifacts_for_run(run.run_id)
+    artifact_records = tuple(
+        record
+        for record in store.list_artifacts_for_run(run.run_id)
+        if record.artifact_type not in _FINAL_REPORT_ARTIFACT_TYPES
+    )
     instrument_resolutions = _instrument_resolutions_from_artifacts(
         artifact_records,
         repo_root=repo_root,
@@ -491,15 +511,64 @@ def _primary_instrument(
     *,
     symbol: str,
     fallback_generated_at: datetime,
+    report_data_mode: ReportDataMode,
 ) -> Instrument:
+    if report_data_mode == LIVE_REPORT_DATA_MODE:
+        record = store.find_instrument_by_provider_id(
+            PHASE4_LIVE_SYMBOL_PROVIDER,
+            "symbol",
+            symbol.upper(),
+        )
+        if record is not None:
+            return instrument_from_record(record)
+        for discovered in store.find_instruments_by_symbol_or_alias(symbol.upper()):
+            if discovered.metadata.get("live_provider_symbol") is True:
+                return instrument_from_record(discovered)
+        return _live_unknown_instrument(symbol.upper(), fallback_generated_at)
     instrument_id = f"instrument:codex:{symbol.upper()}"
     record = store.get_instrument(instrument_id)
     if record is not None:
         return instrument_from_record(record)
-    discovered = store.find_instruments_by_symbol_or_alias(symbol.upper())
-    if discovered:
-        return instrument_from_record(discovered[0])
+    discovered_records = store.find_instruments_by_symbol_or_alias(symbol.upper())
+    if discovered_records:
+        return instrument_from_record(discovered_records[0])
     return phase2_instrument(symbol.upper(), fallback_generated_at)
+
+
+def _live_unknown_instrument(symbol: str, retrieved_at: datetime) -> Instrument:
+    normalized = symbol.upper()
+    return Instrument(
+        instrument_id=f"instrument:live:unknown:{symbol_slug(normalized)}",
+        symbol=normalized,
+        display_name=f"{normalized} unresolved live instrument",
+        asset_class=AssetClass.UNKNOWN,
+        provider_ids=(
+            ProviderInstrumentId(
+                provider=PHASE4_LIVE_SYMBOL_PROVIDER,
+                identifier=normalized,
+                namespace="symbol",
+            ),
+        ),
+        tradability_evidence=(
+            TradabilityEvidence(
+                provider=PHASE4_LIVE_SYMBOL_PROVIDER,
+                status=TradabilityStatus.UNKNOWN,
+                retrieved_at=retrieved_at,
+                raw_identifier=f"{normalized}:live-unresolved",
+                notes="Live instrument identity could not be resolved from available providers.",
+            ),
+        ),
+        data_availability=(
+            InstrumentDataAvailability(
+                provider=PHASE4_LIVE_SYMBOL_PROVIDER,
+                data_type="live_provider_lookup",
+                status=TradabilityStatus.UNKNOWN,
+                checked_at=retrieved_at,
+                provider_identifier=normalized,
+            ),
+        ),
+        metadata={"live_provider_symbol": True, "resolution_status": "unavailable"},
+    )
 
 
 def _stale_provider_names(evidence_sources: tuple[object, ...]) -> tuple[str, ...]:

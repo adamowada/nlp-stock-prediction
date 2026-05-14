@@ -43,10 +43,11 @@ from nlp_stock_prediction.pipeline import (
     generate_daily_report,
 )
 from nlp_stock_prediction.providers._base import missing_credentials_result, no_data_result
-from nlp_stock_prediction.storage import ToolRunRecord
+from nlp_stock_prediction.storage import InstrumentRecord, PredictionCandidateRecord, ToolRunRecord
 
 RUN_DATE = date(2026, 5, 13)
 NOW = datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.unit
@@ -130,6 +131,9 @@ def test_live_phase4_report_without_inputs_renders_insufficient_evidence(
     assert payload["command_args"]["report_data_mode"] == LIVE_REPORT_DATA_MODE
     assert payload["prediction_candidates"] == []
     assert payload["insufficient_evidence"]["provider_names"] == ["live-providers"]
+    instruments = cast(list[dict[str, Any]], payload["instruments"])
+    assert instruments[0]["instrument_id"].startswith("instrument:live:unknown:")
+    assert instruments[0]["provider_ids"][0]["provider"] == "live-symbol-directory"
 
 
 @pytest.mark.integration
@@ -194,12 +198,98 @@ def test_live_phase4_flow_uses_live_providers_and_degrades_to_insufficient_evide
     assert payload["insufficient_evidence"]["provider_names"][0] == "live-providers"
     assert "tool:phase4_news_catalyst" in payload["insufficient_evidence"]["provider_names"]
     assert any(
-        health["provider_name"] == "tool:phase4_news_catalyst" and health["status"] == "partial"
+        health["provider_name"] == "tool:phase4_news_catalyst" and health["status"] == "failed"
         for health in payload["provider_health"]
     )
     assert any(
         run.tool_name == "phase4_prediction_candidate_synthesis" and run.status == "empty"
         for run in service.store.list_tool_runs_for_run(run_id)
+    )
+
+
+@pytest.mark.integration
+def test_live_phase4_flow_prefers_live_instrument_identity_when_fixture_records_exist(
+    tmp_path: Path,
+) -> None:
+    service = Phase4Service(
+        repo_root=tmp_path,
+        fixture_root=REPO_ROOT,
+        database_path=Path("data") / "prediction-research.sqlite3",
+        live_provider_factory=_UnitLiveProviderFactory(),
+    )
+    service.run_offline_phase4_flow(
+        run_date="2026-05-12",
+        output_dir="reports/offline-before-live",
+        symbol="TSLA",
+    )
+
+    result = service.run_live_phase4_flow(
+        run_date=RUN_DATE.isoformat(),
+        output_dir="reports/live-after-offline",
+        symbol="TSLA",
+    )
+
+    report_payload = cast(dict[str, object], result["report"])
+    payload = json.loads(Path(str(report_payload["json_path"])).read_text(encoding="utf-8"))
+    instruments = cast(list[dict[str, Any]], payload["instruments"])
+    assert instruments[0]["instrument_id"].startswith("instrument:live:")
+    assert instruments[0]["instrument_id"] != "instrument:codex:TSLA"
+    run = service.store.get_research_run(str(result["run_id"]))
+    assert run is not None
+    assert find_non_live_report_input_violations(store=service.store, run=run) == ()
+
+
+@pytest.mark.integration
+def test_live_boundary_scans_candidate_instrument_provider_records(tmp_path: Path) -> None:
+    service = Phase4Service(repo_root=tmp_path)
+    started = service.start_research_run(
+        run_date=RUN_DATE.isoformat(),
+        output_dir="reports/live-fixture-instrument-record",
+        symbol="TSLA",
+        report_data_mode=LIVE_REPORT_DATA_MODE,
+    )
+    run_id = str(started["run_id"])
+    service.store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="instrument:equity:us:tsla",
+            symbol="TSLA",
+            asset_class="stock",
+            name="Tesla Inc.",
+            provider_ids=(
+                {
+                    "provider": "phase4-fixture-universe",
+                    "id_type": "fixture-symbol",
+                    "identifier": "TSLA",
+                },
+            ),
+        )
+    )
+    service.store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            candidate_id="candidate-live-fixture-instrument",
+            run_id=run_id,
+            instrument_id="instrument:equity:us:tsla",
+            prediction_horizon="swing",
+            prediction_type="directional",
+            scenario="TSLA live candidate must not reuse fixture instrument provenance.",
+            status="insufficient_evidence",
+            confidence=0.18,
+            direction="mixed",
+            baseline={"summary": "No directional edge is assumed without source-backed evidence."},
+            uncertainty="Live provider evidence is unavailable.",
+            metadata={"symbol": "TSLA"},
+        )
+    )
+    run = service.store.get_research_run(run_id)
+    assert run is not None
+
+    violations = find_non_live_report_input_violations(store=service.store, run=run)
+
+    assert any(
+        violation.record_type == "instrument_provider_id"
+        and violation.field == "provider"
+        and violation.value == "phase4-fixture-universe"
+        for violation in violations
     )
 
 

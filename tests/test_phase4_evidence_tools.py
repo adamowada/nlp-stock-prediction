@@ -470,7 +470,7 @@ def test_phase4_news_tool_writes_warning_artifact_for_provider_failures(
 
     payload = _artifact_payload(result.artifact_path)
 
-    assert result.status == "partial"
+    assert result.status == "failed"
     assert result.evidence_ids == ()
     assert store.get_artifact(result.artifact_id) is not None
     assert len(store.list_source_queries_for_run(RUN_ID)) == 2

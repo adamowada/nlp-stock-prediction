@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
+import tempfile
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -241,42 +243,51 @@ class ArtifactFileTransaction:
 
     root: Path
     files_before: frozenset[Path]
-    file_snapshots: dict[Path, bytes]
+    file_snapshots: dict[Path, Path]
+    backup_root: Path | None = None
 
     @classmethod
     def begin(cls, root: Path) -> ArtifactFileTransaction:
         resolved_root = root.resolve()
-        snapshots = _existing_file_snapshots(resolved_root)
+        snapshots, backup_root = _existing_file_snapshots(resolved_root)
         return cls(
             root=resolved_root,
             files_before=frozenset(snapshots),
             file_snapshots=snapshots,
+            backup_root=backup_root,
         )
 
     def rollback_new_files(self) -> None:
-        if not self.root.exists():
-            for path, content in self.file_snapshots.items():
+        try:
+            if not self.root.exists():
+                for path, backup_path in self.file_snapshots.items():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(backup_path, path)
+                return
+            for path in sorted(
+                (candidate for candidate in self.root.rglob("*") if candidate.is_file()),
+                key=lambda item: len(item.parts),
+                reverse=True,
+            ):
+                resolved = path.resolve()
+                if resolved not in self.files_before:
+                    path.unlink(missing_ok=True)
+            for path, backup_path in self.file_snapshots.items():
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(content)
-            return
-        for path in sorted(
-            (candidate for candidate in self.root.rglob("*") if candidate.is_file()),
-            key=lambda item: len(item.parts),
-            reverse=True,
-        ):
-            resolved = path.resolve()
-            if resolved not in self.files_before:
-                path.unlink(missing_ok=True)
-        for path, content in self.file_snapshots.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-        for directory in sorted(
-            (candidate for candidate in self.root.rglob("*") if candidate.is_dir()),
-            key=lambda item: len(item.parts),
-            reverse=True,
-        ):
-            with suppress(OSError):
-                directory.rmdir()
+                shutil.copy2(backup_path, path)
+            for directory in sorted(
+                (candidate for candidate in self.root.rglob("*") if candidate.is_dir()),
+                key=lambda item: len(item.parts),
+                reverse=True,
+            ):
+                with suppress(OSError):
+                    directory.rmdir()
+        finally:
+            self.cleanup()
+
+    def cleanup(self) -> None:
+        if self.backup_root is not None:
+            shutil.rmtree(self.backup_root, ignore_errors=True)
 
 
 def _existing_files(root: Path) -> frozenset[Path]:
@@ -285,8 +296,18 @@ def _existing_files(root: Path) -> frozenset[Path]:
     return frozenset(path.resolve() for path in root.rglob("*") if path.is_file())
 
 
-def _existing_file_snapshots(root: Path) -> dict[Path, bytes]:
-    return {path: path.read_bytes() for path in _existing_files(root)}
+def _existing_file_snapshots(root: Path) -> tuple[dict[Path, Path], Path | None]:
+    files = _existing_files(root)
+    if not files:
+        return {}, None
+    backup_root = Path(tempfile.mkdtemp(prefix="nlp-stock-artifact-rollback-")).resolve()
+    snapshots: dict[Path, Path] = {}
+    for index, path in enumerate(sorted(files)):
+        backup_path = backup_root / f"{index:08d}.snapshot"
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, backup_path)
+        snapshots[path] = backup_path
+    return snapshots, backup_root
 
 
 __all__ = ["ArtifactFileTransaction", "ArtifactIndex", "ArtifactType", "ArtifactWriter"]

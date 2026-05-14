@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from nlp_stock_prediction.contracts.enums import (
     CredentialState,
@@ -120,6 +121,7 @@ class PublicNewsProvider:
             if self._config.requires_api_key
             else CredentialState.NOT_REQUIRED
         )
+        fetched: JsonFetch | None = None
         try:
             fetched = fetch_json(
                 transport=self._transport,
@@ -148,8 +150,10 @@ class PublicNewsProvider:
                 fetched_at=fetched_at,
                 message=str(exc),
                 credential_state=credential_state,
-                cache_key=cache_key,
+                raw_snapshot_id=fetched.raw_snapshot_id if fetched is not None else None,
+                cache_key=fetched.cache_key if fetched is not None else cache_key,
             )
+        assert fetched is not None
         return evidence_result_from_records(
             provider_name=self.provider_name,
             request=request,
@@ -296,7 +300,7 @@ class PublicNewsProvider:
                             "source_name": source_name,
                             "author": raw_article.get("author"),
                             "cache_hit": fetched.cache_hit,
-                            "source_query_url": source_url,
+                            "source_query_url": _redact_sensitive_url(source_url),
                         },
                     ),
                     metadata={"source_name": source_name},
@@ -310,6 +314,18 @@ def _optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _redact_sensitive_url(url: str) -> str:
+    sensitive = {"api_key", "apikey", "token", "access_token", "key", "bearer"}
+    split = urlsplit(url)
+    query = urlencode(
+        [
+            (key, "REDACTED" if key.lower() in sensitive else value)
+            for key, value in parse_qsl(split.query, keep_blank_values=True)
+        ]
+    )
+    return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
 
 
 __all__ = ["PublicNewsProvider", "PublicNewsProviderConfig"]

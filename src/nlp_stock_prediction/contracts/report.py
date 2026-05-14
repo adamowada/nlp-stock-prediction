@@ -281,6 +281,10 @@ class PredictionCandidate(ContractModel):
     def validate_evidence_shape(self) -> PredictionCandidate:
         if self.status == PredictionStatus.EVIDENCE_SUPPORTED and not self.evidence_for:
             raise ValueError("evidence-supported predictions require evidence_for")
+        if self.status == PredictionStatus.EVIDENCE_SUPPORTED and not (
+            self.uncertainties or self.uncertainty_drivers
+        ):
+            raise ValueError("evidence-supported predictions require uncertainty context")
         if self.status in {
             PredictionStatus.CONTRADICTED,
             PredictionStatus.INSUFFICIENT_EVIDENCE,
@@ -462,6 +466,7 @@ DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
         "Data Freshness",
         "Provider Health",
         "Provider Warnings",
+        "Universe Resolution",
         "Instrument Sections",
         "Prediction Scenarios Or Insufficient-Evidence Summary",
         "Prior-Outcome Review",
@@ -518,6 +523,10 @@ DEFAULT_JSON_REPORT_CONTRACT = JsonReportContract(
         JsonReportSectionContract(
             heading="Provider Warnings",
             json_pointers=("/provider_health",),
+        ),
+        JsonReportSectionContract(
+            heading="Universe Resolution",
+            json_pointers=("/instrument_resolutions",),
         ),
         JsonReportSectionContract(
             heading="Instrument Sections",
@@ -770,7 +779,9 @@ class DailyReport(ContractModel):
                     "report evidence_sources must include related instrument evidence_ids"
                 )
             raise ValueError("report evidence_sources must include every cited evidence_id")
-        if artifact_ids and referenced_artifact_ids.difference(artifact_ids):
+        if referenced_artifact_ids and not isinstance(self.audit_manifest, AuditManifest):
+            raise ValueError("report audit manifest must include every cited artifact_id")
+        if referenced_artifact_ids.difference(artifact_ids):
             raise ValueError("report audit artifacts must include every cited artifact_id")
         _validate_evidence_references_against_sources(self, evidence_by_id)
         return self
@@ -843,12 +854,30 @@ def _iter_report_evidence_references(report: DailyReport) -> tuple[EvidenceRefer
 _TRADING_INSTRUCTION_PATTERNS = (
     r"\b(buy|sell)\s+(?!or\b|instruction\b|guidance\b|language\b)"
     r"(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"\b(purchase|acquire|accumulate)\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"\bload\s+up\s+on\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"\b(trim|liquidate|cover)\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"\breduce\s+exposure\s+(to|in)\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
     r"\b(buy|sell|short)\s+the\s+(stock|shares?|coin|token|etf|contract|instrument)\b",
-    r"\b(should|must|need to|time to)\s+(buy|sell|short|go long|go short)\b",
+    r"\b(purchase|acquire|accumulate|load\s+up\s+on)\s+the\s+"
+    r"(stock|shares?|coin|token|etf|contract|instrument)\b",
+    r"\b(trim|reduce|liquidate|cover)\s+(your|the|a|an|their|our)?\s*"
+    r"(position|exposure|stake)\b",
+    r"\b(should|must|need to|time to)\s+"
+    r"(buy|sell|short|go long|go short|purchase|acquire|accumulate|trim|liquidate)\b",
+    r"\b(should|must|need to|time to)\s+reduce\s+(position|exposure|stake)\b",
     r"\b(you|we|investors?|traders?)\s+"
-    r"(should|must|need to|ought to)\s+(buy|sell|short|go long|go short|enter|exit)\b",
-    r"\b(recommend|recommendation|advice)\s+(to\s+)?(buy|sell|short|go long|go short)\b",
-    r"\brecommendation\s*:\s*(buy|sell|short|hold)\b",
+    r"(should|must|need to|ought to)\s+"
+    r"(buy|sell|short|go long|go short|enter|exit|purchase|acquire|accumulate|trim|liquidate)\b",
+    r"\b(you|we|investors?|traders?)\s+"
+    r"(should|must|need to|ought to)\s+reduce\s+(position|exposure|stake)\b",
+    r"\b(recommend|recommendation|advice)\s+(to\s+)?"
+    r"(buy|sell|short|go long|go short|purchase|acquire|accumulate|trim|liquidate)\b",
+    r"\b(recommend|recommendation|advice)\s+(to\s+)?"
+    r"reduce\s+(position|exposure|stake)\b",
+    r"\brecommendation\s*:\s*"
+    r"(buy|sell|short|hold|purchase|acquire|accumulate|trim|liquidate)\b",
+    r"\brecommendation\s*:\s*reduce\s+(position|exposure|stake)\b",
     r"\b(go|stay)\s+(long|short)\b",
     r"\b(enter|exit|open|close)\s+(a\s+)?(long|short\s+)?position\b",
     r"\b(set|use)\s+(a\s+)?stop[-\s]?loss\b",

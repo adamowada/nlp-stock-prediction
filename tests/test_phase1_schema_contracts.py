@@ -7,6 +7,8 @@ from pydantic import ValidationError
 
 from nlp_stock_prediction.contracts import (
     AssetClass,
+    AuditArtifact,
+    AuditManifest,
     DailyReport,
     DataFreshnessSummary,
     Direction,
@@ -25,6 +27,8 @@ from nlp_stock_prediction.contracts import (
     RelatedInstrument,
     ReportSourceReference,
     RetrievalMethod,
+    SignalArtifactFamily,
+    SignalArtifactReference,
     SourceEvidence,
     SourceKind,
     SourceProvenance,
@@ -241,6 +245,15 @@ def test_prediction_candidate_requires_change_trigger_context() -> None:
 
 
 @pytest.mark.schema
+def test_prediction_candidate_rejects_trading_instruction_synonyms() -> None:
+    payload = _candidate().model_dump(mode="python")
+    payload["thesis"] = "Investors should accumulate TSLA."
+
+    with pytest.raises(ValidationError, match="trading language"):
+        PredictionCandidate.model_validate(payload)
+
+
+@pytest.mark.schema
 def test_daily_report_requires_material_claim_traces_for_candidates() -> None:
     payload = _report().model_dump(mode="python")
     payload["material_claim_traces"] = []
@@ -256,6 +269,38 @@ def test_daily_report_validates_material_claim_trace_source_reference_ids() -> N
 
     with pytest.raises(ValidationError, match="source_reference_ids"):
         DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_daily_report_requires_inline_audit_manifest_for_cited_artifacts() -> None:
+    signal_ref = SignalArtifactReference(
+        artifact_id="artifact-technical-tsla",
+        family=SignalArtifactFamily.TECHNICALS,
+        artifact_type="technical_package",
+    )
+    payload = _report().model_dump(mode="python")
+    payload["prediction_candidates"][0]["signal_artifact_ids"] = [signal_ref.artifact_id]
+    payload["prediction_candidates"][0]["signal_artifacts"] = [signal_ref.model_dump(mode="python")]
+
+    with pytest.raises(ValidationError, match="audit manifest"):
+        DailyReport.model_validate(payload)
+
+    payload["audit_manifest"] = AuditManifest(
+        run_id="research-2026-05-11",
+        schema_version="audit-manifest.v1",
+        created_at=_now(),
+        artifacts=(
+            AuditArtifact(
+                artifact_id=signal_ref.artifact_id,
+                artifact_type="technical_package",
+                path="reports/audit/technical.json",
+                created_at=_now(),
+                produced_by="phase4_technical_package",
+            ),
+        ),
+    ).model_dump(mode="python")
+
+    assert DailyReport.model_validate(payload)
 
 
 @pytest.mark.schema

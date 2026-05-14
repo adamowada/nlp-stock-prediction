@@ -23,7 +23,12 @@ from nlp_stock_prediction.contracts import (
     TimeHorizon,
     WarningCode,
 )
-from nlp_stock_prediction.providers._base import JsonResponse, ProviderCache, ProviderTransportError
+from nlp_stock_prediction.providers._base import (
+    JsonResponse,
+    MalformedProviderResponse,
+    ProviderCache,
+    ProviderTransportError,
+)
 from nlp_stock_prediction.providers.fred import FredMacroProvider
 from nlp_stock_prediction.providers.market import (
     AlphaVantageFundamentalsProvider,
@@ -70,6 +75,25 @@ class _FakeJsonTransport:
 @dataclass
 class _FailingJsonTransport:
     error: ProviderTransportError
+    calls: list[str] = field(default_factory=list)
+    headers: list[Mapping[str, str] | None] = field(default_factory=list)
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+    ) -> JsonResponse:
+        del timeout
+        self.calls.append(url)
+        self.headers.append(headers)
+        raise self.error
+
+
+@dataclass
+class _MalformedJsonTransport:
+    error: MalformedProviderResponse
     calls: list[str] = field(default_factory=list)
     headers: list[Mapping[str, str] | None] = field(default_factory=list)
 
@@ -232,6 +256,42 @@ def test_public_news_provider_uses_configured_mapping_and_normalizes_articles() 
     assert article.provenance.provider_metadata["source_name"] == "Example Markets"
     assert "search=TSLA" in transport.calls[0]
     assert "token=fixture-key" in transport.calls[0]
+
+
+@pytest.mark.contract
+def test_public_news_provider_redacts_api_key_from_source_query_metadata() -> None:
+    config = PublicNewsProviderConfig(
+        provider_name="fixture-news",
+        endpoint="https://news.example.invalid/v1/search",
+        api_key_param="apiKey",
+        query_param="search",
+    )
+    transport = _FakeJsonTransport(
+        {"news.example.invalid/v1/search": JsonResponse(payload=_fixture("news", "tsla.json"))}
+    )
+    provider = PublicNewsProvider(
+        config=config,
+        api_key="super-secret-news-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-redaction-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+        query="TSLA",
+        limit=3,
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.OK
+    assert result.data is not None
+    source_query_url = result.data[0].provenance.provider_metadata["source_query_url"]
+    assert isinstance(source_query_url, str)
+    assert "super-secret-news-key" not in source_query_url
+    assert "apiKey=REDACTED" in source_query_url
+    assert "super-secret-news-key" in transport.calls[0]
 
 
 @pytest.mark.contract
@@ -429,6 +489,31 @@ def test_public_news_provider_maps_upstream_unavailable_transport_failure() -> N
 
 
 @pytest.mark.contract
+def test_public_news_provider_maps_malformed_transport_without_snapshot() -> None:
+    transport = _MalformedJsonTransport(MalformedProviderResponse("provider returned invalid JSON"))
+    provider = PublicNewsProvider(
+        config=PublicNewsProviderConfig(provider_name="fixture-news"),
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-malformed-json-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.MALFORMED
+    assert result.data is None
+    assert result.raw_snapshot_id is None
+    assert result.cache_key is not None
+    assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
+    assert len(transport.calls) == 1
+
+
+@pytest.mark.contract
 def test_alpha_vantage_daily_candles_map_and_reuse_cache(tmp_path: Path) -> None:
     transport = _FakeJsonTransport(
         {
@@ -532,6 +617,8 @@ def test_alpha_vantage_daily_candles_reports_malformed_volume() -> None:
 
     assert result.status == ProviderStatus.MALFORMED
     assert result.data is None
+    assert result.raw_snapshot_id is not None
+    assert result.cache_key is not None
     assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
     assert "invalid OHLCV" in result.warnings[0].message
 

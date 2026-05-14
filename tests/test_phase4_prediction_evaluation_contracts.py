@@ -34,6 +34,7 @@ from nlp_stock_prediction.contracts import (
 from nlp_stock_prediction.contracts.evaluation import (
     BaselineComparison,
     EvaluationEvidenceCounts,
+    SignalArtifactCounts,
 )
 from nlp_stock_prediction.evaluation import evaluate_prediction_candidate
 
@@ -355,6 +356,110 @@ def test_evaluation_contract_rejects_supported_status_without_source_evidence() 
 
 
 @pytest.mark.unit
+def test_evaluation_contract_rejects_mismatched_reference_counts() -> None:
+    with pytest.raises(ValidationError, match="evidence_for"):
+        PredictionEvaluation(
+            evaluation_id="evaluation-invalid-reference-counts",
+            candidate_id="candidate-invalid",
+            instrument_id="instrument:equity:us:tsla",
+            symbol="TSLA",
+            created_at=NOW,
+            status=PredictionStatus.EVIDENCE_SUPPORTED,
+            score=0.61,
+            baseline_comparison=BaselineComparison(
+                baseline_id="no_directional_edge",
+                baseline_summary="No directional edge baseline.",
+                baseline_score=0.5,
+                candidate_score=0.61,
+                score_delta=0.11,
+                verdict="above_baseline",
+            ),
+            uncertainty=("Reference alignment should fail this contract.",),
+            evidence_counts=EvaluationEvidenceCounts(
+                supporting_source_evidence=1,
+                contradicting_source_evidence=0,
+                missing_source_references=0,
+                supporting_reference_ids=("evidence-support",),
+            ),
+            evidence_for=(),
+        )
+
+
+@pytest.mark.unit
+def test_evaluation_contract_rejects_signal_artifact_count_mismatch() -> None:
+    signal_ref = SignalArtifactReference(
+        artifact_id="artifact-social-tsla",
+        family=SignalArtifactFamily.SOCIAL,
+        artifact_type="normalized_evidence",
+    )
+
+    with pytest.raises(ValidationError, match="signal_artifact_ids"):
+        PredictionEvaluation(
+            evaluation_id="evaluation-invalid-signal-ids",
+            candidate_id="candidate-invalid",
+            instrument_id="instrument:equity:us:tsla",
+            symbol="TSLA",
+            created_at=NOW,
+            status=PredictionStatus.INSUFFICIENT_EVIDENCE,
+            score=0.2,
+            baseline_comparison=BaselineComparison(
+                baseline_id="no_directional_edge",
+                baseline_summary="No directional edge baseline.",
+                baseline_score=0.5,
+                candidate_score=0.2,
+                score_delta=-0.3,
+                verdict="below_baseline",
+            ),
+            uncertainty=("Signal artifact alignment should fail this contract.",),
+            evidence_counts=EvaluationEvidenceCounts(
+                supporting_source_evidence=0,
+                contradicting_source_evidence=0,
+                missing_source_references=0,
+                technical_signal_artifacts=1,
+                signal_artifacts_by_family=SignalArtifactCounts(social=1),
+            ),
+            signal_artifact_ids=("artifact-other",),
+            signal_artifacts=(signal_ref,),
+        )
+
+
+@pytest.mark.unit
+def test_baseline_comparison_rejects_inconsistent_delta_and_verdict() -> None:
+    with pytest.raises(ValidationError, match="score_delta"):
+        BaselineComparison(
+            baseline_id="no_directional_edge",
+            baseline_summary="No directional edge baseline.",
+            baseline_score=0.5,
+            candidate_score=0.61,
+            score_delta=0.01,
+            verdict="above_baseline",
+        )
+
+    with pytest.raises(ValidationError, match="verdict"):
+        BaselineComparison(
+            baseline_id="no_directional_edge",
+            baseline_summary="No directional edge baseline.",
+            baseline_score=0.5,
+            candidate_score=0.61,
+            score_delta=0.11,
+            verdict="near_baseline",
+        )
+
+
+@pytest.mark.unit
+def test_prediction_candidate_requires_uncertainty_for_supported_status() -> None:
+    source = _source("evidence-support", "Fixture catalyst supports the TSLA scenario.")
+    payload = _candidate(
+        evidence_for=(EvidenceReference(evidence_id=source.evidence_id),),
+    ).model_dump(mode="python")
+    payload["uncertainties"] = []
+    payload["uncertainty_drivers"] = []
+
+    with pytest.raises(ValidationError, match="uncertainty"):
+        PredictionCandidate.model_validate(payload)
+
+
+@pytest.mark.unit
 def test_prediction_outcome_and_outcome_evaluation_accept_observed_result() -> None:
     evidence = EvidenceReference(evidence_id="evidence-outcome-tsla")
     outcome = PredictionOutcome(
@@ -401,6 +506,37 @@ def test_prediction_outcome_requires_limitations_when_unavailable() -> None:
             evaluation_window_start=NOW,
             evaluation_window_end=NOW + timedelta(days=5),
             status=PredictionOutcomeStatus.UNAVAILABLE,
+        )
+
+
+@pytest.mark.unit
+def test_prediction_outcome_rejects_observed_fields_when_unavailable() -> None:
+    with pytest.raises(ValidationError, match="observed_at"):
+        PredictionOutcome(
+            outcome_id="outcome-unavailable-observed-fields",
+            candidate_id="candidate-tsla-quality",
+            instrument_id="instrument:equity:us:tsla",
+            symbol="TSLA",
+            prediction_type=PredictionType.DIRECTIONAL,
+            evaluation_window_start=NOW,
+            evaluation_window_end=NOW + timedelta(days=5),
+            status=PredictionOutcomeStatus.UNAVAILABLE,
+            observed_at=NOW + timedelta(days=5),
+            limitations=("Provider result was unavailable.",),
+        )
+
+    with pytest.raises(ValidationError, match="observed values"):
+        PredictionOutcome(
+            outcome_id="outcome-unavailable-result-value",
+            candidate_id="candidate-tsla-quality",
+            instrument_id="instrument:equity:us:tsla",
+            symbol="TSLA",
+            prediction_type=PredictionType.DIRECTIONAL,
+            evaluation_window_start=NOW,
+            evaluation_window_end=NOW + timedelta(days=5),
+            status=PredictionOutcomeStatus.UNAVAILABLE,
+            result_value=0.3,
+            limitations=("Provider result was unavailable.",),
         )
 
 

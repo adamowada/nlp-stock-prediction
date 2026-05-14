@@ -242,6 +242,58 @@ def find_non_live_report_input_violations(
                 evidence.provenance_json,
             )
         )
+    for candidate in store.list_prediction_candidates_for_run(run.run_id):
+        violations.extend(
+            _text_marker_violations(
+                record_type="prediction_candidate",
+                record_id=candidate.candidate_id,
+                fields={
+                    "instrument_id": candidate.instrument_id,
+                    "prediction_horizon": candidate.prediction_horizon,
+                    "prediction_type": candidate.prediction_type,
+                    "scenario": candidate.scenario,
+                    "signal_artifacts": " ".join(candidate.signal_artifacts),
+                },
+            )
+        )
+        violations.extend(
+            _metadata_violations(
+                "prediction_candidate",
+                candidate.candidate_id,
+                candidate.metadata,
+            )
+        )
+        violations.extend(
+            _metadata_violations(
+                "prediction_candidate_baseline",
+                candidate.candidate_id,
+                candidate.baseline,
+            )
+        )
+        instrument = store.get_instrument(candidate.instrument_id)
+        if instrument is not None:
+            violations.extend(_instrument_violations(instrument.instrument_id, instrument.metadata))
+            violations.extend(
+                _structured_record_violations(
+                    "instrument_provider_id",
+                    instrument.instrument_id,
+                    instrument.provider_ids,
+                )
+            )
+            violations.extend(
+                _structured_record_violations(
+                    "instrument_tradability",
+                    instrument.instrument_id,
+                    instrument.tradability_evidence,
+                )
+            )
+            violations.extend(
+                _structured_record_violations(
+                    "instrument_data_availability",
+                    instrument.instrument_id,
+                    instrument.data_availability,
+                )
+            )
     return tuple(_dedupe_violations(violations))
 
 
@@ -283,6 +335,30 @@ def _text_marker_violations(
         for field, value in fields.items()
         if _text_is_non_live(value)
     ]
+
+
+def _instrument_violations(
+    instrument_id: str,
+    metadata: JsonObject,
+) -> list[ReportInputBoundaryViolation]:
+    violations = _text_marker_violations(
+        record_type="instrument",
+        record_id=instrument_id,
+        fields={"instrument_id": instrument_id},
+    )
+    violations.extend(_metadata_violations("instrument", instrument_id, metadata))
+    return violations
+
+
+def _structured_record_violations(
+    record_type: str,
+    record_id: str,
+    values: tuple[JsonObject, ...],
+) -> list[ReportInputBoundaryViolation]:
+    violations: list[ReportInputBoundaryViolation] = []
+    for index, value in enumerate(values):
+        violations.extend(_metadata_violations(record_type, f"{record_id}:{index}", value))
+    return violations
 
 
 def _mode_value_is_non_live(value: JsonValue) -> bool:

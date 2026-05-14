@@ -152,6 +152,9 @@ def safe_phase4_tool_execution(
             )
         )
         raise
+    else:
+        for file_transaction in file_transactions:
+            file_transaction.cleanup()
 
 
 def standardize_phase4_tool_run_status(

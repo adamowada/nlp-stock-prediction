@@ -113,6 +113,7 @@ class AlphaVantageMarketDataProvider:
             url=url,
             options={"interval": request.interval, "adjusted": request.adjusted},
         )
+        fetched: JsonFetch | None = None
         try:
             fetched = fetch_json(
                 transport=self._transport,
@@ -136,6 +137,7 @@ class AlphaVantageMarketDataProvider:
                 credential_state=CredentialState.CONFIGURED,
             )
         except AlphaVantageRateLimitNotice as exc:
+            assert fetched is not None
             return rate_limited_result(
                 provider_name=self.provider_name,
                 request=request,
@@ -151,8 +153,10 @@ class AlphaVantageMarketDataProvider:
                 fetched_at=fetched_at,
                 message=str(exc),
                 credential_state=CredentialState.CONFIGURED,
-                cache_key=cache_key,
+                raw_snapshot_id=fetched.raw_snapshot_id if fetched is not None else None,
+                cache_key=fetched.cache_key if fetched is not None else cache_key,
             )
+        assert fetched is not None
         if not snapshot.bars:
             return no_data_result(
                 provider_name=self.provider_name,
@@ -316,6 +320,7 @@ class AlphaVantageFundamentalsProvider:
             query=ticker,
             url=url,
         )
+        fetched: JsonFetch | None = None
         try:
             fetched = fetch_json(
                 transport=self._transport,
@@ -339,6 +344,7 @@ class AlphaVantageFundamentalsProvider:
                 credential_state=CredentialState.CONFIGURED,
             )
         except AlphaVantageRateLimitNotice as exc:
+            assert fetched is not None
             return rate_limited_result(
                 provider_name=self.provider_name,
                 request=request,
@@ -354,8 +360,10 @@ class AlphaVantageFundamentalsProvider:
                 fetched_at=fetched_at,
                 message=str(exc),
                 credential_state=CredentialState.CONFIGURED,
-                cache_key=cache_key,
+                raw_snapshot_id=fetched.raw_snapshot_id if fetched is not None else None,
+                cache_key=fetched.cache_key if fetched is not None else cache_key,
             )
+        assert fetched is not None
         if not snapshot.metrics:
             return no_data_result(
                 provider_name=self.provider_name,

@@ -619,7 +619,7 @@ def tool_status(*, record_count: int, warnings: Sequence[str]) -> str:
     if record_count:
         return "successful"
     if warnings:
-        return "partial"
+        return "failed"
     return "empty"
 
 
