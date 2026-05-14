@@ -11,12 +11,19 @@ from typing import Any, cast
 import pytest
 
 from nlp_stock_prediction.contracts import (
+    FreshnessStatus,
     FundamentalsSnapshot,
     ProviderMetric,
     RedditProvider,
+    RetrievalMethod,
+    SourceEvidence,
+    SourceKind,
+    SourceProvenance,
     TimeHorizon,
     WarningCode,
 )
+from nlp_stock_prediction.orchestration.phase2_evidence import evidence_stance_from_record
+from nlp_stock_prediction.orchestration.phase4_common import evidence_reference
 from nlp_stock_prediction.orchestration.phase4_fundamentals import (
     run_phase4_fundamentals_tool,
 )
@@ -134,6 +141,30 @@ def _artifact_payload(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
+def store_evidence_text_with_newlines() -> SourceEvidence:
+    text = "\n\nTSLA revenue beat expectations\nwhile margins stayed under pressure."
+    return SourceEvidence(
+        evidence_id="evidence-newline-span",
+        source_kind=SourceKind.NEWS_ARTICLE,
+        ticker="TSLA",
+        text=text,
+        permalink="https://example.test/newline",
+        matched_tickers=("TSLA",),
+        provenance=SourceProvenance(
+            provider_name="fixture-news",
+            source_kind=SourceKind.NEWS_ARTICLE,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=FETCHED_AT,
+            source_url="https://example.test/newline",
+            permalink="https://example.test/newline",
+            raw_identifier="newline",
+            raw_snapshot_id="raw-newline",
+            query="TSLA",
+            freshness_status=FreshnessStatus.FRESH,
+        ),
+    )
+
+
 def test_phase4_social_tool_indexes_social_evidence_and_derived_labels(tmp_path: Path) -> None:
     store = _store(tmp_path)
     reddit_provider = FixtureRedditProvider(
@@ -170,7 +201,7 @@ def test_phase4_social_tool_indexes_social_evidence_and_derived_labels(tmp_path:
     labels = payload["derived_analysis"]["labels"]
     evidence_rows = store.list_evidence_for_run(RUN_ID)
 
-    assert result.status == "ok"
+    assert result.status == "successful"
     assert store.get_tool_run(result.tool_run_id) is not None
     assert store.get_artifact(result.artifact_id) is not None
     assert len(store.list_source_queries_for_run(RUN_ID)) == 2
@@ -180,6 +211,15 @@ def test_phase4_social_tool_indexes_social_evidence_and_derived_labels(tmp_path:
     assert all(row.metadata["source_evidence"] for row in evidence_rows)
     assert any("AI calls look expensive" in row.claim for row in evidence_rows)
     assert all("derived_analysis" in row.metadata for row in evidence_rows)
+    assert any(evidence_stance_from_record(row) == "contradicts" for row in evidence_rows)
+    x_query = next(
+        query
+        for query in store.list_source_queries_for_run(RUN_ID)
+        if query.provider == "x-recent-search"
+    )
+    assert x_query.url is not None
+    assert "tweets/search/recent" in x_query.url
+    assert "x.com/i/web/status" not in x_query.url
 
 
 def test_phase4_news_tool_preserves_articles_and_catalyst_labels(tmp_path: Path) -> None:
@@ -230,13 +270,18 @@ def test_phase4_news_tool_preserves_articles_and_catalyst_labels(tmp_path: Path)
     labels = payload["derived_analysis"]["labels"]
     evidence_rows = store.list_evidence_for_run(RUN_ID)
 
-    assert result.status == "ok"
+    assert result.status == "successful"
     assert len(store.list_source_queries_for_run(RUN_ID)) == 2
     assert len(evidence_rows) >= 2
     assert any(label["catalysts"] for label in labels)
     assert any("robotaxi product update" in row.claim for row in evidence_rows)
     assert all(row.source_type == "news_article" for row in evidence_rows)
     assert payload["derived_analysis"]["analysis_type"] == "news_catalyst_labels"
+    assert any(evidence_stance_from_record(row) == "supports" for row in evidence_rows)
+    source_queries = {query.provider: query for query in store.list_source_queries_for_run(RUN_ID)}
+    assert source_queries["ap-news"].url == "https://apnews.com/hub/financial-markets"
+    assert source_queries["fixture-news"].url is None
+    assert all(row.url != source_queries["ap-news"].url for row in evidence_rows)
 
 
 def test_phase4_fundamentals_tool_indexes_sec_metrics_and_analysis(tmp_path: Path) -> None:
@@ -272,7 +317,7 @@ def test_phase4_fundamentals_tool_indexes_sec_metrics_and_analysis(tmp_path: Pat
     payload = _artifact_payload(result.artifact_path)
     evidence_rows = store.list_evidence_for_run(RUN_ID)
 
-    assert result.status == "ok"
+    assert result.status == "successful"
     assert len(store.list_source_queries_for_run(RUN_ID)) == 1
     assert evidence_rows
     assert any(row.source_type == "sec_filing" for row in evidence_rows)
@@ -280,6 +325,12 @@ def test_phase4_fundamentals_tool_indexes_sec_metrics_and_analysis(tmp_path: Pat
     assert payload["fundamentals_snapshot"]["company_name"] == "Tesla, Inc."
     assert payload["derived_analysis"]["component"]["evidence"]
     assert all(row.metadata["phase4_metric_record"] is True for row in evidence_rows)
+    source_query = store.list_source_queries_for_run(RUN_ID)[0]
+    assert source_query.url == "https://data.sec.gov/api/xbrl/companyfacts/CIK0001318605.json"
+    assert source_query.metadata["source_query_urls"] == [
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0001318605.json",
+        "https://data.sec.gov/submissions/CIK0001318605.json",
+    ]
 
 
 def test_phase4_sector_macro_tool_preserves_stale_macro_evidence(tmp_path: Path) -> None:
@@ -288,7 +339,18 @@ def test_phase4_sector_macro_tool_preserves_stale_macro_evidence(tmp_path: Path)
         ticker="TSLA",
         company_name="Tesla, Inc.",
         metrics=(
-            ProviderMetric(name="pe_ratio", value=Decimal("48.5"), as_of=RUN_DATE),
+            ProviderMetric(
+                name="pe_ratio",
+                value=Decimal("48.5"),
+                as_of=RUN_DATE,
+                metadata={
+                    "provider_name": "sec-edgar",
+                    "raw_snapshot_id": "raw-sec-target",
+                    "source_query_url": (
+                        "https://data.sec.gov/api/xbrl/companyfacts/CIK0001318605.json"
+                    ),
+                },
+            ),
             ProviderMetric(name="net_margin", value=Decimal("0.141"), as_of=RUN_DATE),
         ),
     )
@@ -352,6 +414,23 @@ def test_phase4_sector_macro_tool_preserves_stale_macro_evidence(tmp_path: Path)
     )
     assert payload["derived_analysis"]["sector_context"]["evidence"]
     assert payload["derived_analysis"]["macro_context"]["warnings"]
+    sec_sector_row = next(
+        row for row in evidence_rows if row.claim.startswith("TSLA provider metric pe_ratio")
+    )
+    assert sec_sector_row.provider == "sec-edgar"
+    assert sec_sector_row.provenance_json["provider_name"] == "sec-edgar"
+    assert sec_sector_row.provenance_json["raw_snapshot_id"] == "raw-sec-target"
+    assert sec_sector_row.url == "https://data.sec.gov/api/xbrl/companyfacts/CIK0001318605.json"
+
+
+def test_phase4_evidence_reference_offsets_match_original_whitespace() -> None:
+    evidence = store_evidence_text_with_newlines()
+    reference = evidence_reference(evidence)
+
+    assert reference.quote is not None
+    assert reference.start_char is not None
+    assert reference.end_char is not None
+    assert evidence.text[reference.start_char : reference.end_char] == reference.quote
 
 
 def test_phase4_news_tool_writes_warning_artifact_for_provider_failures(
@@ -390,7 +469,7 @@ def test_phase4_news_tool_writes_warning_artifact_for_provider_failures(
 
     payload = _artifact_payload(result.artifact_path)
 
-    assert result.status == "warning"
+    assert result.status == "empty"
     assert result.evidence_ids == ()
     assert store.get_artifact(result.artifact_id) is not None
     assert len(store.list_source_queries_for_run(RUN_ID)) == 2

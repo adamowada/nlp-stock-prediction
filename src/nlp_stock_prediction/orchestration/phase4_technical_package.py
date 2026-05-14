@@ -14,7 +14,6 @@ from pydantic import Field
 from nlp_stock_prediction.analysis.ml_signal import (
     apply_technical_ml_signal,
     build_timesfm_forecast_signal,
-    load_timesfm_forecast_signal,
 )
 from nlp_stock_prediction.analysis.technical import analyze_technical_snapshot
 from nlp_stock_prediction.contracts import (
@@ -44,12 +43,14 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     symbol_slug,
     utc_now,
 )
+from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
 from nlp_stock_prediction.orchestration.phase4_market_data import (
     MarketDataToolResult,
     Phase4MarketDataArtifact,
     freshness_status_for_provider_result,
     latest_usable_bar,
     load_phase4_market_data_artifact,
+    sanitize_market_data_provider_result,
 )
 from nlp_stock_prediction.providers._base import provider_warning
 from nlp_stock_prediction.storage.records import ToolRunRecord
@@ -165,7 +166,10 @@ class Phase4TechnicalPackageTool:
         generated_at = self.now()
         tool_run_id = _technical_package_tool_run_id(run_id, normalized_symbol)
         artifact_id = _technical_package_artifact_id(run_id, normalized_symbol)
-        market_bundle = _coerce_market_data_input(market_data, generated_at)
+        market_bundle = _sanitize_market_bundle(
+            _coerce_market_data_input(market_data, generated_at, repo_root=self.repo_root),
+            symbol=normalized_symbol,
+        )
         snapshot = _snapshot_for_technical_input(
             symbol=normalized_symbol,
             provider_result=market_bundle.provider_result,
@@ -176,7 +180,11 @@ class Phase4TechnicalPackageTool:
             if market_bundle.provider_result is not None
             else ()
         )
-        timesfm_bundle = _coerce_timesfm_sidecar(timesfm_sidecar, generated_at)
+        timesfm_bundle = _coerce_timesfm_sidecar(
+            timesfm_sidecar,
+            generated_at,
+            symbol=normalized_symbol,
+        )
         internal_warnings = _technical_warnings(
             symbol=normalized_symbol,
             snapshot=snapshot,
@@ -264,63 +272,74 @@ class Phase4TechnicalPackageTool:
                 "timesfm_sidecar_source_only": True,
             },
         )
-        self.store.record_tool_run(
-            ToolRunRecord(
+        inputs: JsonObject = {
+            "symbol": normalized_symbol,
+            "instrument_id": instrument_id,
+            "market_data_artifact_id": market_bundle.artifact_id,
+            "market_data_status": (
+                market_bundle.provider_result.status.value
+                if market_bundle.provider_result is not None
+                else None
+            ),
+            "timesfm_sidecar_present": timesfm_bundle.signal is not None,
+        }
+        with safe_phase4_tool_execution(
+            store=self.store,
+            artifact_roots=(self.artifact_dir,),
+            tool_run_id=tool_run_id,
+            run_id=run_id,
+            tool_name=PHASE4_TECHNICAL_PACKAGE_TOOL_NAME,
+            tool_version=PHASE4_TECHNICAL_PACKAGE_TOOL_VERSION,
+            started_at=started_at,
+            inputs=inputs,
+        ):
+            self.store.record_tool_run(
+                ToolRunRecord(
+                    tool_run_id=tool_run_id,
+                    run_id=run_id,
+                    tool_name=PHASE4_TECHNICAL_PACKAGE_TOOL_NAME,
+                    tool_version=PHASE4_TECHNICAL_PACKAGE_TOOL_VERSION,
+                    status=_tool_run_status(status, warnings),
+                    started_at=started_at,
+                    completed_at=generated_at,
+                    inputs=inputs,
+                    warnings=tuple(warning.message for warning in warnings),
+                )
+            )
+            artifact = ArtifactIndex.for_directory(
+                store=self.store,
+                repo_root=self.repo_root,
+                base_dir=self.artifact_dir,
+                created_at=generated_at,
+                produced_by=PHASE4_TECHNICAL_PACKAGE_TOOL_NAME,
                 tool_run_id=tool_run_id,
-                run_id=run_id,
-                tool_name=PHASE4_TECHNICAL_PACKAGE_TOOL_NAME,
-                tool_version=PHASE4_TECHNICAL_PACKAGE_TOOL_VERSION,
-                status=status,
-                started_at=started_at,
-                completed_at=generated_at,
-                inputs={
+                schema_version=PHASE4_TECHNICAL_PACKAGE_SCHEMA_VERSION,
+            ).write_json(
+                artifact_id=artifact_id,
+                artifact_type="technical_package",
+                filename=f"technical-package/{symbol_slug(normalized_symbol)}.json",
+                payload=technical_package_artifact_payload(artifact_payload),
+                record_count=len(analysis.metrics),
+                metadata={
                     "symbol": normalized_symbol,
                     "instrument_id": instrument_id,
+                    "status": status,
+                    "freshness_status": artifact_payload.freshness_status.value,
                     "market_data_artifact_id": market_bundle.artifact_id,
-                    "market_data_status": (
-                        market_bundle.provider_result.status.value
-                        if market_bundle.provider_result is not None
-                        else None
+                    "latest_usable_bar": (
+                        calendar_date(latest_bar.timestamp).isoformat() if latest_bar else None
                     ),
                     "timesfm_sidecar_present": timesfm_bundle.signal is not None,
+                    "timesfm_applied_to_analysis": timesfm_applied,
+                    "warning_count": len(warnings),
                 },
-                warnings=tuple(warning.message for warning in warnings),
             )
-        )
-        artifact = ArtifactIndex.for_directory(
-            store=self.store,
-            repo_root=self.repo_root,
-            base_dir=self.artifact_dir,
-            created_at=generated_at,
-            produced_by=PHASE4_TECHNICAL_PACKAGE_TOOL_NAME,
-            tool_run_id=tool_run_id,
-            schema_version=PHASE4_TECHNICAL_PACKAGE_SCHEMA_VERSION,
-        ).write_json(
-            artifact_id=artifact_id,
-            artifact_type="technical_package",
-            filename=f"technical-package/{symbol_slug(normalized_symbol)}.json",
-            payload=technical_package_artifact_payload(artifact_payload),
-            record_count=len(analysis.metrics),
-            metadata={
-                "symbol": normalized_symbol,
-                "instrument_id": instrument_id,
-                "status": status,
-                "freshness_status": artifact_payload.freshness_status.value,
-                "market_data_artifact_id": market_bundle.artifact_id,
-                "latest_usable_bar": (
-                    calendar_date(latest_bar.timestamp).isoformat() if latest_bar else None
-                ),
-                "timesfm_sidecar_present": timesfm_bundle.signal is not None,
-                "timesfm_applied_to_analysis": timesfm_applied,
-                "warning_count": len(warnings),
-            },
-        )
-        return TechnicalPackageToolResult(
-            technical_analysis=analysis,
-            artifact=artifact,
-            artifact_payload=artifact_payload,
-            tool_run_id=tool_run_id,
-        )
+            return TechnicalPackageToolResult(
+                technical_analysis=analysis,
+                artifact=artifact,
+                artifact_payload=artifact_payload,
+                tool_run_id=tool_run_id,
+            )
 
 
 def build_baseline_context(snapshot: MarketSnapshot) -> TechnicalBaselineContext:
@@ -375,6 +394,8 @@ def load_phase4_technical_package_artifact(path: Path) -> Phase4TechnicalPackage
 def _coerce_market_data_input(
     market_data: MarketDataInput,
     generated_at: datetime,
+    *,
+    repo_root: Path,
 ) -> _MarketDataBundle:
     if isinstance(market_data, MarketDataToolResult):
         return _MarketDataBundle(
@@ -400,7 +421,8 @@ def _coerce_market_data_input(
             artifact_path=None,
             artifact_sha256=None,
         )
-    path = Path(market_data)
+    raw_path = Path(market_data)
+    path = raw_path if raw_path.is_absolute() else repo_root / raw_path
     try:
         artifact = load_phase4_market_data_artifact(path)
         return _MarketDataBundle(
@@ -432,14 +454,27 @@ def _coerce_market_data_input(
 def _coerce_timesfm_sidecar(
     timesfm_sidecar: TimesFmSidecarInput,
     generated_at: datetime,
+    *,
+    symbol: str,
 ) -> _TimesFmBundle:
     if timesfm_sidecar is None:
         return _TimesFmBundle(signal=None)
     if isinstance(timesfm_sidecar, TimesFmForecastArtifact):
-        return _TimesFmBundle(signal=build_timesfm_forecast_signal(timesfm_sidecar))
+        return _timesfm_bundle_from_artifact(
+            timesfm_sidecar,
+            generated_at=generated_at,
+            symbol=symbol,
+        )
     path = Path(timesfm_sidecar)
     try:
-        return _TimesFmBundle(signal=load_timesfm_forecast_signal(path))
+        artifact = TimesFmForecastArtifact.model_validate_json(path.read_text(encoding="utf-8"))
+        return _timesfm_bundle_from_artifact(
+            artifact,
+            generated_at=generated_at,
+            symbol=symbol,
+            artifact_path=path,
+            artifact_sha256=file_sha256(path),
+        )
     except (OSError, ValueError) as exc:
         return _TimesFmBundle(
             signal=None,
@@ -453,6 +488,96 @@ def _coerce_timesfm_sidecar(
                 ),
             ),
         )
+
+
+def _sanitize_market_bundle(
+    bundle: _MarketDataBundle,
+    *,
+    symbol: str,
+) -> _MarketDataBundle:
+    if bundle.provider_result is None:
+        return bundle
+    sanitized = sanitize_market_data_provider_result(
+        bundle.provider_result,
+        requested_symbol=symbol,
+    )
+    market_artifact = bundle.market_artifact
+    if market_artifact is not None and sanitized != bundle.provider_result:
+        market_artifact = market_artifact.model_copy(
+            update={
+                "provider_result": sanitized,
+                "bars": sanitized.data.bars if sanitized.data is not None else (),
+                "bar_count": len(sanitized.data.bars) if sanitized.data is not None else 0,
+                "latest_usable_bar": latest_usable_bar(sanitized.data),
+                "warnings": sanitized.warnings,
+                "status": sanitized.status,
+                "freshness_status": freshness_status_for_provider_result(sanitized),
+            }
+        )
+    return _MarketDataBundle(
+        provider_result=sanitized,
+        market_artifact=market_artifact,
+        artifact_id=bundle.artifact_id,
+        artifact_path=bundle.artifact_path,
+        artifact_sha256=bundle.artifact_sha256,
+        warnings=bundle.warnings,
+    )
+
+
+def _timesfm_bundle_from_artifact(
+    artifact: TimesFmForecastArtifact,
+    *,
+    generated_at: datetime,
+    symbol: str,
+    artifact_path: Path | None = None,
+    artifact_sha256: str | None = None,
+) -> _TimesFmBundle:
+    if _normalize_symbol(artifact.ticker) != symbol:
+        return _TimesFmBundle(
+            signal=None,
+            warnings=(
+                _warning(
+                    code=WarningCode.SCHEMA_MISMATCH,
+                    severity=WarningSeverity.WARNING,
+                    message=(
+                        f"TimesFM sidecar ticker {artifact.ticker} did not match requested "
+                        f"symbol {symbol}; sidecar was not applied."
+                    ),
+                    occurred_at=generated_at,
+                    metadata={
+                        "symbol": symbol,
+                        "sidecar_ticker": artifact.ticker,
+                        "sidecar_only": True,
+                    },
+                ),
+            ),
+        )
+    if artifact.status == "unavailable":
+        return _TimesFmBundle(
+            signal=None,
+            warnings=(
+                _warning(
+                    code=WarningCode.NO_DATA,
+                    severity=WarningSeverity.WARNING,
+                    message="TimesFM sidecar was unavailable and was not applied.",
+                    occurred_at=generated_at,
+                    metadata={
+                        "symbol": symbol,
+                        "sidecar_ticker": artifact.ticker,
+                        "timesfm_status": artifact.status,
+                        "warning_ids": list(artifact.warning_ids),
+                        "sidecar_only": True,
+                    },
+                ),
+            ),
+        )
+    return _TimesFmBundle(
+        signal=build_timesfm_forecast_signal(
+            artifact,
+            artifact_path=artifact_path,
+            artifact_sha256=artifact_sha256,
+        )
+    )
 
 
 def _snapshot_for_technical_input(
@@ -560,6 +685,17 @@ def _package_status(
     if freshness_status == FreshnessStatus.STALE or warnings:
         return "warning"
     return "ok"
+
+
+def _tool_run_status(
+    status: TechnicalPackageStatus,
+    warnings: tuple[ProviderWarning, ...],
+) -> str:
+    if status == "ok" and not warnings:
+        return "successful"
+    if status == "unavailable":
+        return "empty"
+    return "partial" if warnings else "successful"
 
 
 def _sorted_bars(bars: Sequence[PriceBar]) -> tuple[PriceBar, ...]:

@@ -36,6 +36,7 @@ from nlp_stock_prediction.orchestration.phase4_common import (
     retrieval_method_for_provider,
     source_evidence_json,
     source_kind_for_fundamental_metric,
+    source_query_urls_from_result,
     tool_identity,
     tool_status,
     warning_messages,
@@ -121,8 +122,15 @@ class Phase4FundamentalsTool:
             if snapshot is None:
                 continue
             company_name = company_name or snapshot.company_name
+            provider_query_urls = source_query_urls_from_result(
+                cast(ProviderResult[object], provider_result)
+            )
             for index, raw_metric in enumerate(snapshot.metrics):
-                metric = _metric_with_provider_metadata(raw_metric, provider_result)
+                metric = _metric_with_provider_metadata(
+                    raw_metric,
+                    provider_result,
+                    source_query_urls=provider_query_urls,
+                )
                 merged_metrics.append(metric)
                 evidence = metric_source_evidence(
                     run_id=run_id,
@@ -260,6 +268,8 @@ def run_phase4_fundamentals_tool(
 def _metric_with_provider_metadata(
     metric: ProviderMetric,
     provider_result: ProviderResult[FundamentalsSnapshot],
+    *,
+    source_query_urls: Sequence[str] = (),
 ) -> ProviderMetric:
     payload = metric.model_dump(mode="python")
     raw_metadata = payload.get("metadata")
@@ -270,6 +280,9 @@ def _metric_with_provider_metadata(
         metadata.setdefault("raw_snapshot_id", provider_result.raw_snapshot_id)
     if provider_result.cache_key is not None:
         metadata.setdefault("cache_key", provider_result.cache_key)
+    if source_query_urls:
+        metadata.setdefault("source_query_url", source_query_urls[0])
+        metadata.setdefault("source_query_urls", list(source_query_urls))
     payload["metadata"] = metadata
     return ProviderMetric.model_validate(payload)
 

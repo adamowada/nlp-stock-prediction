@@ -45,6 +45,7 @@ from nlp_stock_prediction.orchestration.phase4_common import (
     result_list_json,
     retrieval_method_for_provider,
     source_evidence_json,
+    text_from_metadata,
     tool_identity,
     tool_status,
     warning_messages,
@@ -440,19 +441,29 @@ def _sector_metric_source_evidence(
     source_kind: SourceKind,
     index: int,
 ) -> SourceEvidence:
+    upstream_provider = (
+        text_from_metadata(metric.metadata, "provider_name") or _SECTOR_INPUT_PROVIDER
+    )
     return metric_source_evidence(
         run_id=run_id,
         tool_slug=PHASE4_SECTOR_MACRO_TOOL_SLUG,
         fetched_at=generated_at,
-        provider_name=_SECTOR_INPUT_PROVIDER,
+        provider_name=upstream_provider,
         source_query_id=source_query_id,
         query=query,
-        raw_snapshot_id=f"sector-input:{stable_digest('|'.join((source_query_id, str(index))))}",
-        cache_key=None,
+        raw_snapshot_id=(
+            text_from_metadata(metric.metadata, "raw_snapshot_id")
+            or f"sector-input:{stable_digest('|'.join((source_query_id, str(index))))}"
+        ),
+        cache_key=text_from_metadata(metric.metadata, "cache_key"),
         symbol=symbol,
         metric=metric,
         source_kind=source_kind,
-        retrieval_method=RetrievalMethod.DERIVED,
+        retrieval_method=(
+            RetrievalMethod.DERIVED
+            if upstream_provider == _SECTOR_INPUT_PROVIDER
+            else retrieval_method_for_provider(upstream_provider)
+        ),
         freshness_status=(
             FreshnessStatus.MISSING if metric.as_of is None else FreshnessStatus.FRESH
         ),

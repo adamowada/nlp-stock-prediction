@@ -41,7 +41,7 @@ from nlp_stock_prediction.storage.run_graph import (
     fetch_tool_run_rows,
 )
 
-CURRENT_RESEARCH_SCHEMA_VERSION = 4
+CURRENT_RESEARCH_SCHEMA_VERSION = 5
 CURRENT_PLANNING_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = CURRENT_RESEARCH_SCHEMA_VERSION
 DEFAULT_RESEARCH_DATABASE_PATH = Path("data/prediction-research.sqlite3")
@@ -474,6 +474,10 @@ class SQLiteStore:
         _validate_required(record.artifact_type, "artifact_type")
         _validate_required(record.sha256, "sha256")
         _validate_required(record.schema_version, "schema_version")
+        if record.produced_by is not None:
+            _validate_required(record.produced_by, "produced_by")
+        if record.record_count is not None and record.record_count < 0:
+            raise ValueError("artifact record_count must be non-negative")
         created_at = record.created_at or _utc_now()
         with self.connect() as connection:
             _ensure_initialized(connection)
@@ -481,15 +485,17 @@ class SQLiteStore:
                 """
                 INSERT INTO artifacts (
                     artifact_id, tool_run_id, artifact_type, path, sha256,
-                    schema_version, metadata_json, created_at
+                    schema_version, produced_by, record_count, metadata_json, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(artifact_id) DO UPDATE SET
                     tool_run_id = excluded.tool_run_id,
                     artifact_type = excluded.artifact_type,
                     path = excluded.path,
                     sha256 = excluded.sha256,
                     schema_version = excluded.schema_version,
+                    produced_by = excluded.produced_by,
+                    record_count = excluded.record_count,
                     metadata_json = excluded.metadata_json
                 """,
                 (
@@ -499,6 +505,8 @@ class SQLiteStore:
                     str(record.path),
                     record.sha256,
                     record.schema_version,
+                    record.produced_by,
+                    record.record_count,
                     _dump_json(record.metadata),
                     _format_datetime(created_at),
                 ),
@@ -656,6 +664,55 @@ class SQLiteStore:
             _ensure_initialized(connection)
             rows = fetch_evidence_rows(connection, run_id)
         return tuple(_evidence_from_row(row) for row in rows)
+
+    def delete_tool_run_outputs(self, tool_run_id: str) -> None:
+        """Delete run-graph rows produced by one failed tool run."""
+
+        _validate_required(tool_run_id, "tool_run_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                """
+                DELETE FROM candidate_artifact_links
+                WHERE artifact_id IN (
+                    SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                )
+                """,
+                (tool_run_id,),
+            )
+            connection.execute(
+                """
+                DELETE FROM candidate_evidence_links
+                WHERE evidence_id IN (
+                    SELECT evidence_id FROM evidence_items
+                    WHERE tool_run_id = ?
+                       OR source_query_id IN (
+                            SELECT source_query_id FROM source_queries
+                            WHERE tool_run_id = ?
+                       )
+                       OR artifact_id IN (
+                            SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                       )
+                )
+                """,
+                (tool_run_id, tool_run_id, tool_run_id),
+            )
+            connection.execute(
+                """
+                DELETE FROM evidence_items
+                WHERE tool_run_id = ?
+                   OR source_query_id IN (
+                        SELECT source_query_id FROM source_queries WHERE tool_run_id = ?
+                   )
+                   OR artifact_id IN (
+                        SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                   )
+                """,
+                (tool_run_id, tool_run_id, tool_run_id),
+            )
+            connection.execute("DELETE FROM source_queries WHERE tool_run_id = ?", (tool_run_id,))
+            connection.execute("DELETE FROM artifacts WHERE tool_run_id = ?", (tool_run_id,))
+            connection.execute("DELETE FROM tool_runs WHERE tool_run_id = ?", (tool_run_id,))
 
     def upsert_prediction_candidate(self, record: PredictionCandidateRecord) -> None:
         _validate_required(record.candidate_id, "candidate_id")
@@ -1239,11 +1296,23 @@ def _migrate_research_schema_v4(connection: sqlite3.Connection) -> None:
     connection.executescript(_RESEARCH_REGISTRY_SCHEMA_SQL)
 
 
+def _migrate_research_schema_v5(connection: sqlite3.Connection) -> None:
+    artifact_columns = _table_columns(connection, "artifacts")
+    artifact_migrations = {
+        "produced_by": "TEXT",
+        "record_count": "INTEGER CHECK(record_count IS NULL OR record_count >= 0)",
+    }
+    for column, definition in artifact_migrations.items():
+        if column not in artifact_columns:
+            connection.execute(f"ALTER TABLE artifacts ADD COLUMN {column} {definition}")
+
+
 _RESEARCH_MIGRATION_STEPS = (
     _SchemaMigrationStep(1, "initial_research_schema", _noop_migration),
     _SchemaMigrationStep(2, "phase2_research_graph_schema", _noop_migration),
     _SchemaMigrationStep(3, "phase2_evidence_provenance_schema", _noop_migration),
     _SchemaMigrationStep(4, "registry_grade_research_schema_v4", _migrate_research_schema_v4),
+    _SchemaMigrationStep(5, "artifact_audit_provenance_schema_v5", _migrate_research_schema_v5),
 )
 
 
@@ -1716,6 +1785,10 @@ def _row_optional_float(row: sqlite3.Row, column: str) -> float | None:
     return cast(float | None, row[column])
 
 
+def _row_optional_int(row: sqlite3.Row, column: str) -> int | None:
+    return cast(int | None, row[column])
+
+
 def _instrument_from_row(row: sqlite3.Row) -> InstrumentRecord:
     return InstrumentRecord(
         instrument_id=_row_text(row, "instrument_id"),
@@ -1773,6 +1846,8 @@ def _artifact_from_row(row: sqlite3.Row) -> ArtifactRecord:
         path=Path(_row_text(row, "path")),
         sha256=_row_text(row, "sha256"),
         schema_version=_row_text(row, "schema_version"),
+        produced_by=_row_optional_text(row, "produced_by"),
+        record_count=_row_optional_int(row, "record_count"),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
         created_at=_parse_datetime(_row_text(row, "created_at")),
     )
@@ -2021,6 +2096,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
     path TEXT NOT NULL CHECK(length(path) > 0),
     sha256 TEXT NOT NULL CHECK(length(sha256) > 0),
     schema_version TEXT NOT NULL CHECK(length(schema_version) > 0),
+    produced_by TEXT,
+    record_count INTEGER CHECK(record_count IS NULL OR record_count >= 0),
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
 );

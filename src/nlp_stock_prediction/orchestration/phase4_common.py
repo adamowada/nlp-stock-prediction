@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
@@ -29,7 +32,11 @@ from nlp_stock_prediction.contracts.providers import (
     ProviderRequest,
     ProviderResult,
 )
-from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex, ArtifactType
+from nlp_stock_prediction.orchestration.artifacts import (
+    ArtifactFileTransaction,
+    ArtifactIndex,
+    ArtifactType,
+)
 from nlp_stock_prediction.orchestration.phase2_common import (
     source_evidence_ticker,
     stable_digest,
@@ -42,6 +49,15 @@ from nlp_stock_prediction.storage.records import (
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 PHASE4_TOOL_VERSION = "phase4.evidence-suite.v1"
+PHASE4_RUNNING_TOOL_RUN_STATUS = "running"
+Phase4StoredToolRunStatus = Literal[
+    "running",
+    "successful",
+    "partial",
+    "empty",
+    "skipped",
+    "failed",
+]
 
 
 @dataclass(frozen=True)
@@ -60,11 +76,16 @@ class Phase4ToolResult:
 
 
 def tool_identity(
-    *, tool_slug: str, run_id: str, symbol: str | None = None
+    *,
+    tool_slug: str,
+    run_id: str,
+    symbol: str | None = None,
+    inputs: JsonObject | None = None,
 ) -> tuple[str, str, str]:
     """Return stable tool-run, artifact, and filename components."""
 
-    digest = stable_digest("|".join((tool_slug, run_id, symbol or "all")))
+    input_fingerprint = "" if inputs is None else repr(sorted(inputs.items()))
+    digest = stable_digest("|".join((tool_slug, run_id, symbol or "all", input_fingerprint)))
     return (
         f"tool-{tool_slug}-{digest}",
         f"artifact-{tool_slug}-{digest}",
@@ -80,14 +101,15 @@ def record_tool_started(
     tool_name: str,
     started_at: datetime,
     inputs: JsonObject,
+    tool_version: str = PHASE4_TOOL_VERSION,
 ) -> None:
     store.record_tool_run(
         ToolRunRecord(
             tool_run_id=tool_run_id,
             run_id=run_id,
             tool_name=tool_name,
-            tool_version=PHASE4_TOOL_VERSION,
-            status="running",
+            tool_version=tool_version,
+            status=PHASE4_RUNNING_TOOL_RUN_STATUS,
             started_at=started_at,
             inputs=inputs,
         )
@@ -106,14 +128,16 @@ def record_tool_completed(
     inputs: JsonObject,
     warnings: Sequence[str] = (),
     error_message: str | None = None,
+    tool_version: str = PHASE4_TOOL_VERSION,
 ) -> None:
+    normalized_status = standardize_phase4_tool_run_status(status, warnings=warnings)
     store.record_tool_run(
         ToolRunRecord(
             tool_run_id=tool_run_id,
             run_id=run_id,
             tool_name=tool_name,
-            tool_version=PHASE4_TOOL_VERSION,
-            status=status,
+            tool_version=tool_version,
+            status=normalized_status,
             started_at=started_at,
             completed_at=completed_at,
             inputs=inputs,
@@ -121,6 +145,81 @@ def record_tool_completed(
             error_message=error_message,
         )
     )
+
+
+@contextmanager
+def safe_phase4_tool_execution(
+    *,
+    store: SQLiteStore,
+    artifact_roots: Sequence[Path],
+    tool_run_id: str,
+    run_id: str,
+    tool_name: str,
+    started_at: datetime,
+    inputs: JsonObject,
+    tool_version: str = PHASE4_TOOL_VERSION,
+) -> Iterator[None]:
+    """Run a first-class Phase 4 tool atomically across SQLite and artifacts."""
+
+    file_transactions = tuple(
+        ArtifactFileTransaction.begin(root) for root in _unique_resolved_paths(artifact_roots)
+    )
+    try:
+        with store.transaction():
+            record_tool_started(
+                store=store,
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=tool_name,
+                started_at=started_at,
+                inputs=inputs,
+                tool_version=tool_version,
+            )
+            yield
+    except Exception as exc:
+        for file_transaction in reversed(file_transactions):
+            file_transaction.rollback_new_files()
+        store.delete_tool_run_outputs(tool_run_id)
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                status="failed",
+                started_at=started_at,
+                completed_at=_failure_completed_at(started_at),
+                inputs=inputs,
+                error_message=str(exc),
+            )
+        )
+        raise
+
+
+def standardize_phase4_tool_run_status(
+    status: str,
+    *,
+    warnings: Sequence[str] = (),
+) -> Phase4StoredToolRunStatus:
+    """Map legacy/direct Phase 4 statuses into the run-graph vocabulary."""
+
+    normalized = status.strip().lower()
+    if normalized in {
+        "running",
+        "successful",
+        "partial",
+        "empty",
+        "skipped",
+        "failed",
+    }:
+        return cast(Phase4StoredToolRunStatus, normalized)
+    if normalized == "ok":
+        return "successful"
+    if normalized == "warning":
+        return "partial" if warnings else "empty"
+    if normalized == "unavailable":
+        return "empty"
+    return "failed"
 
 
 def write_phase4_json_artifact(
@@ -167,7 +266,12 @@ def record_source_query_for_result(
     source_url: str | None = None,
 ) -> SourceQueryRecord:
     query = provider_request_query(result.request)
-    url = source_url or source_url_from_result(result)
+    query_urls = source_query_urls_from_result(result)
+    url = (
+        sanitize_source_query_url(source_url)
+        if source_url
+        else (query_urls[0] if query_urls else None)
+    )
     source_query_id = (
         f"query-{tool_slug}-"
         f"{stable_digest('|'.join((tool_run_id, result.provider_name, query, url or '')))}"
@@ -188,6 +292,8 @@ def record_source_query_for_result(
                 "raw_snapshot_id": result.raw_snapshot_id,
                 "cache_key": result.cache_key,
                 "warnings": warning_payloads(result.warnings),
+                "source_query_urls": query_urls,
+                "evidence_source_urls": evidence_source_urls_from_result(result),
             },
         ),
     )
@@ -208,17 +314,143 @@ def provider_request_query(request: ProviderRequest) -> str:
     return request.request_id
 
 
-def source_url_from_result(result: ProviderResult[object]) -> str | None:
+def source_query_urls_from_result(result: ProviderResult[object]) -> tuple[str, ...]:
+    """Return provider-query URLs, never article/permalink URLs masquerading as queries."""
+
+    explicit_urls = _urls_from_request_options(result.request.options)
+    if explicit_urls:
+        return explicit_urls
+    provider_name = result.provider_name.lower()
+    if provider_name == "fred":
+        return _fred_query_urls(result)
+    if provider_name == "sec-edgar":
+        return _sec_edgar_query_urls(result)
+    inferred_urls = _provider_query_urls_from_evidence(result)
+    if inferred_urls:
+        return inferred_urls
+    warning_urls = tuple(
+        sanitize_source_query_url(warning.source_url)
+        for warning in result.warnings
+        if warning.source_url
+    )
+    return dedupe_strings(tuple(url for url in warning_urls if url))
+
+
+def evidence_source_urls_from_result(result: ProviderResult[object]) -> tuple[str, ...]:
     data = result.data
+    urls: list[str] = []
     if isinstance(data, tuple):
         for item in data:
             if isinstance(item, SourceEvidence):
                 source_url = item.provenance.source_url or item.provenance.permalink
                 if source_url:
-                    return source_url
-    for warning in result.warnings:
-        if warning.source_url:
-            return warning.source_url
+                    urls.append(source_url)
+    return dedupe_strings(tuple(urls))
+
+
+def sanitize_source_query_url(url: str | None) -> str | None:
+    if not isinstance(url, str) or not url.strip():
+        return None
+    split = urlsplit(url.strip())
+    sensitive = {"api_key", "apikey", "token", "access_token", "key"}
+    query = urlencode(
+        [
+            (key, "REDACTED" if key.lower() in sensitive else value)
+            for key, value in parse_qsl(split.query, keep_blank_values=True)
+        ]
+    )
+    return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
+
+
+def _urls_from_request_options(options: JsonObject) -> tuple[str, ...]:
+    raw_urls: list[object] = []
+    for key in ("source_query_url", "query_url"):
+        value = options.get(key)
+        if isinstance(value, str):
+            raw_urls.append(value)
+    for key in ("source_query_urls", "query_urls"):
+        value = options.get(key)
+        if isinstance(value, Sequence) and not isinstance(value, str | bytes):
+            raw_urls.extend(value)
+    return dedupe_strings(
+        tuple(
+            sanitized
+            for raw_url in raw_urls
+            if isinstance(raw_url, str)
+            for sanitized in (sanitize_source_query_url(raw_url),)
+            if sanitized
+        )
+    )
+
+
+def _provider_query_urls_from_evidence(result: ProviderResult[object]) -> tuple[str, ...]:
+    data = result.data
+    if not isinstance(data, tuple):
+        return ()
+    urls: list[str] = []
+    for item in data:
+        if not isinstance(item, SourceEvidence):
+            continue
+        source_url = item.provenance.source_url
+        permalink = item.provenance.permalink or item.permalink
+        if source_url and source_url != permalink:
+            sanitized = sanitize_source_query_url(source_url)
+            if sanitized:
+                urls.append(sanitized)
+        hub_url = item.provenance.provider_metadata.get("hub_url")
+        if isinstance(hub_url, str):
+            sanitized = sanitize_source_query_url(hub_url)
+            if sanitized:
+                urls.append(sanitized)
+    return dedupe_strings(tuple(urls))
+
+
+def _fred_query_urls(result: ProviderResult[object]) -> tuple[str, ...]:
+    series_ids = getattr(result.request, "series_ids", ())
+    if not isinstance(series_ids, tuple):
+        return ()
+    urls: list[str] = []
+    for series_id in series_ids:
+        if not isinstance(series_id, str) or not series_id.strip():
+            continue
+        query = urlencode(
+            {
+                "series_id": series_id.strip().upper(),
+                "file_type": "json",
+                "observation_end": result.request.run_date.isoformat(),
+                "sort_order": "desc",
+                "limit": 100,
+            }
+        )
+        urls.append(f"https://api.stlouisfed.org/fred/series/observations?{query}")
+    return tuple(urls)
+
+
+def _sec_edgar_query_urls(result: ProviderResult[object]) -> tuple[str, ...]:
+    cik = _sec_cik_from_result(result)
+    if cik is None:
+        return ()
+    normalized_cik = cik.zfill(10)
+    return (
+        f"https://data.sec.gov/api/xbrl/companyfacts/CIK{normalized_cik}.json",
+        f"https://data.sec.gov/submissions/CIK{normalized_cik}.json",
+    )
+
+
+def _sec_cik_from_result(result: ProviderResult[object]) -> str | None:
+    data = result.data
+    metrics = getattr(data, "metrics", ())
+    if not isinstance(metrics, tuple):
+        return None
+    for metric in metrics:
+        if not isinstance(metric, ProviderMetric):
+            continue
+        source_url = text_from_metadata(metric.metadata, "source_url")
+        if source_url is None:
+            continue
+        match = re.search(r"/Archives/edgar/data/(\d+)/", source_url)
+        if match:
+            return match.group(1)
     return None
 
 
@@ -259,6 +491,9 @@ def evidence_record_from_source(
     }
     if derived_analysis is not None:
         metadata["derived_analysis"] = derived_analysis
+        stance = text_from_metadata(derived_analysis, "stance")
+        if stance in {"supports", "contradicts", "neutral"}:
+            metadata["stance"] = stance
     return EvidenceRecord(
         evidence_id=evidence.evidence_id,
         tool_run_id=tool_run_id,
@@ -306,6 +541,9 @@ def metric_source_evidence(
     )
     observed_at = aware_datetime_from_metric_as_of(metric.as_of)
     source_url = metric_source_url(provider_name, metric, raw_identifier)
+    upstream_provider = text_from_metadata(metric.metadata, "provider_name") or provider_name
+    upstream_raw_snapshot_id = text_from_metadata(metric.metadata, "raw_snapshot_id")
+    upstream_cache_key = text_from_metadata(metric.metadata, "cache_key")
     ticker = source_evidence_ticker(symbol or "") if symbol else None
     evidence_id = (
         f"evidence-{tool_slug}-"
@@ -322,7 +560,7 @@ def metric_source_evidence(
         permalink=source_url,
         matched_tickers=((ticker,) if ticker else ()),
         provenance=SourceProvenance(
-            provider_name=provider_name,
+            provider_name=upstream_provider,
             source_kind=source_kind,
             retrieval_method=retrieval_method,
             fetched_at=fetched_at,
@@ -330,14 +568,19 @@ def metric_source_evidence(
             source_url=source_url,
             permalink=source_url,
             raw_identifier=raw_identifier,
-            raw_snapshot_id=raw_snapshot_id or f"metric:{stable_digest(raw_identifier)}",
+            raw_snapshot_id=(
+                upstream_raw_snapshot_id
+                or raw_snapshot_id
+                or f"metric:{stable_digest(raw_identifier)}"
+            ),
             query=query or source_query_id,
-            cache_key=cache_key,
+            cache_key=upstream_cache_key or cache_key,
             freshness_status=freshness_status,
             provider_metadata={
                 "phase4_tool": tool_slug,
                 "metric": model_json(metric),
                 "source_query_id": source_query_id,
+                "phase4_metric_provider_name": provider_name,
             },
         ),
         metadata={
@@ -386,14 +629,30 @@ def metric_record_from_evidence(
 
 
 def evidence_reference(evidence: SourceEvidence, *, relevance: float = 1.0) -> EvidenceReference:
-    quote = excerpt(evidence.text, limit=180)
+    start_char, end_char, quote = quote_span(evidence.text, limit=180)
     return EvidenceReference(
         evidence_id=evidence.evidence_id,
         quote=quote,
-        start_char=0,
-        end_char=len(quote),
+        start_char=start_char,
+        end_char=end_char,
         relevance=relevance,
     )
+
+
+def quote_span(text: str, *, limit: int) -> tuple[int | None, int | None, str | None]:
+    if not text:
+        return None, None, None
+    start = 0
+    while start < len(text) and text[start].isspace():
+        start += 1
+    if start == len(text):
+        return None, None, None
+    end = min(len(text), start + limit)
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    if end == start:
+        return None, None, None
+    return start, end, text[start:end]
 
 
 def derived_label_for_text(
@@ -503,8 +762,20 @@ def tool_status(*, record_count: int, warnings: Sequence[str]) -> str:
     if record_count and warnings:
         return "partial"
     if record_count:
-        return "ok"
-    return "warning" if warnings else "empty"
+        return "successful"
+    return "empty"
+
+
+def _unique_resolved_paths(paths: Sequence[Path]) -> tuple[Path, ...]:
+    unique: dict[Path, Path] = {}
+    for path in paths:
+        resolved = path.resolve()
+        unique[resolved] = resolved
+    return tuple(unique.values())
+
+
+def _failure_completed_at(started_at: datetime) -> datetime:
+    return datetime.now(UTC).astimezone(started_at.tzinfo or UTC)
 
 
 def provider_metric_freshness(
@@ -522,9 +793,15 @@ def retrieval_method_for_provider(provider_name: str) -> RetrievalMethod:
     normalized = provider_name.lower()
     if "fixture" in normalized:
         return RetrievalMethod.FIXTURE
-    if normalized in {"fred", "sec-edgar", "alpha-vantage-fundamentals", "x-recent-search"}:
+    if normalized in {
+        "fred",
+        "sec-edgar",
+        "alpha-vantage-fundamentals",
+        "alpha-vantage-market-data",
+        "x-recent-search",
+    }:
         return RetrievalMethod.OFFICIAL_API
-    if normalized in {"reddit", "ap-news"}:
+    if normalized in {"reddit", "ap-news", "candlecharts-market-data"}:
         return RetrievalMethod.PUBLIC_SCRAPE
     return RetrievalMethod.DERIVED
 
@@ -613,6 +890,9 @@ def metric_source_url(
     source_url = text_from_metadata(metric.metadata, "source_url")
     if source_url:
         return source_url
+    query_url = text_from_metadata(metric.metadata, "source_query_url")
+    if query_url:
+        return query_url
     return f"provider://{provider_name}/{stable_digest(raw_identifier)}"
 
 
@@ -637,7 +917,9 @@ def dedupe_strings(values: Sequence[str]) -> tuple[str, ...]:
 
 
 __all__ = [
+    "PHASE4_RUNNING_TOOL_RUN_STATUS",
     "PHASE4_TOOL_VERSION",
+    "Phase4StoredToolRunStatus",
     "Phase4ToolResult",
     "catalyst_labels",
     "dedupe_strings",
@@ -654,9 +936,12 @@ __all__ = [
     "record_tool_started",
     "result_list_json",
     "retrieval_method_for_provider",
+    "safe_phase4_tool_execution",
     "scoped_source_evidence",
     "source_evidence_json",
     "source_kind_for_fundamental_metric",
+    "source_query_urls_from_result",
+    "standardize_phase4_tool_run_status",
     "tool_identity",
     "tool_status",
     "warning_messages",

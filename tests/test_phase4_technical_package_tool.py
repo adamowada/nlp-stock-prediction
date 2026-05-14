@@ -80,10 +80,11 @@ def _market_data_result(tmp_path: Path, store: SQLiteStore) -> MarketDataToolRes
 def _timesfm_artifact(
     *,
     status: Literal["usable", "weak", "unavailable"] = "usable",
+    ticker: str = "TSLA",
 ) -> TimesFmForecastArtifact:
     return TimesFmForecastArtifact(
         status=status,
-        ticker="TSLA",
+        ticker=ticker,
         model_id="timesfm-fixture",
         model_revision="test",
         dataset_hash="dataset-fixture-hash",
@@ -157,7 +158,7 @@ def test_phase4_technical_package_computes_indicators_and_indexes_artifact(
     artifact = store.get_artifact(result.artifact.artifact_id)
 
     assert tool_run is not None
-    assert tool_run.status == "ok"
+    assert tool_run.status == "successful"
     assert tool_run.inputs["market_data_artifact_id"] == artifact_payload.market_data_artifact_id
     assert artifact is not None
     assert artifact.artifact_type == "technical_package"
@@ -234,5 +235,90 @@ def test_phase4_technical_package_malformed_market_artifact_path_warns_not_crash
     assert Path(result.artifact.path).exists()
     tool_run = store.get_tool_run(result.tool_run_id)
     assert tool_run is not None
-    assert tool_run.status == "unavailable"
+    assert tool_run.status == "empty"
     assert tool_run.warnings
+
+
+@pytest.mark.unit
+def test_phase4_technical_package_resolves_relative_market_artifact_path(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    market_result = _market_data_result(tmp_path, store)
+    market_record = store.get_artifact(market_result.artifact.artifact_id)
+    assert market_record is not None
+
+    result = Phase4TechnicalPackageTool(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=_audit_dir(tmp_path),
+        now=lambda: NOW,
+    ).run(
+        run_id=RUN_ID,
+        symbol="TSLA",
+        market_data=Path(market_record.path),
+    )
+
+    assert result.artifact_payload.status == "ok"
+    assert result.artifact_payload.baseline_context.bar_count == 2
+    artifact_path = result.artifact_payload.market_data_artifact_path
+    assert artifact_path is not None
+    assert Path(artifact_path) == tmp_path / market_record.path
+
+
+@pytest.mark.unit
+def test_phase4_technical_package_does_not_apply_unavailable_timesfm_sidecar(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    market_result = _market_data_result(tmp_path, store)
+
+    result = Phase4TechnicalPackageTool(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=_audit_dir(tmp_path),
+        now=lambda: NOW,
+    ).run(
+        run_id=RUN_ID,
+        symbol="TSLA",
+        market_data=market_result.provider_result,
+        timesfm_sidecar=_timesfm_artifact(status="unavailable"),
+    )
+
+    assert result.artifact_payload.status == "warning"
+    assert result.artifact_payload.timesfm_sidecar is None
+    assert result.artifact_payload.timesfm_applied_to_analysis is False
+    assert result.technical_analysis.ml_signal is None
+    assert any(
+        warning.code == WarningCode.NO_DATA and "TimesFM sidecar was unavailable" in warning.message
+        for warning in result.artifact_payload.warnings
+    )
+
+
+@pytest.mark.unit
+def test_phase4_technical_package_rejects_timesfm_sidecar_ticker_mismatch(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    market_result = _market_data_result(tmp_path, store)
+
+    result = Phase4TechnicalPackageTool(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=_audit_dir(tmp_path),
+        now=lambda: NOW,
+    ).run(
+        run_id=RUN_ID,
+        symbol="TSLA",
+        market_data=market_result.provider_result,
+        timesfm_sidecar=_timesfm_artifact(ticker="NVDA"),
+    )
+
+    assert result.artifact_payload.status == "warning"
+    assert result.artifact_payload.timesfm_sidecar is None
+    assert result.artifact_payload.timesfm_applied_to_analysis is False
+    assert result.technical_analysis.ml_signal is None
+    assert any(
+        warning.code == WarningCode.SCHEMA_MISMATCH and "NVDA" in warning.message
+        for warning in result.artifact_payload.warnings
+    )

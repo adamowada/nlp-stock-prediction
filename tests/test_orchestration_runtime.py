@@ -148,6 +148,8 @@ def test_artifact_index_writes_and_indexes_artifact_records(tmp_path: Path) -> N
     assert record.path == Path("reports") / "audit" / "provider-result.json"
     assert record.sha256 == artifact.sha256
     assert record.schema_version == "unit-artifacts.v1"
+    assert record.produced_by == "unit-artifact-tool"
+    assert record.record_count == 1
     assert record.metadata == {"purpose": "unit"}
     assert store.list_artifacts_for_run("run-indexed-artifacts") == (record,)
 

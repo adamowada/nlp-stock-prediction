@@ -64,6 +64,7 @@ def render_phase2_prediction_report(
     insufficient_evidence_summary: str | None = None,
 ) -> JsonObject:
     now = utc_now()
+    is_phase4_report = artifact_schema_version.startswith("phase4")
     evidence_records = store.list_evidence_for_run(run.run_id)
     evidence_sources = tuple(source_evidence_from_record(record) for record in evidence_records)
     instrument = _primary_instrument(store, symbol=symbol, fallback_generated_at=now)
@@ -79,18 +80,41 @@ def render_phase2_prediction_report(
         )
         for record in evidence_sources[:5]
     )
+    if is_phase4_report:
+        observed_discussion_summary = (
+            "Phase 4 fixture-backed research tools imported evidence and context."
+        )
+        analysis_summary = (
+            "Phase 4 report rendering consumes stored tool evidence, analysis artifacts, "
+            "prediction candidates, and prediction-quality evaluations."
+        )
+        universe_summary = f"Phase 4 fixture-backed research universe for {symbol.upper()}"
+        freshness_summary = (
+            "Phase 4 used deterministic fixture-backed tool outputs."
+            if evidence_sources
+            else "Phase 4 has no imported evidence for this run."
+        )
+    else:
+        observed_discussion_summary = (
+            "Codex live search evidence was imported through MCP and combined with "
+            "dummy structural tools."
+        )
+        analysis_summary = (
+            "Phase 2 validates orchestration and provenance; dummy tools keep the "
+            "prediction conservative."
+        )
+        universe_summary = f"Phase 2 Codex smoke universe for {symbol.upper()}"
+        freshness_summary = (
+            "Codex smoke used live web search plus deterministic dummy tools."
+            if evidence_sources
+            else "Codex smoke has no imported live-search evidence for this run."
+        )
     instrument_section = InstrumentReportSection(
         instrument_id=instrument.instrument_id,
         symbol=instrument.symbol,
         display_name=instrument.display_name,
-        observed_discussion_summary=(
-            "Codex live search evidence was imported through MCP and combined with "
-            "dummy structural tools."
-        ),
-        analysis_summary=(
-            "Phase 2 validates orchestration and provenance; dummy tools keep the "
-            "prediction conservative."
-        ),
+        observed_discussion_summary=observed_discussion_summary,
+        analysis_summary=analysis_summary,
         prediction_candidate_ids=tuple(
             candidate.candidate_id for candidate in prediction_candidates
         ),
@@ -103,6 +127,7 @@ def render_phase2_prediction_report(
     )
     has_codex_search_evidence = bool(evidence_sources)
     provider_status = ProviderStatus.OK if has_codex_search_evidence else ProviderStatus.EMPTY
+    provider_name = "phase4-fixture-tools" if is_phase4_report else "codex-web-search"
     report = DailyReport(
         schema_version="daily-report.v2",
         run_id=run.run_id,
@@ -110,21 +135,17 @@ def render_phase2_prediction_report(
         generated_at=now,
         timezone="UTC",
         objective=run.objective,
-        universe=f"Phase 2 Codex smoke universe for {symbol.upper()}",
+        universe=universe_summary,
         command_args={"run_id": run.run_id, "symbol": symbol.upper()},
         instruments=(instrument,),
         data_freshness=DataFreshnessSummary(
             as_of=now,
-            summary=(
-                "Codex smoke used live web search plus deterministic dummy tools."
-                if has_codex_search_evidence
-                else "Codex smoke has no imported live-search evidence for this run."
-            ),
-            missing_provider_names=() if has_codex_search_evidence else ("codex-web-search",),
+            summary=freshness_summary,
+            missing_provider_names=() if has_codex_search_evidence else (provider_name,),
         ),
         provider_health=(
             ProviderHealth(
-                provider_name="codex-web-search",
+                provider_name=provider_name,
                 status=provider_status,
                 checked_at=now,
                 credential_state=CredentialState.NOT_REQUIRED,
@@ -235,6 +256,9 @@ def _primary_instrument(
     record = store.get_instrument(instrument_id)
     if record is not None:
         return instrument_from_record(record)
+    discovered = store.find_instruments_by_symbol_or_alias(symbol.upper())
+    if discovered:
+        return instrument_from_record(discovered[0])
     return phase2_instrument(symbol.upper(), fallback_generated_at)
 
 
@@ -269,6 +293,10 @@ def _report_candidate(
     symbol = candidate.metadata.get("symbol")
     if not isinstance(symbol, str) or not symbol.strip():
         symbol = candidate.instrument_id.rsplit(":", 1)[-1]
+    baseline = candidate.baseline.get("summary")
+    if not isinstance(baseline, str) or not baseline.strip():
+        baseline = "No directional edge is assumed without source-backed evidence."
+    uncertainty = candidate.uncertainty or "Evidence coverage and freshness may limit confidence."
     return PredictionCandidate(
         candidate_id=candidate.candidate_id,
         instrument_id=candidate.instrument_id,
@@ -277,12 +305,12 @@ def _report_candidate(
         direction=Direction.MIXED,
         status=status,
         thesis=candidate.scenario,
-        baseline="No directional edge is assumed; dummy tools only validate orchestration.",
+        baseline=baseline,
         confidence=candidate.confidence or 0.0,
         evidence_for=evidence_for_refs,
         evidence_against=evidence_against_refs,
-        assumptions=("Codex search evidence is source material, not automatically true.",),
-        uncertainties=(candidate.uncertainty or "Phase 2 tools are structural dummies.",),
+        assumptions=("Source evidence is observed material, not automatically true.",),
+        uncertainties=(uncertainty,),
         signal_artifact_ids=candidate.signal_artifacts,
         metadata=candidate.metadata,
     )
@@ -300,6 +328,8 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
         "markdown_report",
         "json_report",
         "provider_result",
+        "market_data",
+        "technical_package",
         "ml_forecast",
         "instrument_universe",
         "prediction_evaluation",
@@ -311,8 +341,9 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
         artifact_type=cast(ArtifactType, artifact_type),
         path=path.as_posix(),
         created_at=record.created_at or utc_now(),
-        produced_by="phase2-mcp",
+        produced_by=record.produced_by or "phase2-mcp",
         sha256=record.sha256,
+        record_count=record.record_count,
         metadata=record.metadata,
     )
 

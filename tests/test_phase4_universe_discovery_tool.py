@@ -12,6 +12,8 @@ from nlp_stock_prediction.contracts import (
     InstrumentQuery,
     InstrumentUniverseRequest,
     JsonObject,
+    Watchlist,
+    WatchlistEntry,
 )
 from nlp_stock_prediction.orchestration.artifacts import ArtifactWriter
 from nlp_stock_prediction.orchestration.context import RunContext
@@ -187,3 +189,75 @@ def test_phase4_fixture_discovery_keeps_ambiguous_unavailable_and_unsupported_ex
     assert resolutions["PRIVATE:SPACEX"].selected_instrument_id is None
     assert resolutions["PRIVATE:SPACEX"].matches == ()
     assert result.instrument_records == ()
+
+
+def test_phase4_fixture_discovery_resolves_provider_hinted_fixture_identifier(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path
+    context = _context(repo_root)
+    store = _store(repo_root)
+    _seed_run(store, context)
+    request = InstrumentUniverseRequest(
+        request_id="phase4-provider-hinted-fixture",
+        as_of=_now(),
+        queries=(
+            InstrumentQuery(
+                query="Tesla Inc",
+                asset_class=AssetClass.STOCK,
+                provider=PHASE4_FIXTURE_PROVIDER,
+                provider_namespace="fixture-symbol",
+                provider_identifier="TSLA",
+            ),
+        ),
+    )
+
+    result = Phase4UniverseDiscoveryTool().run(
+        request=request,
+        context=context,
+        store=store,
+        repo_root=repo_root,
+    )
+
+    assert result.universe.instrument_ids == ("instrument:equity:us:tsla",)
+    assert result.universe.resolutions[0].status.value == "resolved"
+    source_query = store.list_source_queries_for_run(context.run_id)[0]
+    assert source_query.metadata["matched_instrument_ids"] == ["instrument:equity:us:tsla"]
+
+
+def test_phase4_fixture_discovery_requested_id_does_not_override_unrelated_query(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path
+    context = _context(repo_root)
+    store = _store(repo_root)
+    _seed_run(store, context)
+    request = InstrumentUniverseRequest(
+        request_id="phase4-requested-id-mismatch",
+        as_of=_now(),
+        watchlists=(
+            Watchlist(
+                watchlist_id="phase4-watchlist",
+                name="Phase 4 Watchlist",
+                entries=(
+                    WatchlistEntry(
+                        query=InstrumentQuery(query="SPY", asset_class=AssetClass.ETF),
+                        requested_instrument_id="instrument:equity:us:tsla",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    result = Phase4UniverseDiscoveryTool().run(
+        request=request,
+        context=context,
+        store=store,
+        repo_root=repo_root,
+    )
+
+    assert result.universe.instrument_ids == ("instrument:etf:us:spy",)
+    assert result.universe.resolutions[0].selected_instrument_id == "instrument:etf:us:spy"
+    source_query = store.list_source_queries_for_run(context.run_id)[0]
+    assert source_query.metadata["requested_instrument_id"] == "instrument:equity:us:tsla"
+    assert source_query.metadata["matched_instrument_ids"] == ["instrument:etf:us:spy"]

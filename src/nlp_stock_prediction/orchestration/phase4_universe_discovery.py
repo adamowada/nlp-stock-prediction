@@ -26,6 +26,7 @@ from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.instruments.registry import InstrumentRegistry, instrument_to_record
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.context import RunContext
+from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
 from nlp_stock_prediction.storage.records import (
     InstrumentRecord,
     SourceQueryRecord,
@@ -160,7 +161,7 @@ class Phase4UniverseDiscoveryTool:
             run_id=context.run_id,
             tool_name=PHASE4_TOOL_NAME,
             tool_version=PHASE4_TOOL_VERSION,
-            status="ok",
+            status="partial" if warnings else "successful",
             started_at=retrieved_at,
             completed_at=retrieved_at,
             inputs={
@@ -169,52 +170,65 @@ class Phase4UniverseDiscoveryTool:
             },
             warnings=warnings,
         )
-        store.record_tool_run(tool_run_record)
-        for source_query_record in source_query_records:
-            store.record_source_query(source_query_record)
-
-        selected_records = tuple(
-            instrument_record_from_contract(
-                instrument,
-                provider_name=self.provider.provider_name,
-                source_query_ids=tuple(
-                    source_query_ids_by_instrument.get(instrument.instrument_id, ())
-                ),
-            )
-            for instrument in universe.instruments
-        )
-        for record in selected_records:
-            store.upsert_instrument(record)
-
-        artifact = ArtifactIndex.for_directory(
+        with safe_phase4_tool_execution(
             store=store,
-            repo_root=repo_root,
-            base_dir=context.audit_dir,
-            created_at=retrieved_at,
-            produced_by=PHASE4_TOOL_NAME,
+            artifact_roots=(context.audit_dir,),
             tool_run_id=tool_run_id,
-            schema_version=PHASE4_UNIVERSE_SCHEMA_VERSION,
-        ).write_json(
-            artifact_id=artifact_id,
-            artifact_type="instrument_universe",
-            filename=_artifact_filename(validated.request_id, context.run_id),
-            payload=phase4_universe_artifact_payload(run_id=context.run_id, universe=universe),
-            record_count=len(universe.resolutions),
-            metadata={
-                "universe_id": universe.request_id,
-                "instrument_ids": list(universe.instrument_ids),
-                "resolution_status_counts": _resolution_status_counts(universe),
-                "source_query_ids": [record.source_query_id for record in source_query_records],
-                "warnings": list(warnings),
-            },
-        )
-        return Phase4UniverseDiscoveryToolResult(
-            universe=universe,
-            artifact=artifact,
-            tool_run_record=tool_run_record,
-            source_query_records=source_query_records,
-            instrument_records=selected_records,
-        )
+            run_id=context.run_id,
+            tool_name=PHASE4_TOOL_NAME,
+            tool_version=PHASE4_TOOL_VERSION,
+            started_at=retrieved_at,
+            inputs=tool_run_record.inputs,
+        ):
+            store.record_tool_run(tool_run_record)
+            for source_query_record in source_query_records:
+                store.record_source_query(source_query_record)
+
+            selected_records = tuple(
+                instrument_record_from_contract(
+                    instrument,
+                    provider_name=self.provider.provider_name,
+                    source_query_ids=tuple(
+                        source_query_ids_by_instrument.get(instrument.instrument_id, ())
+                    ),
+                )
+                for instrument in universe.instruments
+            )
+            for record in selected_records:
+                store.upsert_instrument(record)
+
+            artifact = ArtifactIndex.for_directory(
+                store=store,
+                repo_root=repo_root,
+                base_dir=context.audit_dir,
+                created_at=retrieved_at,
+                produced_by=PHASE4_TOOL_NAME,
+                tool_run_id=tool_run_id,
+                schema_version=PHASE4_UNIVERSE_SCHEMA_VERSION,
+            ).write_json(
+                artifact_id=artifact_id,
+                artifact_type="instrument_universe",
+                filename=_artifact_filename(validated.request_id, context.run_id),
+                payload=phase4_universe_artifact_payload(
+                    run_id=context.run_id,
+                    universe=universe,
+                ),
+                record_count=len(universe.resolutions),
+                metadata={
+                    "universe_id": universe.request_id,
+                    "instrument_ids": list(universe.instrument_ids),
+                    "resolution_status_counts": _resolution_status_counts(universe),
+                    "source_query_ids": [record.source_query_id for record in source_query_records],
+                    "warnings": list(warnings),
+                },
+            )
+            return Phase4UniverseDiscoveryToolResult(
+                universe=universe,
+                artifact=artifact,
+                tool_run_record=tool_run_record,
+                source_query_records=source_query_records,
+                instrument_records=selected_records,
+            )
 
 
 @dataclass(frozen=True)
@@ -500,6 +514,7 @@ def _fixture_matches(
             instrument
             for instrument in catalog
             if instrument.instrument_id == requested_instrument_id
+            and _instrument_matches_query_or_provider_id(instrument, query)
         )
 
     lookup_values = (query.query, *query.aliases)
@@ -508,11 +523,36 @@ def _fixture_matches(
             matches.append(instrument)
             continue
         if query.provider_identifier is not None and any(
-            _provider_identifier_matches(provider_id, query.provider_identifier)
+            _provider_identifier_matches(
+                provider_id,
+                query.provider_identifier,
+                provider=query.provider,
+                namespace=query.provider_namespace,
+            )
             for provider_id in instrument.provider_ids
         ):
             matches.append(instrument)
     return _dedupe_instruments(tuple(matches))
+
+
+def _instrument_matches_query_or_provider_id(
+    instrument: Instrument,
+    query: InstrumentQuery,
+) -> bool:
+    lookup_values = (query.query, *query.aliases)
+    if any(_instrument_matches_lookup(instrument, value) for value in lookup_values):
+        return True
+    if query.provider_identifier is None:
+        return False
+    return any(
+        _provider_identifier_matches(
+            provider_id,
+            query.provider_identifier,
+            provider=query.provider,
+            namespace=query.provider_namespace,
+        )
+        for provider_id in instrument.provider_ids
+    )
 
 
 def _instrument_matches_lookup(instrument: Instrument, value: str) -> bool:
@@ -524,7 +564,17 @@ def _instrument_matches_lookup(instrument: Instrument, value: str) -> bool:
     }
 
 
-def _provider_identifier_matches(provider_id: ProviderInstrumentId, value: str) -> bool:
+def _provider_identifier_matches(
+    provider_id: ProviderInstrumentId,
+    value: str,
+    *,
+    provider: str | None,
+    namespace: str | None,
+) -> bool:
+    if provider is not None and _normalize(provider_id.provider) != _normalize(provider):
+        return False
+    if namespace is not None and _normalize(provider_id.namespace or "") != _normalize(namespace):
+        return False
     return _normalize(provider_id.identifier) == _normalize(value)
 
 

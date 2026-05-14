@@ -218,6 +218,8 @@ class ArtifactIndex:
                 schema_version=self.schema_version,
                 metadata=artifact.metadata,
                 created_at=artifact.created_at,
+                produced_by=artifact.produced_by,
+                record_count=artifact.record_count,
             )
         )
 

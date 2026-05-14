@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from nlp_stock_prediction.contracts import (
     AssetClass,
+    AuditArtifact,
     AuditManifest,
     DailyReport,
     DataFreshnessSummary,
@@ -151,7 +152,7 @@ def _report(
     *,
     candidate: PredictionCandidate,
     source: SourceEvidence,
-    artifact,
+    artifact: AuditArtifact,
 ) -> DailyReport:
     instrument = Instrument(
         instrument_id=INSTRUMENT_ID,
