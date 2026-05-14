@@ -19,6 +19,7 @@ from nlp_stock_prediction.contracts.enums import (
     TimeHorizon,
     TradabilityStatus,
 )
+from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.instruments import (
     Instrument,
     InstrumentDataAvailability,
@@ -260,6 +261,10 @@ def _render_phase2_prediction_report_core(
         report_data_mode=resolved_report_data_mode,
     )
     prediction_candidates = prior_outcome_context.prediction_candidates
+    if prior_outcome_context.evidence_sources:
+        evidence_sources = _dedupe_source_evidence(
+            (*evidence_sources, *prior_outcome_context.evidence_sources)
+        )
     section_refs = tuple(
         EvidenceReference(
             evidence_id=record.evidence_id,
@@ -592,6 +597,15 @@ def _provider_name_for_mode(
     if report_data_mode == CODEX_SMOKE_REPORT_DATA_MODE:
         return "codex-web-search"
     return "dummy-smoke-tools"
+
+
+def _dedupe_source_evidence(
+    evidence_sources: tuple[SourceEvidence, ...],
+) -> tuple[SourceEvidence, ...]:
+    deduped: dict[str, SourceEvidence] = {}
+    for evidence in evidence_sources:
+        deduped.setdefault(evidence.evidence_id, evidence)
+    return tuple(deduped.values())
 
 
 def _record_final_report_artifact_index(
