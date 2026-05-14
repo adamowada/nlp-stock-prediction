@@ -43,7 +43,28 @@ def test_phase4_tool_plan_is_registry_derived_with_canonical_stages(tmp_path: Pa
     tools = cast(list[dict[str, object]], plan["tools"])
 
     assert plan["stage_order"] == list(PHASE4_STAGE_ORDER)
-    assert [tool["stage"] for tool in tools] == list(PHASE4_STAGE_ORDER)
+    assert [tool["tool_name"] for tool in tools] == [
+        "phase4_universe_discovery",
+        "phase4_market_data",
+        "phase4_social_evidence",
+        "phase4_news_catalyst",
+        "phase4_fundamentals",
+        "phase4_technical_package",
+        "phase4_sector_macro",
+        "phase4_prediction_evaluation",
+        "render_prediction_report",
+    ]
+    assert [tool["stage"] for tool in tools] == [
+        "discover",
+        "collect",
+        "collect",
+        "collect",
+        "collect",
+        "analyze",
+        "analyze",
+        "evaluate",
+        "report",
+    ]
     for tool in tools:
         assert {
             "tool_id",

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+import json
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -11,7 +12,14 @@ from typing import Literal, cast
 from pydantic import Field, model_validator
 
 from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEmptyStr
-from nlp_stock_prediction.orchestration.artifacts import ArtifactFileTransaction, ArtifactIndex
+from nlp_stock_prediction.contracts.instruments import InstrumentQuery, InstrumentUniverseRequest
+from nlp_stock_prediction.contracts.providers import FundamentalsSnapshot, RedditProvider
+from nlp_stock_prediction.orchestration.artifacts import (
+    ArtifactFileTransaction,
+    ArtifactIndex,
+    ArtifactWriter,
+)
+from nlp_stock_prediction.orchestration.context import RunContext
 from nlp_stock_prediction.orchestration.phase2_common import (
     ALLOWED_WRITE_ROOTS,
     Phase2RunPaths,
@@ -28,6 +36,43 @@ from nlp_stock_prediction.orchestration.phase2_dummy_tools import (
 from nlp_stock_prediction.orchestration.phase2_evidence import record_codex_search_evidence
 from nlp_stock_prediction.orchestration.phase2_report import render_phase2_prediction_report
 from nlp_stock_prediction.orchestration.phase2_synthesis import synthesize_prediction_candidates
+from nlp_stock_prediction.orchestration.phase4_common import Phase4ToolResult
+from nlp_stock_prediction.orchestration.phase4_fundamentals import (
+    PHASE4_FUNDAMENTALS_TOOL_NAME,
+    run_phase4_fundamentals_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_market_data import (
+    PHASE4_MARKET_DATA_TOOL_NAME,
+    Phase4MarketDataTool,
+)
+from nlp_stock_prediction.orchestration.phase4_news import (
+    PHASE4_NEWS_TOOL_NAME,
+    run_phase4_news_catalyst_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_sector_macro import (
+    PHASE4_SECTOR_MACRO_TOOL_NAME,
+    run_phase4_sector_macro_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_social import (
+    PHASE4_SOCIAL_TOOL_NAME,
+    run_phase4_social_evidence_tool,
+)
+from nlp_stock_prediction.orchestration.phase4_technical_package import (
+    PHASE4_TECHNICAL_PACKAGE_TOOL_NAME,
+    Phase4TechnicalPackageTool,
+)
+from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
+    PHASE4_TOOL_NAME as PHASE4_UNIVERSE_TOOL_NAME,
+)
+from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
+    Phase4UniverseDiscoveryTool,
+)
+from nlp_stock_prediction.providers._base import JsonResponse
+from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
+from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
+from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
+from nlp_stock_prediction.providers.social import XRecentSearchProvider
+from nlp_stock_prediction.reddit.provider import FixtureRedditProvider
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
 from nlp_stock_prediction.storage.records import ResearchRunRecord, ToolRunRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore, initialize_research_database
@@ -41,6 +86,14 @@ PHASE4_COLLECT_TOOL_ID = "phase4.collect_codex_search_evidence"
 PHASE4_ANALYZE_TOOL_ID = "phase4.analyze_context"
 PHASE4_EVALUATE_TOOL_ID = "phase4.evaluate_prediction_candidates"
 PHASE4_REPORT_TOOL_ID = "phase4.render_final_report"
+PHASE4_UNIVERSE_TOOL_ID = "phase4.universe_discovery"
+PHASE4_MARKET_DATA_TOOL_ID = "phase4.market_data"
+PHASE4_TECHNICAL_TOOL_ID = "phase4.technical_package"
+PHASE4_SOCIAL_TOOL_ID = "phase4.social_evidence"
+PHASE4_NEWS_TOOL_ID = "phase4.news_catalyst"
+PHASE4_FUNDAMENTALS_TOOL_ID = "phase4.fundamentals"
+PHASE4_SECTOR_MACRO_TOOL_ID = "phase4.sector_macro"
+PHASE4_PREDICTION_EVALUATION_TOOL_ID = "phase4.prediction_evaluation"
 
 MISSING_CANDIDATE_WARNING = (
     "No stored prediction candidates were available; Phase 4 report rendering is final-only "
@@ -135,10 +188,12 @@ class Phase4ToolRegistry:
             joined = ", ".join(unknown_stages)
             raise ValueError(f"phase4 tools use stages missing from stage_order: {joined}")
         self._validate_dependencies()
+        order_index = {tool_id: index for index, tool_id in enumerate(self._tools)}
         return tuple(
-            sorted(
-                self._tools.values(),
-                key=lambda tool: (stage_index[tool.stage], tool.tool_id),
+            tool
+            for _tool_id, tool in sorted(
+                self._tools.items(),
+                key=lambda item: (stage_index[item[1].stage], order_index[item[0]]),
             )
         )
 
@@ -244,9 +299,9 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
     return Phase4ToolRegistry(
         (
             Phase4ToolMetadata(
-                tool_id=PHASE4_DISCOVER_TOOL_ID,
-                tool_name="run_dummy_universe_tool",
-                tool_version="phase4.v1",
+                tool_id=PHASE4_UNIVERSE_TOOL_ID,
+                tool_name=PHASE4_UNIVERSE_TOOL_NAME,
+                tool_version="phase4.fixture.v1",
                 stage="discover",
                 description=(
                     "Resolve the requested instrument universe and write instrument-universe "
@@ -257,37 +312,77 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                 live_capable=False,
             ),
             Phase4ToolMetadata(
-                tool_id=PHASE4_COLLECT_TOOL_ID,
-                tool_name="record_codex_search_evidence",
-                tool_version="phase4.v1",
+                tool_id=PHASE4_MARKET_DATA_TOOL_ID,
+                tool_name=PHASE4_MARKET_DATA_TOOL_NAME,
+                tool_version="phase4.market-data.v1",
                 stage="collect",
-                description="Record Codex-supplied source material as normalized evidence.",
-                artifact_kinds=("normalized_evidence",),
+                description="Fetch or fixture daily market data and preserve provider provenance.",
+                artifact_kinds=("market_data",),
                 offline_capable=True,
-                live_capable=True,
-                dependencies=(PHASE4_DISCOVER_TOOL_ID,),
-                metadata={"source_material": "codex_search_or_browse"},
+                live_capable=False,
+                dependencies=(PHASE4_UNIVERSE_TOOL_ID,),
             ),
             Phase4ToolMetadata(
-                tool_id=PHASE4_ANALYZE_TOOL_ID,
-                tool_name="run_dummy_analysis_tool",
-                tool_version="phase4.v1",
+                tool_id=PHASE4_TECHNICAL_TOOL_ID,
+                tool_name=PHASE4_TECHNICAL_PACKAGE_TOOL_NAME,
+                tool_version="phase4.technical-package.v1",
                 stage="analyze",
-                description="Write analysis context artifacts from collected evidence.",
-                artifact_kinds=("analysis_context",),
-                dependencies=(PHASE4_DISCOVER_TOOL_ID, PHASE4_COLLECT_TOOL_ID),
+                description=(
+                    "Compute deterministic technical context from market-data artifacts; raw "
+                    "TimesFM remains sidecar context only."
+                ),
+                artifact_kinds=("technical_package",),
+                dependencies=(PHASE4_MARKET_DATA_TOOL_ID,),
             ),
             Phase4ToolMetadata(
-                tool_id=PHASE4_EVALUATE_TOOL_ID,
-                tool_name="synthesize_prediction_candidates",
+                tool_id=PHASE4_SOCIAL_TOOL_ID,
+                tool_name=PHASE4_SOCIAL_TOOL_NAME,
+                tool_version="phase4.evidence-suite.v1",
+                stage="collect",
+                description="Normalize social evidence and preserve source/provider provenance.",
+                artifact_kinds=("normalized_evidence",),
+                dependencies=(PHASE4_UNIVERSE_TOOL_ID,),
+            ),
+            Phase4ToolMetadata(
+                tool_id=PHASE4_NEWS_TOOL_ID,
+                tool_name=PHASE4_NEWS_TOOL_NAME,
+                tool_version="phase4.evidence-suite.v1",
+                stage="collect",
+                description="Normalize news/catalyst evidence with derived labels.",
+                artifact_kinds=("normalized_evidence",),
+                dependencies=(PHASE4_UNIVERSE_TOOL_ID,),
+            ),
+            Phase4ToolMetadata(
+                tool_id=PHASE4_FUNDAMENTALS_TOOL_ID,
+                tool_name=PHASE4_FUNDAMENTALS_TOOL_NAME,
+                tool_version="phase4.evidence-suite.v1",
+                stage="collect",
+                description="Fetch fundamentals evidence and write analysis context artifacts.",
+                artifact_kinds=("analysis_context",),
+                dependencies=(PHASE4_UNIVERSE_TOOL_ID,),
+            ),
+            Phase4ToolMetadata(
+                tool_id=PHASE4_SECTOR_MACRO_TOOL_ID,
+                tool_name=PHASE4_SECTOR_MACRO_TOOL_NAME,
+                tool_version="phase4.evidence-suite.v1",
+                stage="analyze",
+                description="Build sector and macro baseline context with provenance.",
+                artifact_kinds=("analysis_context",),
+                dependencies=(PHASE4_FUNDAMENTALS_TOOL_ID,),
+            ),
+            Phase4ToolMetadata(
+                tool_id=PHASE4_PREDICTION_EVALUATION_TOOL_ID,
+                tool_name="phase4_prediction_evaluation",
                 tool_version="phase4.v1",
                 stage="evaluate",
-                description="Evaluate stored evidence into persisted prediction candidates.",
-                artifact_kinds=("prediction_input",),
+                description="Evaluate stored prediction candidates as prediction-quality records.",
+                artifact_kinds=("prediction_evaluation",),
                 dependencies=(
-                    PHASE4_DISCOVER_TOOL_ID,
-                    PHASE4_COLLECT_TOOL_ID,
-                    PHASE4_ANALYZE_TOOL_ID,
+                    PHASE4_TECHNICAL_TOOL_ID,
+                    PHASE4_SOCIAL_TOOL_ID,
+                    PHASE4_NEWS_TOOL_ID,
+                    PHASE4_FUNDAMENTALS_TOOL_ID,
+                    PHASE4_SECTOR_MACRO_TOOL_ID,
                 ),
             ),
             Phase4ToolMetadata(
@@ -300,12 +395,7 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                     "and artifacts."
                 ),
                 artifact_kinds=("markdown_report", "json_report", "audit_manifest"),
-                dependencies=(
-                    PHASE4_DISCOVER_TOOL_ID,
-                    PHASE4_COLLECT_TOOL_ID,
-                    PHASE4_ANALYZE_TOOL_ID,
-                    PHASE4_EVALUATE_TOOL_ID,
-                ),
+                dependencies=(PHASE4_PREDICTION_EVALUATION_TOOL_ID,),
                 metadata={"final_only": True},
             ),
         )
@@ -489,6 +579,226 @@ class Phase4Service:
     def list_research_tool_plan(self) -> JsonObject:
         return phase4_research_tool_plan(self.registry)
 
+    def phase4_universe_discovery(self, *, run_id: str, symbol: str) -> JsonObject:
+        run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
+        run_date = run_date_from_run(run)
+        paths = self._paths(run_date, str(run.metadata["output_dir"]))
+        context = self._run_context(run, paths)
+        request = InstrumentUniverseRequest(
+            request_id=f"phase4-service-universe-{run_id}-{symbol_slug(normalized_symbol)}",
+            as_of=context.generated_at,
+            queries=(InstrumentQuery(query=normalized_symbol),),
+        )
+        result = Phase4UniverseDiscoveryTool().run(
+            request=request,
+            context=context,
+            store=self.store,
+            repo_root=self.repo_root,
+        )
+        return {
+            "run_id": run_id,
+            "tool_run_id": result.tool_run_id,
+            "artifact_id": result.artifact_id,
+            "artifact_path": result.artifact.path,
+            "instrument_ids": list(result.instrument_ids),
+            "source_query_ids": [record.source_query_id for record in result.source_query_records],
+            "warnings": list(result.tool_run_record.warnings),
+        }
+
+    def phase4_market_data(self, *, run_id: str, symbol: str) -> JsonObject:
+        run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
+        run_date = run_date_from_run(run)
+        paths = self._paths(run_date, str(run.metadata["output_dir"]))
+        fixture_path = self._fixture_path(
+            "raw",
+            "candlecharts",
+            f"public_ohlcv_{normalized_symbol.lower()}.html",
+        )
+        provider = CandlechartsMarketDataProvider(
+            html_path=fixture_path,
+            now=utc_now,
+            allow_live=False,
+        )
+        result = Phase4MarketDataTool(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=paths.audit_dir,
+            provider=provider,
+            now=utc_now,
+        ).run(
+            run_id=run_id,
+            run_date=run_date,
+            symbol=normalized_symbol,
+            instrument_id=self._instrument_id(normalized_symbol),
+            source_url=fixture_path,
+        )
+        return {
+            "run_id": run_id,
+            "tool_run_id": result.tool_run_id,
+            "artifact_id": result.artifact.artifact_id,
+            "artifact_path": result.artifact.path,
+            "source_query_id": result.source_query_id,
+            "status": result.provider_result.status.value,
+            "warnings": [warning.message for warning in result.artifact_payload.warnings],
+        }
+
+    def phase4_technical_package(self, *, run_id: str, symbol: str) -> JsonObject:
+        run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
+        run_date = run_date_from_run(run)
+        paths = self._paths(run_date, str(run.metadata["output_dir"]))
+        market_path = self._latest_artifact_path(run_id, "market_data")
+        if market_path is None:
+            self.phase4_market_data(run_id=run_id, symbol=normalized_symbol)
+            market_path = self._latest_artifact_path(run_id, "market_data")
+        if market_path is None:
+            raise ValueError("phase4 technical package requires a market-data artifact")
+        result = Phase4TechnicalPackageTool(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=paths.audit_dir,
+            now=utc_now,
+        ).run(
+            run_id=run_id,
+            symbol=normalized_symbol,
+            market_data=market_path,
+            instrument_id=self._instrument_id(normalized_symbol),
+        )
+        return {
+            "run_id": run_id,
+            "tool_run_id": result.tool_run_id,
+            "artifact_id": result.artifact.artifact_id,
+            "artifact_path": result.artifact.path,
+            "status": result.artifact_payload.status,
+            "warnings": [warning.message for warning in result.artifact_payload.warnings],
+        }
+
+    def phase4_social_evidence(self, *, run_id: str, symbol: str) -> JsonObject:
+        run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
+        result = run_phase4_social_evidence_tool(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir(run),
+            run_id=run_id,
+            symbol=normalized_symbol,
+            run_date=run_date_from_run(run),
+            generated_at=utc_now(),
+            reddit_provider=cast(RedditProvider | None, self._fixture_reddit_provider()),
+            x_provider=self._fixture_x_provider(),
+            instrument_id=self._instrument_id(normalized_symbol),
+        )
+        return _phase4_tool_result_payload(result)
+
+    def phase4_news_catalyst(self, *, run_id: str, symbol: str) -> JsonObject:
+        run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
+        result = run_phase4_news_catalyst_tool(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir(run),
+            run_id=run_id,
+            symbol=normalized_symbol,
+            run_date=run_date_from_run(run),
+            generated_at=utc_now(),
+            providers=self._fixture_news_providers(),
+            instrument_id=self._instrument_id(normalized_symbol),
+        )
+        return _phase4_tool_result_payload(result)
+
+    def phase4_fundamentals(self, *, run_id: str, symbol: str) -> JsonObject:
+        run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
+        result = run_phase4_fundamentals_tool(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir(run),
+            run_id=run_id,
+            symbol=normalized_symbol,
+            run_date=run_date_from_run(run),
+            generated_at=utc_now(),
+            providers=self._fixture_fundamentals_providers(normalized_symbol),
+            instrument_id=self._instrument_id(normalized_symbol),
+        )
+        return _phase4_tool_result_payload(result)
+
+    def phase4_sector_macro(self, *, run_id: str, symbol: str) -> JsonObject:
+        run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
+        result = run_phase4_sector_macro_tool(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir(run),
+            run_id=run_id,
+            symbol=normalized_symbol,
+            run_date=run_date_from_run(run),
+            generated_at=utc_now(),
+            target_snapshot=FundamentalsSnapshot(ticker=normalized_symbol),
+            instrument_id=self._instrument_id(normalized_symbol),
+        )
+        return _phase4_tool_result_payload(result)
+
+    def phase4_prediction_evaluation(self, *, run_id: str, symbol: str) -> JsonObject:
+        run = self._require_run(run_id)
+        normalized_symbol = self._validated_symbol(run, symbol)
+        candidates = self.store.list_prediction_candidates_for_run(run_id)
+
+        def action(_context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
+            if not candidates:
+                return Phase4ToolRunOutcome(
+                    status="empty",
+                    payload={
+                        "candidate_count": 0,
+                        "message": "No stored prediction candidates were available to evaluate.",
+                    },
+                    metadata={"candidate_count": 0},
+                )
+            return Phase4ToolRunOutcome(
+                status="skipped",
+                payload={
+                    "candidate_count": len(candidates),
+                    "message": (
+                        "Stored candidates are present; first-class evaluation artifact writing "
+                        "is available through nlp_stock_prediction.evaluation."
+                    ),
+                },
+                metadata={"candidate_count": len(candidates)},
+            )
+
+        return self._execute_symbol_tool(
+            run_id=run_id,
+            symbol=normalized_symbol,
+            tool_id=PHASE4_PREDICTION_EVALUATION_TOOL_ID,
+            inputs={"symbol": normalized_symbol, "candidate_count": len(candidates)},
+            action=action,
+        ).payload
+
+    def run_offline_phase4_flow(self, *, run_date: str, output_dir: str, symbol: str) -> JsonObject:
+        normalized_symbol = symbol.strip().upper()
+        run_id = phase4_run_id(date.fromisoformat(run_date), normalized_symbol)
+        existing_run = self.store.get_research_run(run_id)
+        if existing_run is None:
+            started = self.start_research_run(
+                run_date=run_date,
+                output_dir=output_dir,
+                symbol=normalized_symbol,
+                objective=f"Phase 4 fixture-backed prediction research for {normalized_symbol}",
+            )
+            run_id = str(started["run_id"])
+            normalized_symbol = str(started["symbol"])
+        self.phase4_universe_discovery(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_market_data(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_technical_package(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_social_evidence(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_news_catalyst(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_fundamentals(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_sector_macro(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_prediction_evaluation(run_id=run_id, symbol=normalized_symbol)
+        report = self.render_prediction_report(run_id=run_id, symbol=normalized_symbol)
+        return {"run_id": run_id, "symbol": normalized_symbol, "report": report}
+
     def record_codex_search_evidence(
         self,
         *,
@@ -544,6 +854,9 @@ class Phase4Service:
         ).payload
 
     def run_dummy_universe_tool(self, *, run_id: str, symbol: str) -> JsonObject:
+        return self.phase4_universe_discovery(run_id=run_id, symbol=symbol)
+
+    def _run_phase2_dummy_universe_tool(self, *, run_id: str, symbol: str) -> JsonObject:
         def action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
             result = run_phase2_dummy_universe_tool(
                 store=self.store,
@@ -575,6 +888,9 @@ class Phase4Service:
         ).payload
 
     def run_dummy_analysis_tool(self, *, run_id: str, symbol: str) -> JsonObject:
+        return self.phase4_technical_package(run_id=run_id, symbol=symbol)
+
+    def _run_phase2_dummy_analysis_tool(self, *, run_id: str, symbol: str) -> JsonObject:
         def action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
             result = run_phase2_dummy_analysis_tool(
                 store=self.store,
@@ -750,6 +1066,123 @@ class Phase4Service:
     def _resolve_write_path(self, path: Path) -> Path:
         return self.write_policy.resolve(path)
 
+    def _run_context(self, run: ResearchRunRecord, paths: Phase2RunPaths) -> RunContext:
+        generated_at = utc_now()
+        return RunContext(
+            run_id=run.run_id,
+            run_date=run_date_from_run(run),
+            generated_at=generated_at,
+            timezone="UTC",
+            output_dir=paths.output_dir,
+            report_dir=paths.run_dir,
+            audit_dir=paths.audit_dir,
+            command_args={
+                "phase": "phase4",
+                "output_dir": paths.output_dir.as_posix(),
+            },
+            artifact_writer=ArtifactWriter(
+                base_dir=paths.audit_dir,
+                created_at=generated_at,
+                produced_by=PHASE4_UNIVERSE_TOOL_NAME,
+            ),
+        )
+
+    def _artifact_dir(self, run: ResearchRunRecord) -> Path:
+        return self._paths(run_date_from_run(run), str(run.metadata["output_dir"])).audit_dir
+
+    def _instrument_id(self, symbol: str) -> str:
+        instrument = self.store.find_instrument_by_provider_id(
+            "phase4-fixture-directory",
+            "fixture-symbol",
+            symbol.strip().upper(),
+        )
+        if instrument is not None:
+            return instrument.instrument_id
+        return f"instrument:codex:{symbol.strip().upper()}"
+
+    def _latest_artifact_path(self, run_id: str, artifact_type: str) -> Path | None:
+        for artifact in reversed(self.store.list_artifacts_for_run(run_id)):
+            if artifact.artifact_type == artifact_type:
+                path = Path(artifact.path)
+                return path if path.is_absolute() else self.repo_root / path
+        return None
+
+    def _fixture_path(self, *parts: str) -> Path | None:
+        path = self.repo_root.joinpath("tests", "fixtures", *parts)
+        return path if path.exists() else None
+
+    def _fixture_json(self, *parts: str) -> object | None:
+        path = self._fixture_path(*parts)
+        if path is None:
+            return None
+        loaded: object = json.loads(path.read_text(encoding="utf-8"))
+        return loaded
+
+    def _fixture_reddit_provider(self) -> FixtureRedditProvider | None:
+        card_path = self._fixture_path("reddit", "devvit_card_normal.html")
+        records = self._fixture_json("reddit", "discussion_records.json")
+        if card_path is None or not isinstance(records, list):
+            return None
+        return FixtureRedditProvider(
+            ticker_card_html=card_path.read_text(encoding="utf-8"),
+            discussion_records=cast(list[dict[str, object]], records),
+            fetched_at=utc_now(),
+            raw_ticker_snapshot_id="raw-reddit-ticker-card",
+            raw_discussion_snapshot_id="raw-reddit-discussion",
+        )
+
+    def _fixture_x_provider(self) -> XRecentSearchProvider | None:
+        payload = self._fixture_json("raw", "x", "recent_tsla.json")
+        if payload is None:
+            return None
+        return XRecentSearchProvider(
+            bearer_token="fixture-token",
+            transport=_StaticJsonTransport({"tweets/search/recent": cast(JsonObject, payload)}),
+            now=utc_now,
+        )
+
+    def _fixture_news_providers(self) -> tuple[PublicNewsProvider, ...]:
+        payload = self._fixture_json("raw", "news", "tsla.json")
+        if payload is None:
+            return ()
+        return (
+            PublicNewsProvider(
+                config=PublicNewsProviderConfig(
+                    provider_name="fixture-news",
+                    endpoint="https://news.example.invalid/v1/search",
+                    api_key_param="token",
+                    query_param="search",
+                ),
+                api_key="fixture-key",
+                transport=_StaticJsonTransport(
+                    {"news.example.invalid/v1/search": cast(JsonObject, payload)}
+                ),
+                now=utc_now,
+            ),
+        )
+
+    def _fixture_fundamentals_providers(
+        self,
+        symbol: str,
+    ) -> tuple[SecEdgarFundamentalsProvider, ...]:
+        companyfacts = self._fixture_json("raw", "sec_edgar", "companyfacts_tsla.json")
+        submissions = self._fixture_json("raw", "sec_edgar", "submissions_tsla.json")
+        if companyfacts is None or submissions is None:
+            return ()
+        return (
+            SecEdgarFundamentalsProvider(
+                ticker_cik_map={symbol.upper(): "1318605"},
+                user_agent="nlp-stock-prediction fixture-runtime contact@example.test",
+                transport=_StaticJsonTransport(
+                    {
+                        "companyfacts": cast(JsonObject, companyfacts),
+                        "submissions": cast(JsonObject, submissions),
+                    }
+                ),
+                now=utc_now,
+            ),
+        )
+
 
 def _phase4_tool_run_id(
     *,
@@ -815,6 +1248,39 @@ def _string_tuple(value: object) -> tuple[str, ...]:
     return ()
 
 
+def _phase4_tool_result_payload(result: Phase4ToolResult) -> JsonObject:
+    return {
+        "run_id": result.run_id,
+        "tool_run_id": result.tool_run_id,
+        "artifact_id": result.artifact_id,
+        "artifact_path": result.artifact_path.as_posix(),
+        "status": result.status,
+        "evidence_ids": list(result.evidence_ids),
+        "source_query_ids": list(result.source_query_ids),
+        "warnings": list(result.warnings),
+    }
+
+
+@dataclass(frozen=True)
+class _StaticJsonTransport:
+    responses: Mapping[str, JsonObject]
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+    ) -> JsonResponse:
+        del headers, timeout
+        for url_fragment, payload in self.responses.items():
+            if url_fragment in url:
+                return JsonResponse(payload=payload)
+        if len(self.responses) == 1:
+            return JsonResponse(payload=next(iter(self.responses.values())))
+        raise ValueError(f"No fixture JSON response is registered for URL: {url}")
+
+
 __all__ = [
     "ALLOWED_WRITE_ROOTS",
     "MISSING_CANDIDATE_WARNING",
@@ -822,8 +1288,16 @@ __all__ = [
     "PHASE4_COLLECT_TOOL_ID",
     "PHASE4_DISCOVER_TOOL_ID",
     "PHASE4_EVALUATE_TOOL_ID",
+    "PHASE4_FUNDAMENTALS_TOOL_ID",
+    "PHASE4_MARKET_DATA_TOOL_ID",
+    "PHASE4_NEWS_TOOL_ID",
+    "PHASE4_PREDICTION_EVALUATION_TOOL_ID",
     "PHASE4_REPORT_TOOL_ID",
+    "PHASE4_SECTOR_MACRO_TOOL_ID",
+    "PHASE4_SOCIAL_TOOL_ID",
     "PHASE4_STAGE_ORDER",
+    "PHASE4_TECHNICAL_TOOL_ID",
+    "PHASE4_UNIVERSE_TOOL_ID",
     "Phase4Service",
     "Phase4Stage",
     "Phase4ToolExecutionError",
