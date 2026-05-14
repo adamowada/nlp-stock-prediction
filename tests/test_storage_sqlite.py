@@ -540,6 +540,16 @@ def test_record_artifact_rejects_absolute_and_parent_traversal_paths(tmp_path: P
                 schema_version="unit.v1",
             )
         )
+    with pytest.raises(ValueError, match="relative"):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id="artifact-invalid-path-drive",
+                artifact_type="provider_result",
+                path=Path("C:\\tmp\\leak.json"),
+                sha256="b" * 64,
+                schema_version="unit.v1",
+            )
+        )
     with pytest.raises(ValueError, match="name a file"):
         store.record_artifact(
             ArtifactRecord(

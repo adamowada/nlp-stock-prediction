@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
@@ -1980,9 +1980,19 @@ def _validate_relative_artifact_path(path: Path) -> None:
     path_text = str(path).strip()
     if not path_text or path_text == ".":
         raise ValueError("artifact path must name a file")
-    if path.is_absolute() or path.anchor or path.drive or path.root:
+    windows_path = PureWindowsPath(path_text)
+    if (
+        path.is_absolute()
+        or path.anchor
+        or path.drive
+        or path.root
+        or windows_path.is_absolute()
+        or windows_path.anchor
+        or windows_path.drive
+        or windows_path.root
+    ):
         raise ValueError("artifact path must be relative")
-    if any(part in {"..", "."} for part in path.parts):
+    if any(part in {"..", "."} for part in (*path.parts, *windows_path.parts)):
         raise ValueError("artifact path must not contain parent traversal")
 
 
