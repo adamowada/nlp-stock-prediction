@@ -85,6 +85,16 @@ def test_supported_follow_up_evidence_reviews_prior_report_artifact(tmp_path: Pa
     assert "supports" in reviews[0]["summary"]
     assert reviews[0]["artifact_ids"] == [prior_json_artifact_id]
     assert reviews[0]["metadata"]["prior_report_artifact_id"] == prior_json_artifact_id
+    outcome = cast(dict[str, Any], reviews[0]["metadata"]["prediction_outcome"])
+    outcome_evaluation = cast(
+        dict[str, Any],
+        reviews[0]["metadata"]["prediction_outcome_evaluation"],
+    )
+    assert outcome["status"] == "observed"
+    assert outcome["observed_result"] == "supported"
+    assert outcome["candidate_id"] == candidate["candidate_id"]
+    assert outcome_evaluation["status"] == "confirmed"
+    assert outcome_evaluation["outcome_id"] == outcome["outcome_id"]
     assert reviews[0]["outcome_evidence"]
     assert audit_artifacts[prior_json_artifact_id]["metadata"]["prior_outcome_source"] is True
     assert any(

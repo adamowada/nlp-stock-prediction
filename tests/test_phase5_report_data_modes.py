@@ -36,7 +36,9 @@ from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
     UniverseDiscoveryProvider,
 )
 from nlp_stock_prediction.orchestration.report_data_modes import (
+    ReportInputProvenance,
     find_non_live_report_input_violations,
+    report_data_mode_metadata,
 )
 from nlp_stock_prediction.pipeline import (
     LIVE_ORCHESTRATION_DISABLED_MESSAGE,
@@ -85,6 +87,35 @@ def test_cli_research_live_mode_is_explicit_and_machine_marked(tmp_path: Path) -
     assert config.offline is False
     assert config.source_mode == "live"
     assert config.live_providers is True
+
+
+@pytest.mark.unit
+def test_report_input_provenance_reads_stamped_modes() -> None:
+    live_provenance = ReportInputProvenance.from_metadata(
+        record_type="artifact",
+        record_id="artifact-live",
+        metadata=report_data_mode_metadata(LIVE_REPORT_DATA_MODE),
+    )
+
+    assert live_provenance.observed_modes == (
+        LIVE_REPORT_DATA_MODE,
+        LIVE_REPORT_DATA_MODE,
+        LIVE_REPORT_DATA_MODE,
+    )
+    assert live_provenance.non_live_violations() == ()
+
+    fixture_provenance = ReportInputProvenance.from_metadata(
+        record_type="artifact",
+        record_id="artifact-fixture",
+        metadata=report_data_mode_metadata(OFFLINE_FIXTURE_REPORT_DATA_MODE),
+    )
+
+    assert fixture_provenance.includes_non_live_mode is True
+    assert {violation.field for violation in fixture_provenance.non_live_violations()} == {
+        "report_data_mode",
+        "provider_mode",
+        "input_data_mode",
+    }
 
 
 @pytest.mark.integration

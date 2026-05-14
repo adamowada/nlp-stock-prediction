@@ -15,10 +15,8 @@ from nlp_stock_prediction.contracts.base import ContractModel, JsonObject, NonEm
 from nlp_stock_prediction.contracts.enums import (
     Direction,
     PredictionType,
-    SignalArtifactFamily,
     TimeHorizon,
 )
-from nlp_stock_prediction.contracts.evaluation import SignalArtifactReference
 from nlp_stock_prediction.contracts.instruments import InstrumentQuery, InstrumentUniverseRequest
 from nlp_stock_prediction.contracts.providers import FundamentalsSnapshot
 from nlp_stock_prediction.orchestration.artifacts import (
@@ -37,7 +35,10 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     utc_now,
 )
 from nlp_stock_prediction.orchestration.phase2_evidence import evidence_stance_from_record
-from nlp_stock_prediction.orchestration.phase2_report import render_phase2_prediction_report
+from nlp_stock_prediction.orchestration.phase2_report import (
+    PredictionReportBuildRequest,
+    ReportBundleBuilder,
+)
 from nlp_stock_prediction.orchestration.phase4_common import Phase4ToolResult
 from nlp_stock_prediction.orchestration.phase4_evaluation import (
     evaluate_stored_prediction_candidates,
@@ -61,6 +62,7 @@ from nlp_stock_prediction.orchestration.phase4_news import (
     PHASE4_NEWS_TOOL_NAME,
     run_phase4_news_catalyst_tool,
 )
+from nlp_stock_prediction.orchestration.phase4_run_modes import Phase4RunModeAdapter
 from nlp_stock_prediction.orchestration.phase4_sector_macro import (
     PHASE4_SECTOR_MACRO_TOOL_NAME,
     run_phase4_sector_macro_tool,
@@ -74,12 +76,10 @@ from nlp_stock_prediction.orchestration.phase4_technical_package import (
     Phase4TechnicalPackageTool,
 )
 from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
-    PHASE4_FIXTURE_PROVIDER,
-    PHASE4_LIVE_SYMBOL_PROVIDER,
-    Phase4UniverseDiscoveryTool,
+    PHASE4_TOOL_NAME as PHASE4_UNIVERSE_TOOL_NAME,
 )
 from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
-    PHASE4_TOOL_NAME as PHASE4_UNIVERSE_TOOL_NAME,
+    Phase4UniverseDiscoveryTool,
 )
 from nlp_stock_prediction.orchestration.report_data_modes import (
     LIVE_REPORT_DATA_MODE,
@@ -91,10 +91,12 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
     report_data_mode_metadata,
     report_data_mode_metadata_from_run,
 )
-from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
+from nlp_stock_prediction.orchestration.signal_artifacts import (
+    signal_artifact_metadata,
+    signal_artifact_references_for_records,
+)
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
 from nlp_stock_prediction.storage.records import (
-    ArtifactRecord,
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
     PredictionCandidateRecord,
@@ -711,11 +713,7 @@ class Phase4Service:
             as_of=context.generated_at,
             queries=(InstrumentQuery(query=normalized_symbol),),
         )
-        universe_provider = (
-            self.live_providers.universe_provider()
-            if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
-            else None
-        )
+        universe_provider = self._mode_adapter(run).universe_provider()
         universe_tool = (
             Phase4UniverseDiscoveryTool(provider=universe_provider)
             if universe_provider is not None
@@ -742,39 +740,21 @@ class Phase4Service:
         normalized_symbol = self._validated_symbol(run, symbol)
         run_date = run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]), symbol=normalized_symbol)
-        report_data_mode = report_data_mode_from_run(run)
-        fixture_path: Path | None = None
-        source_url: str | Path | None = None
-        options = report_data_mode_metadata_from_run(run)
-        if report_data_mode == LIVE_REPORT_DATA_MODE:
-            provider = self.live_providers.market_data_provider(normalized_symbol)
-            source_url = self.live_providers.market_data_source_query_url(normalized_symbol)
-            if source_url is not None:
-                options = {**options, "source_query_url": source_url}
-        else:
-            fixture_path = self.fixtures.market_html_path(normalized_symbol)
-            source_url = fixture_path
-            provider = CandlechartsMarketDataProvider(
-                html_path=fixture_path,
-                now=utc_now,
-                allow_live=False,
-            )
+        mode_adapter = self._mode_adapter(run)
+        market_data = mode_adapter.market_data_selection(normalized_symbol)
         result = Phase4MarketDataTool(
             store=self.store,
             repo_root=self.repo_root,
             artifact_dir=paths.audit_dir,
-            provider=provider,
+            provider=market_data.provider,
             now=utc_now,
         ).run(
             run_id=run_id,
             run_date=run_date,
             symbol=normalized_symbol,
-            instrument_id=self._instrument_id(
-                normalized_symbol,
-                report_data_mode=report_data_mode,
-            ),
-            source_url=source_url,
-            options=options,
+            instrument_id=mode_adapter.instrument_id(normalized_symbol),
+            source_url=market_data.source_url,
+            options=market_data.options,
         )
         return {
             "run_id": run_id,
@@ -806,10 +786,7 @@ class Phase4Service:
             run_id=run_id,
             symbol=normalized_symbol,
             market_data=market_path,
-            instrument_id=self._instrument_id(
-                normalized_symbol,
-                report_data_mode=report_data_mode_from_run(run),
-            ),
+            instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
         )
         return {
             "run_id": run_id,
@@ -823,6 +800,7 @@ class Phase4Service:
     def phase4_social_evidence(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)
         normalized_symbol = self._validated_symbol(run, symbol)
+        providers = self._mode_adapter(run).social_providers(normalized_symbol)
         result = run_phase4_social_evidence_tool(
             store=self.store,
             repo_root=self.repo_root,
@@ -831,20 +809,9 @@ class Phase4Service:
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
-            reddit_provider=(
-                self.live_providers.reddit_provider()
-                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
-                else self.fixtures.reddit_provider()
-            ),
-            x_provider=(
-                self.live_providers.x_provider(normalized_symbol)
-                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
-                else self.fixtures.x_provider(normalized_symbol)
-            ),
-            instrument_id=self._instrument_id(
-                normalized_symbol,
-                report_data_mode=report_data_mode_from_run(run),
-            ),
+            reddit_provider=providers.reddit_provider,
+            x_provider=providers.x_provider,
+            instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
 
@@ -859,15 +826,8 @@ class Phase4Service:
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
-            providers=(
-                self.live_providers.news_providers(normalized_symbol)
-                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
-                else self.fixtures.news_providers(normalized_symbol)
-            ),
-            instrument_id=self._instrument_id(
-                normalized_symbol,
-                report_data_mode=report_data_mode_from_run(run),
-            ),
+            providers=self._mode_adapter(run).news_providers(normalized_symbol),
+            instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
 
@@ -882,15 +842,8 @@ class Phase4Service:
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
-            providers=(
-                self.live_providers.fundamentals_providers(normalized_symbol)
-                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
-                else self.fixtures.fundamentals_providers(normalized_symbol)
-            ),
-            instrument_id=self._instrument_id(
-                normalized_symbol,
-                report_data_mode=report_data_mode_from_run(run),
-            ),
+            providers=self._mode_adapter(run).fundamentals_providers(normalized_symbol),
+            instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
 
@@ -906,15 +859,8 @@ class Phase4Service:
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
             target_snapshot=FundamentalsSnapshot(ticker=normalized_symbol),
-            macro_providers=(
-                self.live_providers.macro_providers(normalized_symbol)
-                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
-                else ()
-            ),
-            instrument_id=self._instrument_id(
-                normalized_symbol,
-                report_data_mode=report_data_mode_from_run(run),
-            ),
+            macro_providers=self._mode_adapter(run).macro_providers(normalized_symbol),
+            instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
 
@@ -961,40 +907,35 @@ class Phase4Service:
         ).payload
 
     def run_offline_phase4_flow(self, *, run_date: str, output_dir: str, symbol: str) -> JsonObject:
-        normalized_symbol = symbol.strip().upper()
-        if not normalized_symbol:
-            raise ValueError("symbol must be non-empty")
-        run_id = phase4_run_id(date.fromisoformat(run_date), normalized_symbol)
-        existing_run = self.store.get_research_run(run_id)
-        if existing_run is None:
-            started = self.start_research_run(
-                run_date=run_date,
-                output_dir=output_dir,
-                symbol=normalized_symbol,
-                objective=f"Phase 4 fixture-backed prediction research for {normalized_symbol}",
-                report_data_mode=OFFLINE_FIXTURE_REPORT_DATA_MODE,
-            )
-            run_id = str(started["run_id"])
-            normalized_symbol = str(started["symbol"])
-        else:
-            existing_mode = report_data_mode_from_run(existing_run)
-            if existing_mode != OFFLINE_FIXTURE_REPORT_DATA_MODE:
-                raise ValueError(
-                    "offline Phase 4 flow requires an offline_fixture report_data_mode"
-                )
-        self.phase4_universe_discovery(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_market_data(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_technical_package(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_social_evidence(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_news_catalyst(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_fundamentals(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_sector_macro(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_candidate_synthesis(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_prediction_evaluation(run_id=run_id, symbol=normalized_symbol)
-        report = self.render_prediction_report(run_id=run_id, symbol=normalized_symbol)
-        return {"run_id": run_id, "symbol": normalized_symbol, "report": report}
+        return self._run_phase4_flow(
+            run_date=run_date,
+            output_dir=output_dir,
+            symbol=symbol,
+            report_data_mode=OFFLINE_FIXTURE_REPORT_DATA_MODE,
+            objective_template="Phase 4 fixture-backed prediction research for {symbol}",
+            mode_error="offline Phase 4 flow requires an offline_fixture report_data_mode",
+        )
 
     def run_live_phase4_flow(self, *, run_date: str, output_dir: str, symbol: str) -> JsonObject:
+        return self._run_phase4_flow(
+            run_date=run_date,
+            output_dir=output_dir,
+            symbol=symbol,
+            report_data_mode=LIVE_REPORT_DATA_MODE,
+            objective_template="Live provider prediction research for {symbol}",
+            mode_error="live Phase 4 flow requires a live report_data_mode",
+        )
+
+    def _run_phase4_flow(
+        self,
+        *,
+        run_date: str,
+        output_dir: str,
+        symbol: str,
+        report_data_mode: ReportDataMode,
+        objective_template: str,
+        mode_error: str,
+    ) -> JsonObject:
         normalized_symbol = symbol.strip().upper()
         if not normalized_symbol:
             raise ValueError("symbol must be non-empty")
@@ -1005,15 +946,15 @@ class Phase4Service:
                 run_date=run_date,
                 output_dir=output_dir,
                 symbol=normalized_symbol,
-                objective=f"Live provider prediction research for {normalized_symbol}",
-                report_data_mode=LIVE_REPORT_DATA_MODE,
+                objective=objective_template.format(symbol=normalized_symbol),
+                report_data_mode=report_data_mode,
             )
             run_id = str(started["run_id"])
             normalized_symbol = str(started["symbol"])
         else:
             existing_mode = report_data_mode_from_run(existing_run)
-            if existing_mode != LIVE_REPORT_DATA_MODE:
-                raise ValueError("live Phase 4 flow requires a live report_data_mode")
+            if existing_mode != report_data_mode:
+                raise ValueError(mode_error)
         self.phase4_universe_discovery(run_id=run_id, symbol=normalized_symbol)
         self.phase4_market_data(run_id=run_id, symbol=normalized_symbol)
         self.phase4_technical_package(run_id=run_id, symbol=normalized_symbol)
@@ -1030,14 +971,11 @@ class Phase4Service:
         run = self._require_run(run_id)
         normalized_symbol = self._validated_symbol(run, symbol)
         evidence_count = len(self.store.list_evidence_for_run(run_id))
-        report_data_mode = report_data_mode_from_run(run)
+        mode_adapter = self._mode_adapter(run)
 
         def action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
-            if report_data_mode == LIVE_REPORT_DATA_MODE and evidence_count == 0:
-                message = (
-                    "No attributable live provider evidence was available; report rendering "
-                    "will emit structured insufficient evidence."
-                )
+            message = mode_adapter.no_evidence_candidate_message(evidence_count)
+            if message is not None:
                 return Phase4ToolRunOutcome(
                     status="empty",
                     payload={
@@ -1084,22 +1022,24 @@ class Phase4Service:
         initial_warnings = () if candidates else (MISSING_CANDIDATE_WARNING,)
 
         def action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
-            result = render_phase2_prediction_report(
-                store=self.store,
-                repo_root=self.repo_root,
-                run=run,
-                paths=context.paths,
-                run_date=run_date_from_run(run),
-                symbol=normalized_symbol,
-                tool_run_id=context.tool_run_id,
-                record_tool_run=False,
-                tool_name=context.tool.tool_name,
-                tool_version=context.tool.tool_version,
-                tool_warnings=initial_warnings,
-                produced_by=context.tool.tool_name,
-                artifact_schema_version="phase4-report.v1",
-                insufficient_evidence_summary=MISSING_CANDIDATE_WARNING,
-                report_data_mode=report_data_mode,
+            result = ReportBundleBuilder().build(
+                PredictionReportBuildRequest(
+                    store=self.store,
+                    repo_root=self.repo_root,
+                    run=run,
+                    paths=context.paths,
+                    run_date=run_date_from_run(run),
+                    symbol=normalized_symbol,
+                    tool_run_id=context.tool_run_id,
+                    record_tool_run=False,
+                    tool_name=context.tool.tool_name,
+                    tool_version=context.tool.tool_version,
+                    tool_warnings=initial_warnings,
+                    produced_by=context.tool.tool_name,
+                    artifact_schema_version="phase4-report.v1",
+                    insufficient_evidence_summary=MISSING_CANDIDATE_WARNING,
+                    report_data_mode=report_data_mode,
+                )
             )
             artifact_ids = (
                 f"artifact-report-md-{stable_digest(run.run_id)}",
@@ -1173,10 +1113,7 @@ class Phase4Service:
             for record in evidence
             if evidence_stance_from_record(record) == "contradicts"
         )
-        instrument_id = self._instrument_id(
-            symbol,
-            report_data_mode=report_data_mode_from_run(self._require_run(run_id)),
-        )
+        instrument_id = self._mode_adapter(self._require_run(run_id)).instrument_id(symbol)
         instrument = self.store.get_instrument(instrument_id)
         if instrument is None:
             raise ValueError(f"phase4 candidate synthesis requires instrument: {instrument_id}")
@@ -1192,7 +1129,7 @@ class Phase4Service:
         confidence = (
             0.42 if evidence_for and not evidence_against else 0.28 if evidence_for else 0.18
         )
-        signal_artifacts = _signal_artifact_references_for_run(
+        signal_artifacts = signal_artifact_references_for_records(
             self.store.list_artifacts_for_run(run_id)
         )
         warnings = (
@@ -1230,9 +1167,7 @@ class Phase4Service:
                 "symbol": candidate_symbol.upper(),
                 "requested_symbol": symbol.upper(),
                 "source_evidence_count": len(evidence),
-                "signal_artifacts": [
-                    reference.model_dump(mode="json") for reference in signal_artifacts
-                ],
+                "signal_artifacts": [*signal_artifact_metadata(signal_artifacts)],
             },
         )
         artifact_id = f"artifact-phase4-prediction-inputs-{stable_digest(run_id)}"
@@ -1251,9 +1186,7 @@ class Phase4Service:
                 "requested_symbol": symbol.upper(),
                 "evidence_for": list(candidate.evidence_for),
                 "evidence_against": list(candidate.evidence_against),
-                "signal_artifacts": [
-                    reference.model_dump(mode="json") for reference in signal_artifacts
-                ],
+                "signal_artifacts": [*signal_artifact_metadata(signal_artifacts)],
                 "status": status,
                 "warnings": list(warnings),
             },
@@ -1383,6 +1316,14 @@ class Phase4Service:
             ),
         )
 
+    def _mode_adapter(self, run: ResearchRunRecord) -> Phase4RunModeAdapter:
+        return Phase4RunModeAdapter(
+            report_data_mode=report_data_mode_from_run(run),
+            store=self.store,
+            fixtures=self.fixtures,
+            live_providers=self.live_providers,
+        )
+
     def _artifact_dir(self, run: ResearchRunRecord) -> Path:
         return self._paths(
             run_date_from_run(run),
@@ -1396,30 +1337,13 @@ class Phase4Service:
         *,
         report_data_mode: ReportDataMode | None = None,
     ) -> str:
-        normalized_symbol = symbol.strip().upper()
-        if report_data_mode == LIVE_REPORT_DATA_MODE:
-            instrument = self.store.find_instrument_by_provider_id(
-                PHASE4_LIVE_SYMBOL_PROVIDER,
-                "symbol",
-                normalized_symbol,
-            )
-            if instrument is not None:
-                return instrument.instrument_id
-            for discovered in self.store.find_instruments_by_symbol_or_alias(normalized_symbol):
-                if discovered.metadata.get("live_provider_symbol") is True:
-                    return discovered.instrument_id
-            return f"instrument:live:unknown:{symbol_slug(normalized_symbol)}"
-        instrument = self.store.find_instrument_by_provider_id(
-            PHASE4_FIXTURE_PROVIDER,
-            "fixture-symbol",
-            normalized_symbol,
-        )
-        if instrument is not None:
-            return instrument.instrument_id
-        instruments = self.store.find_instruments_by_symbol_or_alias(normalized_symbol)
-        if instruments:
-            return instruments[0].instrument_id
-        return f"instrument:codex:{normalized_symbol}"
+        mode = report_data_mode or OFFLINE_FIXTURE_REPORT_DATA_MODE
+        return Phase4RunModeAdapter(
+            report_data_mode=mode,
+            store=self.store,
+            fixtures=self.fixtures,
+            live_providers=self.live_providers,
+        ).instrument_id(symbol)
 
     def _latest_artifact_path(self, run_id: str, artifact_type: str) -> Path | None:
         for artifact in reversed(self.store.list_artifacts_for_run(run_id)):
@@ -1470,81 +1394,6 @@ def _phase4_candidate_scenario(
             "subject to freshness, attribution, and baseline checks."
         )
     return f"Insufficient attributable source evidence is available for {normalized}."
-
-
-def _signal_artifact_references_for_run(
-    artifacts: tuple[ArtifactRecord, ...],
-) -> tuple[SignalArtifactReference, ...]:
-    references: list[SignalArtifactReference] = []
-    seen: set[str] = set()
-    for artifact in artifacts:
-        reference = _signal_artifact_reference_for_artifact(artifact)
-        if reference is None or reference.artifact_id in seen:
-            continue
-        seen.add(reference.artifact_id)
-        references.append(reference)
-    return tuple(references)
-
-
-def _signal_artifact_reference_for_artifact(
-    artifact: ArtifactRecord,
-) -> SignalArtifactReference | None:
-    produced_by = (artifact.produced_by or "").lower()
-    artifact_type = artifact.artifact_type
-    family: SignalArtifactFamily | None = None
-    signal_artifact_type: str | None = None
-    if artifact_type == "market_data":
-        family = SignalArtifactFamily.TECHNICALS
-        signal_artifact_type = "market_data"
-    elif artifact_type == "technical_package":
-        family = SignalArtifactFamily.TECHNICALS
-        signal_artifact_type = "technical_package"
-    elif artifact_type == "ml_forecast":
-        family = SignalArtifactFamily.TIMESFM
-        signal_artifact_type = "ml_forecast"
-    elif artifact_type == "normalized_evidence" and "social" in produced_by:
-        family = SignalArtifactFamily.SOCIAL
-        signal_artifact_type = "normalized_evidence"
-    elif artifact_type == "normalized_evidence" and "news" in produced_by:
-        family = SignalArtifactFamily.NEWS
-        signal_artifact_type = "normalized_evidence"
-    elif artifact_type == "analysis_context" and "fundamental" in produced_by:
-        family = SignalArtifactFamily.FUNDAMENTALS
-        signal_artifact_type = "analysis_context"
-    elif artifact_type == "analysis_context" and (
-        "sector" in produced_by or "macro" in produced_by
-    ):
-        family = SignalArtifactFamily.SECTOR_MACRO
-        signal_artifact_type = "analysis_context"
-    if family is None or signal_artifact_type is None:
-        return None
-    typed_artifact_type = cast(
-        Literal[
-            "market_data",
-            "technical_package",
-            "ml_forecast",
-            "normalized_evidence",
-            "analysis_context",
-        ],
-        signal_artifact_type,
-    )
-    source_evidence_ids = artifact.metadata.get("evidence_ids")
-    return SignalArtifactReference(
-        artifact_id=artifact.artifact_id,
-        family=family,
-        artifact_type=typed_artifact_type,
-        schema_version=artifact.schema_version,
-        tool_run_id=artifact.tool_run_id,
-        produced_by=artifact.produced_by,
-        created_at=artifact.created_at,
-        sha256=artifact.sha256,
-        source_evidence_ids=(
-            tuple(item for item in source_evidence_ids if isinstance(item, str))
-            if isinstance(source_evidence_ids, list | tuple)
-            else ()
-        ),
-        metadata={"derived_from_run_artifact_index": True},
-    )
 
 
 def _failed_phase4_tool_run_id(

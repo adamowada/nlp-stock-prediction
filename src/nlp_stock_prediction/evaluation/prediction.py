@@ -13,7 +13,6 @@ from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.enums import (
     FreshnessStatus,
     PredictionStatus,
-    SignalArtifactFamily,
 )
 from nlp_stock_prediction.contracts.evaluation import (
     BaselineComparison,
@@ -26,6 +25,9 @@ from nlp_stock_prediction.contracts.evaluation import (
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
 from nlp_stock_prediction.contracts.report import AuditArtifact, PredictionCandidate
+from nlp_stock_prediction.contracts.signal_artifact_references import (
+    legacy_signal_artifact_reference,
+)
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
 from nlp_stock_prediction.storage.records import (
@@ -569,25 +571,8 @@ def _candidate_signal_artifacts(
     for artifact_id in candidate.signal_artifact_ids:
         if artifact_id in typed_ids:
             continue
-        references.append(_legacy_signal_artifact_reference(artifact_id))
+        references.append(legacy_signal_artifact_reference(artifact_id))
     return tuple(references)
-
-
-def _legacy_signal_artifact_reference(artifact_id: str) -> SignalArtifactReference:
-    normalized = artifact_id.lower()
-    if "timesfm" in normalized or normalized.startswith("artifact-ml"):
-        return SignalArtifactReference(
-            artifact_id=artifact_id,
-            family=SignalArtifactFamily.TIMESFM,
-            artifact_type="ml_forecast",
-            metadata={"legacy_flat_reference": True},
-        )
-    return SignalArtifactReference(
-        artifact_id=artifact_id,
-        family=SignalArtifactFamily.TECHNICALS,
-        artifact_type="technical_package",
-        metadata={"legacy_flat_reference": True},
-    )
 
 
 def _link_available_evidence(

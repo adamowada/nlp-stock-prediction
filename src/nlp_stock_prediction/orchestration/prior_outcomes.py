@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 from nlp_stock_prediction.contracts import (
@@ -17,6 +17,15 @@ from nlp_stock_prediction.contracts import (
     ReportSourceReference,
 )
 from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.contracts.enums import (
+    PredictionOutcomeEvaluationStatus,
+    PredictionOutcomeResult,
+    PredictionOutcomeStatus,
+)
+from nlp_stock_prediction.contracts.evaluation import (
+    PredictionOutcome,
+    PredictionOutcomeEvaluation,
+)
 from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.orchestration.phase2_common import file_sha256, stable_digest
 from nlp_stock_prediction.reporting.json import load_json_report
@@ -83,6 +92,13 @@ def apply_prior_outcome_context(
 
     for candidate in prediction_candidates:
         review = _prior_outcome_review(
+            candidate=candidate,
+            prior=prior,
+            report_date=report_date,
+            reviewed_at=reviewed_at,
+        )
+        review = _review_with_outcome_contracts(
+            review=review,
             candidate=candidate,
             prior=prior,
             report_date=report_date,
@@ -306,6 +322,158 @@ def _prior_outcome_review(
             "current_direction": candidate.direction.value,
         },
     )
+
+
+def _review_with_outcome_contracts(
+    *,
+    review: PriorOutcomeReview,
+    candidate: PredictionCandidate,
+    prior: _LoadedPriorReport | None,
+    report_date: date,
+    reviewed_at: datetime,
+) -> PriorOutcomeReview:
+    outcome = _prediction_outcome_from_review(
+        review=review,
+        candidate=candidate,
+        prior=prior,
+        report_date=report_date,
+        reviewed_at=reviewed_at,
+    )
+    outcome_evaluation = _prediction_outcome_evaluation_from_review(
+        review=review,
+        candidate=candidate,
+        outcome=outcome,
+        reviewed_at=reviewed_at,
+    )
+    return review.model_copy(
+        update={
+            "metadata": {
+                **review.metadata,
+                "prediction_outcome": outcome.model_dump(mode="json"),
+                "prediction_outcome_evaluation": outcome_evaluation.model_dump(mode="json"),
+            }
+        }
+    )
+
+
+def _prediction_outcome_from_review(
+    *,
+    review: PriorOutcomeReview,
+    candidate: PredictionCandidate,
+    prior: _LoadedPriorReport | None,
+    report_date: date,
+    reviewed_at: datetime,
+) -> PredictionOutcome:
+    status = _outcome_status(review.status)
+    observed_result = (
+        _outcome_result(candidate) if status == PredictionOutcomeStatus.OBSERVED else None
+    )
+    window_start = _outcome_window_start(prior, report_date)
+    window_end = (
+        reviewed_at if reviewed_at > window_start else _date_start(report_date) + timedelta(days=1)
+    )
+    return PredictionOutcome(
+        outcome_id=f"outcome-{stable_digest(review.review_id)}",
+        candidate_id=candidate.candidate_id,
+        instrument_id=candidate.instrument_id,
+        symbol=candidate.symbol,
+        prediction_type=candidate.prediction_type,
+        horizon=candidate.horizon,
+        evaluation_window_start=window_start,
+        evaluation_window_end=window_end,
+        status=status,
+        observed_result=observed_result,
+        observed_at=reviewed_at if status == PredictionOutcomeStatus.OBSERVED else None,
+        result_summary=review.summary if status == PredictionOutcomeStatus.OBSERVED else None,
+        outcome_evidence=review.outcome_evidence
+        if status == PredictionOutcomeStatus.OBSERVED
+        else (),
+        artifact_ids=review.artifact_ids,
+        limitations=review.limitations,
+        metadata={
+            "prior_outcome_review_id": review.review_id,
+            "prior_outcome_review_status": review.status,
+        },
+    )
+
+
+def _prediction_outcome_evaluation_from_review(
+    *,
+    review: PriorOutcomeReview,
+    candidate: PredictionCandidate,
+    outcome: PredictionOutcome,
+    reviewed_at: datetime,
+) -> PredictionOutcomeEvaluation:
+    status = _outcome_evaluation_status(review.status, candidate)
+    resolved_statuses = {
+        PredictionOutcomeEvaluationStatus.CONFIRMED,
+        PredictionOutcomeEvaluationStatus.MISSED,
+        PredictionOutcomeEvaluationStatus.MIXED,
+        PredictionOutcomeEvaluationStatus.INCONCLUSIVE,
+    }
+    return PredictionOutcomeEvaluation(
+        outcome_evaluation_id=f"outcome-evaluation-{stable_digest(review.review_id)}",
+        outcome_id=outcome.outcome_id,
+        candidate_id=candidate.candidate_id,
+        instrument_id=candidate.instrument_id,
+        symbol=candidate.symbol,
+        evaluated_at=reviewed_at,
+        status=status,
+        outcome=outcome,
+        quality_score=candidate.confidence if status in resolved_statuses else None,
+        evidence=review.outcome_evidence if status in resolved_statuses else (),
+        artifact_ids=review.artifact_ids,
+        limitations=review.limitations
+        or (() if status in resolved_statuses else ("Outcome could not be evaluated.",)),
+        metadata={"prior_outcome_review_id": review.review_id},
+    )
+
+
+def _outcome_status(review_status: str) -> PredictionOutcomeStatus:
+    if review_status == "available":
+        return PredictionOutcomeStatus.OBSERVED
+    if review_status == "pending":
+        return PredictionOutcomeStatus.PENDING
+    if review_status == "stale":
+        return PredictionOutcomeStatus.STALE
+    return PredictionOutcomeStatus.UNAVAILABLE
+
+
+def _outcome_result(candidate: PredictionCandidate) -> PredictionOutcomeResult:
+    if candidate.status == PredictionStatus.CONTRADICTED or candidate.evidence_against:
+        return PredictionOutcomeResult.CONTRADICTED
+    if candidate.status == PredictionStatus.EVIDENCE_SUPPORTED and candidate.evidence_for:
+        return PredictionOutcomeResult.SUPPORTED
+    if candidate.status == PredictionStatus.INSUFFICIENT_EVIDENCE:
+        return PredictionOutcomeResult.INSUFFICIENT_DATA
+    return PredictionOutcomeResult.MIXED
+
+
+def _outcome_evaluation_status(
+    review_status: str,
+    candidate: PredictionCandidate,
+) -> PredictionOutcomeEvaluationStatus:
+    if review_status == "available":
+        if candidate.status == PredictionStatus.CONTRADICTED or candidate.evidence_against:
+            return PredictionOutcomeEvaluationStatus.MISSED
+        if candidate.status == PredictionStatus.EVIDENCE_SUPPORTED and candidate.evidence_for:
+            return PredictionOutcomeEvaluationStatus.CONFIRMED
+        return PredictionOutcomeEvaluationStatus.INCONCLUSIVE
+    if review_status == "pending":
+        return PredictionOutcomeEvaluationStatus.PENDING
+    if review_status == "stale":
+        return PredictionOutcomeEvaluationStatus.STALE
+    return PredictionOutcomeEvaluationStatus.NOT_EVALUABLE
+
+
+def _outcome_window_start(prior: _LoadedPriorReport | None, report_date: date) -> datetime:
+    if prior is not None:
+        return _date_start(prior.artifact.report_date)
+    return _date_start(report_date)
+
+
+def _date_start(value: date) -> datetime:
+    return datetime.combine(value, time.min, tzinfo=UTC)
 
 
 def _change_triggers(

@@ -25,6 +25,10 @@ from nlp_stock_prediction.contracts.enums import (
     TimeHorizon,
 )
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
+from nlp_stock_prediction.contracts.signal_artifacts import (
+    SignalArtifactType,
+    validate_signal_artifact_family_type,
+)
 
 
 class SignalArtifactReference(ContractModel):
@@ -32,13 +36,7 @@ class SignalArtifactReference(ContractModel):
 
     artifact_id: NonEmptyStr
     family: SignalArtifactFamily
-    artifact_type: Literal[
-        "market_data",
-        "technical_package",
-        "ml_forecast",
-        "normalized_evidence",
-        "analysis_context",
-    ]
+    artifact_type: SignalArtifactType
     schema_version: str | None = None
     tool_run_id: str | None = None
     produced_by: str | None = None
@@ -50,9 +48,10 @@ class SignalArtifactReference(ContractModel):
 
     @model_validator(mode="after")
     def validate_family_artifact_type(self) -> SignalArtifactReference:
-        allowed_types = _SIGNAL_ARTIFACT_TYPES[self.family]
-        if self.artifact_type not in allowed_types:
-            raise ValueError("signal artifact family does not allow artifact_type")
+        validate_signal_artifact_family_type(
+            family=self.family,
+            artifact_type=self.artifact_type,
+        )
         if self.created_at is not None and self.as_of is not None and self.as_of > self.created_at:
             raise ValueError("signal artifact as_of must be at or before created_at")
         return self
@@ -371,16 +370,6 @@ class PredictionEvaluationArtifactPayload(ContractModel):
     evaluation: PredictionEvaluation
     source_evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     metadata: JsonObject = Field(default_factory=dict)
-
-
-_SIGNAL_ARTIFACT_TYPES: dict[SignalArtifactFamily, set[str]] = {
-    SignalArtifactFamily.TECHNICALS: {"market_data", "technical_package"},
-    SignalArtifactFamily.TIMESFM: {"ml_forecast", "technical_package"},
-    SignalArtifactFamily.SOCIAL: {"normalized_evidence"},
-    SignalArtifactFamily.NEWS: {"normalized_evidence"},
-    SignalArtifactFamily.FUNDAMENTALS: {"analysis_context", "normalized_evidence"},
-    SignalArtifactFamily.SECTOR_MACRO: {"analysis_context"},
-}
 
 
 __all__ = [

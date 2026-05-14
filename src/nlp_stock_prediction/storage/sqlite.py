@@ -34,6 +34,12 @@ from nlp_stock_prediction.storage.records import (
     WatchlistItemRecord,
     WatchlistRecord,
 )
+from nlp_stock_prediction.storage.report_artifacts import (
+    fetch_latest_prior_report_artifact_row,
+    fetch_latest_report_artifact_row,
+    fetch_report_artifact_row,
+    fetch_report_artifact_rows_for_run,
+)
 from nlp_stock_prediction.storage.run_graph import (
     fetch_artifact_rows,
     fetch_evidence_rows,
@@ -602,10 +608,7 @@ class SQLiteStore:
         _validate_required(artifact_id, "artifact_id")
         with self.connect() as connection:
             _ensure_initialized(connection)
-            row = connection.execute(
-                "SELECT * FROM report_artifact_index WHERE artifact_id = ?",
-                (artifact_id,),
-            ).fetchone()
+            row = fetch_report_artifact_row(connection, artifact_id)
         if row is None:
             return None
         return _report_artifact_from_row(row)
@@ -617,21 +620,7 @@ class SQLiteStore:
         _validate_required(run_id, "run_id")
         with self.connect() as connection:
             _ensure_initialized(connection)
-            rows = connection.execute(
-                """
-                SELECT * FROM report_artifact_index
-                WHERE run_id = ?
-                ORDER BY created_at,
-                    CASE artifact_type
-                        WHEN 'markdown_report' THEN 1
-                        WHEN 'json_report' THEN 2
-                        WHEN 'audit_manifest' THEN 3
-                        ELSE 4
-                    END,
-                    artifact_id
-                """,
-                (run_id,),
-            ).fetchall()
+            rows = fetch_report_artifact_rows_for_run(connection, run_id)
         return tuple(_report_artifact_from_row(row) for row in rows)
 
     def get_latest_report_artifact(
@@ -643,31 +632,19 @@ class SQLiteStore:
         symbol: str | None = None,
     ) -> ReportArtifactRecord | None:
         _validate_report_artifact_type(artifact_type)
-        filters = ["artifact_type = ?"]
-        params: list[str] = [artifact_type]
-        if report_date is not None:
-            filters.append("report_date = ?")
-            params.append(report_date.isoformat())
         if instrument_id is not None:
             _validate_required(instrument_id, "instrument_id")
-            filters.append("instrument_id = ?")
-            params.append(instrument_id)
         if symbol is not None:
             _validate_required(symbol, "symbol")
-            filters.append("symbol = ?")
-            params.append(symbol.strip().upper())
-        where_clause = " AND ".join(filters)
         with self.connect() as connection:
             _ensure_initialized(connection)
-            row = connection.execute(
-                f"""
-                SELECT * FROM report_artifact_index
-                WHERE {where_clause}
-                ORDER BY created_at DESC, run_id DESC, artifact_id DESC
-                LIMIT 1
-                """,
-                tuple(params),
-            ).fetchone()
+            row = fetch_latest_report_artifact_row(
+                connection,
+                artifact_type=artifact_type,
+                report_date=report_date,
+                instrument_id=instrument_id,
+                symbol=symbol,
+            )
         if row is None:
             return None
         return _report_artifact_from_row(row)
@@ -681,28 +658,19 @@ class SQLiteStore:
         symbol: str | None = None,
     ) -> ReportArtifactRecord | None:
         _validate_report_artifact_type(artifact_type)
-        filters = ["artifact_type = ?", "report_date < ?"]
-        params: list[str] = [artifact_type, before_report_date.isoformat()]
         if instrument_id is not None:
             _validate_required(instrument_id, "instrument_id")
-            filters.append("instrument_id = ?")
-            params.append(instrument_id)
         if symbol is not None:
             _validate_required(symbol, "symbol")
-            filters.append("symbol = ?")
-            params.append(symbol.strip().upper())
-        where_clause = " AND ".join(filters)
         with self.connect() as connection:
             _ensure_initialized(connection)
-            row = connection.execute(
-                f"""
-                SELECT * FROM report_artifact_index
-                WHERE {where_clause}
-                ORDER BY report_date DESC, created_at DESC, run_id DESC, artifact_id DESC
-                LIMIT 1
-                """,
-                tuple(params),
-            ).fetchone()
+            row = fetch_latest_prior_report_artifact_row(
+                connection,
+                before_report_date=before_report_date,
+                artifact_type=artifact_type,
+                instrument_id=instrument_id,
+                symbol=symbol,
+            )
         if row is None:
             return None
         return _report_artifact_from_row(row)

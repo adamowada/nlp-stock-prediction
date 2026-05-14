@@ -28,7 +28,12 @@ from nlp_stock_prediction.contracts.report import (
     ReportSourceReference,
 )
 from nlp_stock_prediction.ml.timesfm.contracts import TimesFmForecastArtifact
-from nlp_stock_prediction.orchestration.artifacts import ArtifactType
+from nlp_stock_prediction.orchestration.artifact_policy import (
+    ALLOWED_ARTIFACT_TYPES,
+    JSON_ARTIFACT_TYPES,
+    ArtifactType,
+    source_reference_type_for_artifact,
+)
 from nlp_stock_prediction.orchestration.phase2_common import file_sha256, utc_now
 from nlp_stock_prediction.orchestration.phase4_market_data import (
     load_phase4_market_data_artifact,
@@ -44,37 +49,6 @@ from nlp_stock_prediction.storage.records import (
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
-_JSON_ARTIFACT_TYPES = {
-    "raw_snapshot",
-    "normalized_evidence",
-    "extraction_output",
-    "analysis_context",
-    "prediction_input",
-    "json_report",
-    "provider_result",
-    "ml_forecast",
-    "instrument_universe",
-    "prediction_evaluation",
-    "audit_manifest",
-    "market_data",
-    "technical_package",
-}
-_ALLOWED_ARTIFACT_TYPES = {
-    "raw_snapshot",
-    "normalized_evidence",
-    "extraction_output",
-    "analysis_context",
-    "prediction_input",
-    "markdown_report",
-    "json_report",
-    "provider_result",
-    "market_data",
-    "technical_package",
-    "ml_forecast",
-    "instrument_universe",
-    "prediction_evaluation",
-    "audit_manifest",
-}
 _TOOL_HEALTH_STATUSES = {"failed", "partial", "empty", "skipped"}
 
 
@@ -263,7 +237,7 @@ class _AssemblyBuilder:
         return audit_artifacts
 
     def _validate_artifact(self, record: ArtifactRecord) -> tuple[str, ...]:
-        if record.artifact_type not in _ALLOWED_ARTIFACT_TYPES:
+        if record.artifact_type not in ALLOWED_ARTIFACT_TYPES:
             return (f"Unknown artifact type {record.artifact_type}.",)
         path = _artifact_path(record, self.repo_root)
         warnings: list[str] = []
@@ -276,7 +250,7 @@ class _AssemblyBuilder:
             )
         if record.artifact_type == "markdown_report":
             return tuple(warnings)
-        if record.artifact_type in _JSON_ARTIFACT_TYPES:
+        if record.artifact_type in JSON_ARTIFACT_TYPES:
             try:
                 _validate_json_artifact_payload(record, path)
             except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
@@ -432,7 +406,7 @@ def report_source_references(
                     reference_ids,
                 ),
                 label=f"Artifact {artifact.artifact_id}",
-                reference_type=_source_reference_type_for_artifact(artifact.artifact_type),
+                reference_type=source_reference_type_for_artifact(artifact.artifact_type),
                 artifact_ids=(artifact.artifact_id,),
                 candidate_ids=_usable_candidate_ids(
                     assembly_state,
@@ -565,7 +539,7 @@ def _audit_artifact_from_record(
     required: bool,
     validation_warnings: tuple[str, ...],
 ) -> AuditArtifact | None:
-    if record.artifact_type not in _ALLOWED_ARTIFACT_TYPES:
+    if record.artifact_type not in ALLOWED_ARTIFACT_TYPES:
         return None
     path = _artifact_path(record, repo_root)
     metadata: JsonObject = {
@@ -631,16 +605,6 @@ def _string_tuple(value: object) -> tuple[str, ...]:
 
 def _artifact_path(record: ArtifactRecord, repo_root: Path) -> Path:
     return record.path if record.path.is_absolute() else repo_root / record.path
-
-
-def _source_reference_type_for_artifact(
-    artifact_type: str,
-) -> str:
-    if artifact_type == "prediction_evaluation":
-        return "prediction_evaluation"
-    if artifact_type == "instrument_universe":
-        return "instrument_resolution"
-    return "tool_artifact"
 
 
 def _usable_candidate_ids(

@@ -9,10 +9,13 @@ from nlp_stock_prediction.contracts import (
     PredictionCandidate,
     PredictionStatus,
     PredictionType,
-    SignalArtifactFamily,
     SignalArtifactReference,
     SourceEvidence,
     TimeHorizon,
+)
+from nlp_stock_prediction.contracts.signal_artifact_references import (
+    legacy_signal_artifact_reference,
+    metadata_signal_artifact_references,
 )
 from nlp_stock_prediction.storage.records import PredictionCandidateRecord
 
@@ -215,7 +218,7 @@ def _signal_artifact_references(
 ) -> tuple[SignalArtifactReference, ...]:
     references: list[SignalArtifactReference] = []
     seen: set[str] = set()
-    for reference in _metadata_signal_artifact_references(
+    for reference in metadata_signal_artifact_references(
         candidate.metadata.get("signal_artifacts")
     ):
         if reference.artifact_id in seen:
@@ -226,39 +229,12 @@ def _signal_artifact_references(
         if artifact_id in seen:
             continue
         seen.add(artifact_id)
-        references.append(_signal_artifact_reference(artifact_id))
-    return tuple(references)
-
-
-def _metadata_signal_artifact_references(value: object) -> tuple[SignalArtifactReference, ...]:
-    if not isinstance(value, list | tuple):
-        return ()
-    references: list[SignalArtifactReference] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        try:
-            references.append(SignalArtifactReference.model_validate(item))
-        except ValueError:
-            continue
-    return tuple(references)
-
-
-def _signal_artifact_reference(artifact_id: str) -> SignalArtifactReference:
-    normalized = artifact_id.lower()
-    if "timesfm" in normalized or normalized.startswith("artifact-ml"):
-        return SignalArtifactReference(
-            artifact_id=artifact_id,
-            family=SignalArtifactFamily.TIMESFM,
-            artifact_type="ml_forecast",
-            metadata={"derived_from_stored_candidate": True},
+        references.append(
+            legacy_signal_artifact_reference(artifact_id).model_copy(
+                update={"metadata": {"derived_from_stored_candidate": True}}
+            )
         )
-    return SignalArtifactReference(
-        artifact_id=artifact_id,
-        family=SignalArtifactFamily.TECHNICALS,
-        artifact_type="technical_package",
-        metadata={"derived_from_stored_candidate": True},
-    )
+    return tuple(references)
 
 
 __all__ = [

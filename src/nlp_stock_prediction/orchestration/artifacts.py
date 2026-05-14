@@ -9,30 +9,13 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
 
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.report import AuditArtifact
+from nlp_stock_prediction.orchestration.artifact_policy import ArtifactType
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
 from nlp_stock_prediction.storage.records import ArtifactRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
-
-ArtifactType = Literal[
-    "raw_snapshot",
-    "normalized_evidence",
-    "extraction_output",
-    "analysis_context",
-    "prediction_input",
-    "markdown_report",
-    "json_report",
-    "provider_result",
-    "market_data",
-    "technical_package",
-    "ml_forecast",
-    "instrument_universe",
-    "prediction_evaluation",
-    "audit_manifest",
-]
 
 
 @dataclass(frozen=True)

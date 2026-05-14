@@ -30,7 +30,6 @@ from nlp_stock_prediction.providers._base import (
     find_ticker_matches,
     first_ticker,
     freshness_status,
-    malformed_result,
     missing_credentials_result,
     parse_optional_provider_datetime,
     provider_health,
@@ -41,7 +40,7 @@ from nlp_stock_prediction.providers._base import (
     utc_now,
 )
 from nlp_stock_prediction.providers.execution import (
-    evidence_result_from_records,
+    ProviderExecutionContext,
     partial_item_warning,
 )
 
@@ -121,6 +120,13 @@ class XRecentSearchProvider:
             query=query,
             url=url,
         )
+        execution = ProviderExecutionContext(
+            provider_name=self.provider_name,
+            request=request,
+            fetched_at=fetched_at,
+            credential_state=CredentialState.CONFIGURED,
+            cache_key=cache_key,
+        )
         fetched: JsonFetch | None = None
         try:
             fetched = fetch_json(
@@ -153,27 +159,21 @@ class XRecentSearchProvider:
                 credential_state=CredentialState.CONFIGURED,
             )
         except MalformedProviderResponse as exc:
-            return malformed_result(
-                provider_name=self.provider_name,
-                request=request,
-                fetched_at=fetched_at,
-                message=str(exc),
-                credential_state=CredentialState.CONFIGURED,
-                raw_snapshot_id=fetched.raw_snapshot_id if fetched is not None else None,
-                cache_key=fetched.cache_key if fetched is not None else cache_key,
-            )
+            if fetched is not None:
+                execution = execution.with_fetch(
+                    raw_snapshot_id=fetched.raw_snapshot_id,
+                    cache_key=fetched.cache_key,
+                )
+            return execution.malformed(str(exc))
         assert fetched is not None
-        return evidence_result_from_records(
-            provider_name=self.provider_name,
-            request=request,
-            fetched_at=fetched_at,
+        return execution.with_fetch(
+            raw_snapshot_id=fetched.raw_snapshot_id,
+            cache_key=fetched.cache_key,
+        ).evidence_result(
             evidence=evidence,
             warnings=partial_warnings,
             no_data_message="X recent search returned no posts",
             stale_message="X recent search returned stale social posts",
-            credential_state=CredentialState.CONFIGURED,
-            raw_snapshot_id=fetched.raw_snapshot_id,
-            cache_key=fetched.cache_key,
         )
 
     def health(self) -> ProviderHealth:

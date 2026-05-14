@@ -17,6 +17,7 @@ from nlp_stock_prediction.contracts import (
     InstrumentResolutionStatus,
     InstrumentUniverse,
     RetrievalMethod,
+    SignalArtifactFamily,
     SourceEvidence,
     SourceKind,
     SourceProvenance,
@@ -24,6 +25,9 @@ from nlp_stock_prediction.contracts import (
 from nlp_stock_prediction.orchestration import Phase4Service
 from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
     phase4_universe_artifact_payload,
+)
+from nlp_stock_prediction.orchestration.signal_artifacts import (
+    signal_artifact_references_for_records,
 )
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
@@ -36,6 +40,49 @@ from nlp_stock_prediction.storage import (
 RUN_DATE = date(2026, 5, 13)
 NOW = datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.unit
+def test_signal_artifact_policy_maps_run_artifacts_to_typed_families() -> None:
+    records = (
+        ArtifactRecord(
+            artifact_id="artifact-market",
+            artifact_type="market_data",
+            path=Path("artifacts/market.json"),
+            sha256="sha-market",
+            schema_version="phase4-market-data.v1",
+            produced_by="phase4_market_data",
+            created_at=NOW,
+        ),
+        ArtifactRecord(
+            artifact_id="artifact-social",
+            artifact_type="normalized_evidence",
+            path=Path("artifacts/social.json"),
+            sha256="sha-social",
+            schema_version="phase4-social.v1",
+            produced_by="phase4_social_evidence",
+            metadata={"evidence_ids": ["evidence-social"]},
+            created_at=NOW,
+        ),
+        ArtifactRecord(
+            artifact_id="artifact-sector",
+            artifact_type="analysis_context",
+            path=Path("artifacts/sector.json"),
+            sha256="sha-sector",
+            schema_version="phase4-sector-macro.v1",
+            produced_by="phase4_sector_macro",
+            created_at=NOW,
+        ),
+    )
+
+    references = signal_artifact_references_for_records(records)
+    by_id = {reference.artifact_id: reference for reference in references}
+
+    assert by_id["artifact-market"].family == SignalArtifactFamily.TECHNICALS
+    assert by_id["artifact-market"].artifact_type == "market_data"
+    assert by_id["artifact-social"].family == SignalArtifactFamily.SOCIAL
+    assert by_id["artifact-social"].source_evidence_ids == ("evidence-social",)
+    assert by_id["artifact-sector"].family == SignalArtifactFamily.SECTOR_MACRO
 
 
 @pytest.mark.integration

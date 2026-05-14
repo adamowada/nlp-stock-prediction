@@ -216,8 +216,16 @@ without storing large report bodies in SQLite.
 Settled prediction/evaluation contracts now include an explicit `prediction_type`, typed
 `SignalArtifactReference` records by signal family (`technicals`, `timesfm`, `social`, `news`,
 `fundamentals`, and `sector_macro`), and per-family signal counts in prediction-quality evaluation
-payloads. Flat `signal_artifact_ids` remain for compatibility with existing SQLite candidate rows,
-but typed references are the stable report/export shape for new code.
+payloads. Signal-family and artifact-type compatibility is centralized in the signal artifact
+policy; report assembly, candidate conversion, and prediction evaluation must use that policy rather
+than hardcoding family/type mappings. Flat `signal_artifact_ids` remain for compatibility with
+existing SQLite candidate rows, but typed references are the stable report/export shape for new code.
+
+Report inputs and outputs carry typed data-mode provenance. `report_data_mode`, `provider_mode`,
+and `input_data_mode` identify whether stored records were produced by live providers, offline
+fixtures, dummy smoke, or Codex smoke paths. Live report assembly treats fixture, dummy, and smoke
+markers as boundary violations; string-marker scanning is a backstop for legacy or malformed
+metadata, not the primary contract shape.
 
 Phase 6 outcome tracking begins with `PredictionOutcome` and `PredictionOutcomeEvaluation`.
 `PredictionOutcome` records the evaluated candidate, instrument, prediction type, horizon,
@@ -233,7 +241,9 @@ match its stored hash, and load through the JSON report contract. First runs, mi
 prior artifacts, stale report windows, and unlinked prior candidates are represented as explicit
 review limitations. Current candidates link to the review ID and receive concrete
 `PredictionChangeTrigger` entries for follow-up evidence, provider refreshes, baseline changes, or
-outcome data.
+outcome data. Each prior review also carries a `prediction_outcome` and
+`prediction_outcome_evaluation` metadata projection using the settled Phase 6 outcome contracts so
+future consumers do not need a second prior-review vocabulary.
 
 ## Planning State
 

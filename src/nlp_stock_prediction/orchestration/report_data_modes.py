@@ -90,6 +90,62 @@ class ReportInputBoundaryViolation:
         return f"{self.record_type} {self.record_id} has {self.field}={self.value!r}"
 
 
+@dataclass(frozen=True)
+class ReportInputProvenance:
+    """Typed data-mode provenance stamped on records consumed by report assembly."""
+
+    record_type: str
+    record_id: str
+    report_data_mode: ReportDataMode | None
+    provider_mode: ReportDataMode | None
+    input_data_mode: ReportDataMode | None
+    metadata: JsonObject
+
+    @classmethod
+    def from_metadata(
+        cls,
+        *,
+        record_type: str,
+        record_id: str,
+        metadata: JsonObject,
+    ) -> ReportInputProvenance:
+        return cls(
+            record_type=record_type,
+            record_id=record_id,
+            report_data_mode=_optional_report_data_mode(metadata.get(REPORT_DATA_MODE_KEY)),
+            provider_mode=_optional_report_data_mode(metadata.get(PROVIDER_MODE_KEY)),
+            input_data_mode=_optional_report_data_mode(metadata.get(INPUT_DATA_MODE_KEY)),
+            metadata=metadata,
+        )
+
+    @property
+    def observed_modes(self) -> tuple[ReportDataMode, ...]:
+        return tuple(
+            mode
+            for mode in (self.report_data_mode, self.provider_mode, self.input_data_mode)
+            if mode is not None
+        )
+
+    @property
+    def includes_non_live_mode(self) -> bool:
+        return any(mode in NON_LIVE_REPORT_DATA_MODES for mode in self.observed_modes)
+
+    def non_live_violations(self) -> tuple[ReportInputBoundaryViolation, ...]:
+        violations: list[ReportInputBoundaryViolation] = []
+        for field in (REPORT_DATA_MODE_KEY, PROVIDER_MODE_KEY, INPUT_DATA_MODE_KEY):
+            value = self.metadata.get(field)
+            if _mode_value_is_non_live(value):
+                violations.append(
+                    ReportInputBoundaryViolation(
+                        self.record_type,
+                        self.record_id,
+                        field,
+                        str(value),
+                    )
+                )
+        return tuple(violations)
+
+
 def report_data_mode_metadata(
     mode: ReportDataMode,
     *,
@@ -102,6 +158,7 @@ def report_data_mode_metadata(
     return {
         REPORT_DATA_MODE_KEY: normalized_mode,
         PROVIDER_MODE_KEY: normalized_provider_mode,
+        INPUT_DATA_MODE_KEY: normalized_provider_mode,
         "live_report_inputs": normalized_mode == LIVE_REPORT_DATA_MODE,
     }
 
@@ -158,6 +215,15 @@ def normalize_report_data_mode(value: object) -> ReportDataMode:
     raise ValueError(
         "report data mode must be one of: " + ", ".join(sorted(KNOWN_REPORT_DATA_MODES))
     )
+
+
+def _optional_report_data_mode(value: object) -> ReportDataMode | None:
+    if value is None:
+        return None
+    try:
+        return normalize_report_data_mode(value)
+    except ValueError:
+        return None
 
 
 def enforce_live_report_input_boundary(
@@ -303,9 +369,22 @@ def _metadata_violations(
     metadata: JsonObject,
 ) -> list[ReportInputBoundaryViolation]:
     violations: list[ReportInputBoundaryViolation] = []
+    provenance = ReportInputProvenance.from_metadata(
+        record_type=record_type,
+        record_id=record_id,
+        metadata=metadata,
+    )
+    violations.extend(provenance.non_live_violations())
     for key, value in metadata.items():
-        if key in _MODE_KEYS and _mode_value_is_non_live(value):
-            violations.append(ReportInputBoundaryViolation(record_type, record_id, key, str(value)))
+        if key in _MODE_KEYS:
+            if _mode_value_is_non_live(value) and key not in {
+                REPORT_DATA_MODE_KEY,
+                PROVIDER_MODE_KEY,
+                INPUT_DATA_MODE_KEY,
+            }:
+                violations.append(
+                    ReportInputBoundaryViolation(record_type, record_id, key, str(value))
+                )
             continue
         if key in _PROVENANCE_KEYS and isinstance(value, str) and _text_is_non_live(value):
             violations.append(ReportInputBoundaryViolation(record_type, record_id, key, value))
@@ -401,6 +480,7 @@ __all__ = [
     "REPORT_DATA_MODE_KEY",
     "ReportDataMode",
     "ReportInputBoundaryViolation",
+    "ReportInputProvenance",
     "enforce_live_report_input_boundary",
     "find_non_live_report_input_violations",
     "merge_report_data_mode_metadata",

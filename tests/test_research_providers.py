@@ -17,6 +17,7 @@ from nlp_stock_prediction.contracts import (
     FundamentalsRequest,
     MacroRequest,
     MarketDataRequest,
+    ProviderResult,
     ProviderStatus,
     RetrievalMethod,
     SourceKind,
@@ -29,6 +30,7 @@ from nlp_stock_prediction.providers._base import (
     ProviderCache,
     ProviderTransportError,
 )
+from nlp_stock_prediction.providers.execution import ProviderExecutionContext
 from nlp_stock_prediction.providers.fred import FredMacroProvider
 from nlp_stock_prediction.providers.market import (
     AlphaVantageFundamentalsProvider,
@@ -48,6 +50,29 @@ def _fixture(*parts: str) -> dict[str, Any]:
         dict[str, Any],
         json.loads((FIXTURE_ROOT.joinpath(*parts)).read_text(encoding="utf-8")),
     )
+
+
+@pytest.mark.unit
+def test_provider_execution_context_preserves_fetch_identity_on_rate_limit() -> None:
+    request = MarketDataRequest(
+        request_id="provider-execution-rate-limit",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result: ProviderResult[object] = ProviderExecutionContext(
+        provider_name="fixture-provider",
+        request=request,
+        fetched_at=FETCHED_AT,
+        credential_state=CredentialState.CONFIGURED,
+        raw_snapshot_id="raw-fixture-provider",
+        cache_key="cache-fixture-provider",
+    ).rate_limited("fixture provider quota exhausted")
+
+    assert result.status == ProviderStatus.RATE_LIMITED
+    assert result.raw_snapshot_id == "raw-fixture-provider"
+    assert result.cache_key == "cache-fixture-provider"
+    assert result.warnings[0].raw_snapshot_id == "raw-fixture-provider"
 
 
 @dataclass

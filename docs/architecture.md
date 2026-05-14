@@ -111,14 +111,25 @@ context rather than counted as positive support for a prediction.
 Provider and tool failures are represented as contract-shaped warning results where practical. Shared
 HTTP/HTML fetch helpers retry retryable transport failures deterministically, avoid caching known
 provider error payloads, and surface malformed provider payloads without dropping warning context.
+Provider adapters build degradation results through a shared provider execution module so raw
+snapshot IDs, cache keys, rate-limit status, malformed payloads, and partial item warnings preserve
+the same point-in-time identity across live and fixture-backed tests.
 
 Report bundles write Markdown, JSON, and audit-manifest artifacts. The final audit manifest includes
 the rendered report artifacts and their hashes, while SQLite run-graph queries include artifacts and
 source queries reachable through evidence and candidate links. Final report files are additionally
 indexed in `report_artifact_index` with path, hash, schema version, report date, instrument, data
 mode, tool run, and source run timestamps; report bodies and raw provider payloads remain on disk.
+Report bundle construction uses a phase-neutral builder request, while the older Phase 2 function
+name remains a compatibility wrapper. Artifact type, JSON-artifact, final-report-artifact, and
+source-reference policies live in shared artifact policy modules rather than in renderer-local
+literal sets.
 Phase 2 smoke and Phase 4 tool-suite runs use deterministic run IDs, reject duplicate starts where
 applicable, and preserve prior successful outputs if a later transactional tool retry fails.
+
+Phase 4 live/offline behavior is selected through a run-mode adapter. The service asks the adapter
+for provider choices, instrument identity, data-mode metadata, macro availability, and live
+no-evidence policy instead of branching separately inside each tool runner.
 
 Report failure modes are report products rather than exceptions when the run graph is otherwise
 valid. Missing evidence, malformed artifacts or pages, failed providers, stale evidence,

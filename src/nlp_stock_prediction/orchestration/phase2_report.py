@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import cast
@@ -35,6 +36,7 @@ from nlp_stock_prediction.contracts.report import (
     InsufficientEvidenceReport,
 )
 from nlp_stock_prediction.instruments.repository import instrument_from_record
+from nlp_stock_prediction.orchestration.artifact_policy import FINAL_REPORT_ARTIFACT_TYPES
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
@@ -75,10 +77,96 @@ from nlp_stock_prediction.storage.records import (
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
-_FINAL_REPORT_ARTIFACT_TYPES = frozenset({"markdown_report", "json_report", "audit_manifest"})
+
+@dataclass(frozen=True)
+class PredictionReportBuildRequest:
+    """Phase-neutral request for building and indexing a final prediction report bundle."""
+
+    store: SQLiteStore
+    repo_root: Path
+    run: ResearchRunRecord
+    paths: Phase2RunPaths
+    run_date: date
+    symbol: str
+    tool_run_id: str | None = None
+    record_tool_run: bool = True
+    tool_name: str = "render_prediction_report"
+    tool_version: str = "phase2.v1"
+    tool_status: str = "ok"
+    tool_warnings: tuple[str, ...] = ()
+    produced_by: str = "render_prediction_report"
+    artifact_schema_version: str = "phase2-report.v1"
+    insufficient_evidence_summary: str | None = None
+    report_data_mode: ReportDataMode | None = None
+
+
+@dataclass(frozen=True)
+class ReportBundleBuilder:
+    """Build the Markdown, JSON, audit manifest, and report-artifact index in one seam."""
+
+    def build(self, request: PredictionReportBuildRequest) -> JsonObject:
+        return _render_phase2_prediction_report_core(
+            store=request.store,
+            repo_root=request.repo_root,
+            run=request.run,
+            paths=request.paths,
+            run_date=request.run_date,
+            symbol=request.symbol,
+            tool_run_id=request.tool_run_id,
+            record_tool_run=request.record_tool_run,
+            tool_name=request.tool_name,
+            tool_version=request.tool_version,
+            tool_status=request.tool_status,
+            tool_warnings=request.tool_warnings,
+            produced_by=request.produced_by,
+            artifact_schema_version=request.artifact_schema_version,
+            insufficient_evidence_summary=request.insufficient_evidence_summary,
+            report_data_mode=request.report_data_mode,
+        )
 
 
 def render_phase2_prediction_report(
+    *,
+    store: SQLiteStore,
+    repo_root: Path,
+    run: ResearchRunRecord,
+    paths: Phase2RunPaths,
+    run_date: date,
+    symbol: str,
+    tool_run_id: str | None = None,
+    record_tool_run: bool = True,
+    tool_name: str = "render_prediction_report",
+    tool_version: str = "phase2.v1",
+    tool_status: str = "ok",
+    tool_warnings: tuple[str, ...] = (),
+    produced_by: str = "render_prediction_report",
+    artifact_schema_version: str = "phase2-report.v1",
+    insufficient_evidence_summary: str | None = None,
+    report_data_mode: ReportDataMode | None = None,
+) -> JsonObject:
+    return ReportBundleBuilder().build(
+        PredictionReportBuildRequest(
+            store=store,
+            repo_root=repo_root,
+            run=run,
+            paths=paths,
+            run_date=run_date,
+            symbol=symbol,
+            tool_run_id=tool_run_id,
+            record_tool_run=record_tool_run,
+            tool_name=tool_name,
+            tool_version=tool_version,
+            tool_status=tool_status,
+            tool_warnings=tool_warnings,
+            produced_by=produced_by,
+            artifact_schema_version=artifact_schema_version,
+            insufficient_evidence_summary=insufficient_evidence_summary,
+            report_data_mode=report_data_mode,
+        )
+    )
+
+
+def _render_phase2_prediction_report_core(
     *,
     store: SQLiteStore,
     repo_root: Path,
@@ -119,7 +207,7 @@ def render_phase2_prediction_report(
     artifact_records = tuple(
         record
         for record in store.list_artifacts_for_run(run.run_id)
-        if record.artifact_type not in _FINAL_REPORT_ARTIFACT_TYPES
+        if record.artifact_type not in FINAL_REPORT_ARTIFACT_TYPES
     )
     instrument_resolutions = _instrument_resolutions_from_artifacts(
         artifact_records,
@@ -762,4 +850,8 @@ def _insufficient_evidence_summary(
     return default_summary or "No candidate could be synthesized."
 
 
-__all__ = ["render_phase2_prediction_report"]
+__all__ = [
+    "PredictionReportBuildRequest",
+    "ReportBundleBuilder",
+    "render_phase2_prediction_report",
+]
