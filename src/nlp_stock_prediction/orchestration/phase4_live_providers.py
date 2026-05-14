@@ -23,15 +23,13 @@ from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
 )
 from nlp_stock_prediction.providers._base import ProviderCache
 from nlp_stock_prediction.providers.apnews import APNewsProvider, APNewsProviderConfig
-from nlp_stock_prediction.providers.candlecharts import (
-    CANDLECHARTS_ENDPOINT,
-    CandlechartsMarketDataProvider,
-)
 from nlp_stock_prediction.providers.fred import FredMacroProvider
 from nlp_stock_prediction.providers.market import (
     ALPHA_VANTAGE_ENDPOINT,
     AlphaVantageFundamentalsProvider,
     AlphaVantageMarketDataProvider,
+    YahooFinanceChartMarketDataProvider,
+    yahoo_finance_chart_source_url,
 )
 from nlp_stock_prediction.providers.reddit_scrape import RedditPublicPageProvider
 from nlp_stock_prediction.providers.scraping import HtmlCache, configured_scrape_user_agent
@@ -102,9 +100,8 @@ class Phase4LiveProviderFactory:
                 api_key=alpha_vantage_key,
                 cache=self._json_cache(),
             )
-        return CandlechartsMarketDataProvider(
-            allow_live=True,
-            cache=self._html_cache(),
+        return YahooFinanceChartMarketDataProvider(
+            cache=self._json_cache(),
         )
 
     def market_data_source_query_url(self, symbol: str) -> str | None:
@@ -119,7 +116,7 @@ class Phase4LiveProviderFactory:
                     "outputsize": "compact",
                 }
             )
-        return f"{CANDLECHARTS_ENDPOINT}?{urlencode({'symbol': normalized_symbol})}"
+        return yahoo_finance_chart_source_url(normalized_symbol)
 
     def reddit_provider(self) -> RedditProvider | None:
         return RedditPublicPageProvider(

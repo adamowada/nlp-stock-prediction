@@ -48,6 +48,8 @@ from nlp_stock_prediction.providers.candlecharts import (
 from nlp_stock_prediction.providers.market import (
     ALPHA_VANTAGE_ENDPOINT,
     AlphaVantageMarketDataProvider,
+    YahooFinanceChartMarketDataProvider,
+    yahoo_finance_chart_source_url,
 )
 from nlp_stock_prediction.providers.scraping import HtmlCache
 from nlp_stock_prediction.storage.records import (
@@ -120,6 +122,17 @@ class DefaultLiveOutcomeProviderFactory:
                 source_url=_alpha_vantage_source_url(normalized_symbol),
                 role="primary",
                 retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
+        )
+        selections.append(
+            LiveOutcomeMarketDataSelection(
+                provider=YahooFinanceChartMarketDataProvider(
+                    cache=self._json_cache(),
+                    now=self._provider_now,
+                ),
+                source_url=_yahoo_finance_chart_source_url(normalized_symbol),
+                role="fallback",
+                retrieval_method=RetrievalMethod.PUBLIC_SCRAPE,
             )
         )
         selections.append(
@@ -904,6 +917,10 @@ def _alpha_vantage_source_url(symbol: str) -> str:
 
 def _candlecharts_source_url(symbol: str) -> str:
     return f"{CANDLECHARTS_ENDPOINT}?{urlencode({'symbol': symbol})}"
+
+
+def _yahoo_finance_chart_source_url(symbol: str) -> str:
+    return yahoo_finance_chart_source_url(symbol)
 
 
 __all__ = [

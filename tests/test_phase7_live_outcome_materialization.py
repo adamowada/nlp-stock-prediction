@@ -24,6 +24,7 @@ from nlp_stock_prediction.contracts import (
     WarningSeverity,
 )
 from nlp_stock_prediction.evaluation.live_outcomes import (
+    DefaultLiveOutcomeProviderFactory,
     LiveOutcomeMarketDataSelection,
     materialize_live_prediction_outcome_artifacts,
 )
@@ -428,14 +429,40 @@ def test_phase6_service_exposes_live_materialization_without_observed_result_sho
         )
 
 
+@pytest.mark.unit
+def test_default_live_outcome_factory_adds_real_public_market_data_fallback() -> None:
+    factory = DefaultLiveOutcomeProviderFactory(env={})
+    instrument = InstrumentRecord(
+        instrument_id=INSTRUMENT_ID,
+        symbol="MSFT",
+        asset_class="stock",
+        name="Microsoft Corporation",
+        venue="NASDAQ",
+    )
+
+    selections = factory.market_data_selections(symbol="msft", instrument=instrument)
+
+    assert [selection.provider.provider_name for selection in selections] == [
+        "alpha-vantage-market-data",
+        "yahoo-finance-chart",
+        "candlecharts-market-data",
+    ]
+    assert selections[1].role == "fallback"
+    assert selections[1].retrieval_method is not None
+    assert selections[1].retrieval_method.value == "public_scrape"
+    assert selections[1].source_url is not None
+    assert "query1.finance.yahoo.com/v8/finance/chart/MSFT" in str(selections[1].source_url)
+    assert "fixture" not in str(selections[1].source_url).lower()
+
+
 @pytest.mark.live_api
 def test_live_outcome_materialization_opt_in_live_api_smoke(tmp_path: Path) -> None:
     if os.environ.get("NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS") != "1":
         pytest.skip("Set NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1 to run live outcome smoke.")
-    from nlp_stock_prediction.evaluation.live_outcomes import DefaultLiveOutcomeProviderFactory
 
     store = _store(tmp_path)
-    factory = DefaultLiveOutcomeProviderFactory()
+    evaluated_at = max(datetime.now(UTC), datetime(2026, 5, 14, 21, 0, tzinfo=UTC))
+    factory = DefaultLiveOutcomeProviderFactory(now=lambda: evaluated_at)
 
     result = materialize_live_prediction_outcome_artifacts(
         store=store,
@@ -446,7 +473,7 @@ def test_live_outcome_materialization_opt_in_live_api_smoke(tmp_path: Path) -> N
         point_in_time_cutoff=datetime(2026, 5, 13, 12, 30, tzinfo=UTC),
         evaluation_window_start=datetime(2026, 5, 13, 13, 30, tzinfo=UTC),
         evaluation_window_end=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
-        evaluated_at=datetime.now(UTC),
+        evaluated_at=evaluated_at,
         provider_factory=factory,
     )
 

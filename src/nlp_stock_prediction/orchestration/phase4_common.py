@@ -656,7 +656,7 @@ def retrieval_method_for_provider(provider_name: str) -> RetrievalMethod:
         "x-recent-search",
     }:
         return RetrievalMethod.OFFICIAL_API
-    if normalized in {"reddit", "ap-news", "candlecharts-market-data"}:
+    if normalized in {"reddit", "ap-news", "candlecharts-market-data", "yahoo-finance-chart"}:
         return RetrievalMethod.PUBLIC_SCRAPE
     return RetrievalMethod.DERIVED
 

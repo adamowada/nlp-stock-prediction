@@ -82,9 +82,10 @@ Generate a guarded live-provider report:
 python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --live
 ```
 
-The live command uses live providers and public-source adapters only. Missing credentials, upstream
-failures, stale data, or empty providers are recorded in the report instead of falling back to
-fixtures or dummy data.
+The live command uses live providers and public-source adapters only. Stock/ETF market data uses
+Alpha Vantage when configured and otherwise uses the public Yahoo Finance chart endpoint. Missing
+credentials, upstream failures, stale data, or empty providers are recorded in the report instead of
+falling back to fixtures or dummy data.
 
 ## Usage Examples
 
@@ -210,7 +211,7 @@ variables or ignored `.env` files.
 | --- | --- | --- |
 | `OPENAI_API_KEY` | No | Required only for workflows that call OpenAI-backed tooling. |
 | `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE` | No | Set to `1` to opt in to the real Codex smoke path. |
-| `NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY` | No | Optional Alpha Vantage key for live market data and fundamentals. |
+| `NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY` | No | Optional Alpha Vantage key for live market data and fundamentals; live stock/ETF market data can still use credential-free public chart data when this is absent. |
 | `NLP_STOCK_PREDICTION_FRED_API_KEY` | No | Optional FRED key for live macro context. |
 | `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | No | Token for X/Twitter-backed provider experiments. |
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | No | Contact User-Agent for opt-in live provider smoke tests. |

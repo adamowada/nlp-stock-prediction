@@ -27,5 +27,6 @@ plans/*.sqlite3-*
 data/ml/
 data/universes/
 data/market/
+data/provider-cache/
 artifacts/
 models/

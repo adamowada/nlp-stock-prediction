@@ -51,7 +51,9 @@ Implemented modes:
   source adapters only, records missing credentials or upstream failures as tool/provider warnings,
   and refuses stored fixture, dummy, or smoke inputs. If a live run has no admissible stored evidence
   or candidates, the report renders structured insufficient evidence rather than falling back to
-  fixtures or dummy data.
+  fixtures or dummy data. Stock/ETF market data prefers Alpha Vantage when configured and otherwise
+  uses the public Yahoo Finance chart endpoint; unavailable upstreams remain visible as provider
+  warnings.
 
 Direct non-offline pipeline calls still fail unless `source_mode="live"` or `live_providers=True` is
 set, so callers cannot accidentally route live requests to fixture or dummy data.
@@ -208,8 +210,10 @@ NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT
 
 `NLP_STOCK_PREDICTION_SEC_CIK_MAP` accepts comma-separated `SYMBOL=CIK` entries for SEC EDGAR
 lookups. The live path also honors `ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`,
-`FRED_API_KEY`, and `X_BEARER_TOKEN` as fallback names. Missing optional credentials are surfaced in
-the run graph and final report instead of being replaced with fixture data.
+`FRED_API_KEY`, and `X_BEARER_TOKEN` as fallback names. When Alpha Vantage is not configured, live
+stock/ETF market data can use the credential-free Yahoo Finance chart endpoint. Missing optional
+credentials are surfaced in the run graph and final report instead of being replaced with fixture
+data.
 
 ## Internet Search
 

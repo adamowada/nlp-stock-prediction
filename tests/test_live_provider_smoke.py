@@ -20,6 +20,7 @@ from nlp_stock_prediction.contracts import (
 )
 from nlp_stock_prediction.providers.apnews import APNewsProvider
 from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
+from nlp_stock_prediction.providers.market import YahooFinanceChartMarketDataProvider
 from nlp_stock_prediction.providers.reddit_scrape import RedditPublicPageProvider
 from nlp_stock_prediction.providers.social import XRecentSearchProvider
 
@@ -185,6 +186,29 @@ def test_live_x_recent_search_smoke() -> None:
 
     assert result.status in {ProviderStatus.OK, ProviderStatus.EMPTY, ProviderStatus.STALE}
     assert result.health.credential_state.value == "configured"
+
+
+@pytest.mark.live_api
+def test_live_yahoo_finance_chart_market_data_smoke() -> None:
+    _require_live_tests_enabled("Yahoo Finance chart live API")
+    provider = YahooFinanceChartMarketDataProvider()
+
+    result = provider.fetch_daily_candles(
+        MarketDataRequest(
+            request_id="live-yahoo-aapl-smoke",
+            run_date=date(2026, 5, 13),
+            tickers=("AAPL",),
+        )
+    )
+
+    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL, ProviderStatus.STALE}:
+        pytest.fail(
+            "Yahoo Finance chart live market-data smoke did not return usable daily candles: "
+            + "; ".join(warning.message for warning in result.warnings)
+        )
+    assert result.data is not None
+    assert result.data.bars
+    assert result.health.credential_state.value == "not_required"
 
 
 @pytest.mark.live_scraping

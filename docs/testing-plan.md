@@ -124,7 +124,10 @@ python -m pytest -m live_scraping
 ```
 
 They must skip unless the required credentials, user agent, network access, and explicit opt-in
-environment variables are present.
+environment variables are present. The live API gate includes a credential-free stock/ETF market
+data smoke against the Yahoo Finance chart endpoint so release hardening can prove outcome
+materialization without substituting fixture, dummy, smoke, scaffold, or fabricated data when Alpha
+Vantage is not configured.
 
 ### End To End
 
