@@ -48,7 +48,10 @@ Goal: make Codex the disciplined prediction research assistant.
 Status: initial orchestrator implemented. The deterministic offline `research` command runs through
 dummy tools, and an opt-in real Codex smoke path exposes Phase 2 tools through local MCP, records
 live-search evidence, writes ignored artifacts, and renders Markdown/JSON reports. The research tools
-themselves remain dummy/fixture-backed until Phase 4.
+themselves remain dummy/fixture-backed until Phase 4. The smoke service now rejects duplicate
+deterministic run starts, preserves neutral evidence as insufficient context unless supporting or
+contradictory evidence is present, writes report artifacts into the audit manifest, and removes newly
+written files when a transactional tool step fails.
 
 Build:
 
@@ -72,8 +75,10 @@ Goal: support a broad retail-accessible universe.
 
 Status: contract and storage layer implemented. The app can represent broad instrument identities,
 explicit query resolutions, provider IDs, watchlists, tradability/access evidence, related
-instruments, and fixture-backed universe artifacts. The default CLI has not added a separate
-universe command, and live universe-discovery providers are not yet implemented.
+instruments, and fixture-backed universe artifacts. Resolution contracts now reject matches on
+unsupported/unavailable results, and report contracts verify that instrument sections and candidates
+use symbols that match their referenced instruments. The default CLI has not added a separate universe
+command, and live universe-discovery providers are not yet implemented.
 
 Built:
 
@@ -100,6 +105,10 @@ Acceptance status:
 ## Phase 4: Tool Suite
 
 Goal: convert research capabilities into first-class independent tools.
+
+Status: provider and tool contract hardening has started ahead of the full tool-suite expansion.
+Shared provider fetch helpers retry retryable failures, avoid caching known error payloads, validate
+stored source spans, and degrade malformed/missing provider data into explicit warning results.
 
 Build:
 

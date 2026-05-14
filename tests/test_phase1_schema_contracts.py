@@ -211,3 +211,24 @@ def test_daily_report_validates_resolution_selected_ids_against_report_instrumen
 
     with pytest.raises(ValidationError, match="instrument_resolutions"):
         DailyReport.model_validate(report.model_dump(mode="python"))
+
+
+@pytest.mark.schema
+def test_daily_report_validates_evidence_reference_quotes_against_source_text() -> None:
+    payload = _report().model_dump(mode="python")
+    payload["prediction_candidates"][0]["evidence_for"][0]["quote"] = "not in source text"
+
+    with pytest.raises(ValidationError, match="quote must appear"):
+        DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_daily_report_validates_evidence_reference_spans_against_source_text() -> None:
+    payload = _report().model_dump(mode="python")
+    reference = payload["prediction_candidates"][0]["evidence_for"][0]
+    reference["quote"] = "Tesla"
+    reference["start_char"] = 1
+    reference["end_char"] = 6
+
+    with pytest.raises(ValidationError, match="span must match"):
+        DailyReport.model_validate(payload)

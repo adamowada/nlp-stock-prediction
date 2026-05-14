@@ -90,7 +90,10 @@ Provider/tool tests should use fixtures and mocks by default. They should verify
 - malformed responses;
 - missing provider fields;
 - duplicated evidence;
-- source query logging.
+- source query logging;
+- retryable transport failures;
+- semantic provider error payloads that must not be cached;
+- source match spans that must align with stored evidence text.
 
 Universe-discovery fixtures should be small and contract-shaped. Current Phase 3 fixtures live under
 `tests/fixtures/tools/universe_discovery/` and should cover mixed asset classes, explicit ambiguity,
@@ -104,7 +107,10 @@ Integration tests should cover:
 - deep dive on selected candidates;
 - evidence ledger to PredictionCandidate synthesis;
 - technical package attachment;
-- report generation from stored artifacts.
+- report generation from stored artifacts;
+- audit manifests that include rendered report artifacts;
+- deterministic run IDs, duplicate-run rejection, and cleanup after failed transactional tool steps;
+- neutral-only evidence staying insufficient instead of becoming supporting evidence.
 
 ### Live API And Live Scraping
 
@@ -143,6 +149,20 @@ python -m pytest tests/test_phase1_schema_contracts.py -k "resolution or report"
 
 These gates are offline. They should not require live market-data providers, live scraping, OpenAI
 credentials, optional GPU packages, or a new CLI command.
+
+### Cross-Cutting Integrity Gates
+
+Run these when contracts, providers, orchestration, reporting, storage, or local ML behavior changes:
+
+```sh
+python -m pytest tests/test_phase0_contracts.py tests/test_phase1_schema_contracts.py
+python -m pytest tests/test_research_providers.py tests/test_apnews_provider.py tests/test_candlecharts_provider.py
+python -m pytest tests/test_phase2_mcp_service.py tests/test_orchestration_runtime.py
+python -m pytest tests/test_ml_dataset.py tests/test_timesfm_dataset.py tests/test_ml_training_smoke.py
+```
+
+These tests pin traceable provenance, evidence-reference integrity, provider degradation and cache
+semantics, report artifact manifests, neutral/contradictory synthesis, and ML leakage controls.
 
 ### Codex Smoke
 

@@ -115,6 +115,23 @@ def test_phase2_mcp_service_rejects_symbol_mismatch(tmp_path: Path) -> None:
         service.run_dummy_universe_tool(run_id=str(started["run_id"]), symbol="BTC")
 
 
+@pytest.mark.unit
+def test_phase2_mcp_service_rejects_duplicate_deterministic_run_id(tmp_path: Path) -> None:
+    service = Phase2McpService(repo_root=tmp_path)
+    service.start_research_run(
+        run_date="2026-05-13",
+        output_dir="reports/phase2-codex-smoke",
+        symbol="TSLA",
+    )
+
+    with pytest.raises(ValueError, match="research run already exists"):
+        service.start_research_run(
+            run_date="2026-05-13",
+            output_dir="reports/phase2-codex-smoke",
+            symbol="TSLA",
+        )
+
+
 @pytest.mark.integration
 def test_phase2_mcp_service_synthesizes_contradictory_evidence(tmp_path: Path) -> None:
     service = Phase2McpService(repo_root=tmp_path)
@@ -155,3 +172,34 @@ def test_phase2_mcp_service_synthesizes_contradictory_evidence(tmp_path: Path) -
     assert report_candidate["symbol"] == "BTC:USD"
     assert report_candidate["status"] == "contradicted"
     assert report_candidate["evidence_against"][0]["evidence_id"] == against["evidence_id"]
+
+
+@pytest.mark.integration
+def test_phase2_mcp_service_neutral_only_evidence_stays_insufficient(tmp_path: Path) -> None:
+    service = Phase2McpService(repo_root=tmp_path)
+    started = service.start_research_run(
+        run_date="2026-05-13",
+        output_dir="reports/phase2-codex-smoke",
+        symbol="TSLA",
+    )
+    run_id = str(started["run_id"])
+
+    service.record_codex_search_evidence(
+        run_id=run_id,
+        symbol="TSLA",
+        title="Neutral TSLA source",
+        url="https://example.com/tsla-neutral",
+        claim="Example source says TSLA context was mixed without a directional claim.",
+        query="TSLA mixed context",
+        stance="neutral",
+    )
+    service.run_dummy_universe_tool(run_id=run_id, symbol="TSLA")
+    service.run_dummy_analysis_tool(run_id=run_id, symbol="TSLA")
+    service.synthesize_prediction_candidates(run_id=run_id, symbol="TSLA")
+    rendered = service.render_prediction_report(run_id=run_id, symbol="TSLA")
+
+    payload = json.loads(Path(str(rendered["json_path"])).read_text(encoding="utf-8"))
+    report_candidate = payload["prediction_candidates"][0]
+    assert report_candidate["status"] == "insufficient_evidence"
+    assert report_candidate["evidence_for"] == []
+    assert report_candidate["evidence_against"] == []

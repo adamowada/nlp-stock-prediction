@@ -22,6 +22,7 @@ from nlp_stock_prediction.contracts import (
     SourceEvidence,
     SourceKind,
     SourceProvenance,
+    TextSpan,
     TradabilityEvidence,
     TradabilityStatus,
     Watchlist,
@@ -421,6 +422,26 @@ def test_source_evidence_rejects_source_kind_mismatch() -> None:
                 source_url="https://example.test/mismatch",
                 raw_identifier="mismatch",
                 raw_snapshot_id="raw-mismatch",
+                freshness_status=FreshnessStatus.FRESH,
+            ),
+        )
+
+
+def test_source_evidence_rejects_match_spans_that_do_not_match_text() -> None:
+    with pytest.raises(ValidationError, match="match_spans text"):
+        SourceEvidence(
+            evidence_id="evidence-bad-span",
+            source_kind=SourceKind.NEWS_ARTICLE,
+            text="TSLA rallied on sourced news.",
+            match_spans=(TextSpan(text="NVDA", start_char=0, end_char=4),),
+            provenance=SourceProvenance(
+                provider_name="fixture-news",
+                source_kind=SourceKind.NEWS_ARTICLE,
+                retrieval_method=RetrievalMethod.FIXTURE,
+                fetched_at=_now(),
+                source_url="https://example.test/bad-span",
+                raw_identifier="bad-span",
+                raw_snapshot_id="raw-bad-span",
                 freshness_status=FreshnessStatus.FRESH,
             ),
         )

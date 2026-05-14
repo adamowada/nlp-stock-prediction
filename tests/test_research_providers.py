@@ -86,6 +86,24 @@ class _FailingJsonTransport:
         raise self.error
 
 
+@dataclass
+class _SequencedJsonTransport:
+    responses: tuple[JsonResponse, ...]
+    calls: list[str] = field(default_factory=list)
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+    ) -> JsonResponse:
+        del headers, timeout
+        self.calls.append(url)
+        index = min(len(self.calls) - 1, len(self.responses) - 1)
+        return self.responses[index]
+
+
 @pytest.mark.unit
 def test_x_recent_search_builds_cashtag_query() -> None:
     assert build_x_recent_search_query("tsla") == "$TSLA lang:en -is:retweet"
@@ -516,6 +534,39 @@ def test_alpha_vantage_daily_candles_reports_malformed_volume() -> None:
     assert result.data is None
     assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
     assert "invalid OHLCV" in result.warnings[0].message
+
+
+@pytest.mark.contract
+def test_alpha_vantage_daily_candles_does_not_cache_provider_note_payloads(
+    tmp_path: Path,
+) -> None:
+    valid_payload = _fixture("alpha_vantage", "daily_tsla.json")
+    transport = _SequencedJsonTransport(
+        (
+            JsonResponse(payload={"Note": "API call frequency exceeded."}),
+            JsonResponse(payload=valid_payload),
+        )
+    )
+    provider = AlphaVantageMarketDataProvider(
+        api_key="fixture-key",
+        transport=transport,
+        cache=ProviderCache(tmp_path),
+        now=lambda: FETCHED_AT,
+    )
+    request = MarketDataRequest(
+        request_id="market-tsla-note-cache-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    first = provider.fetch_daily_candles(request)
+    second = provider.fetch_daily_candles(request)
+
+    assert first.status == ProviderStatus.RATE_LIMITED
+    assert first.data is None
+    assert second.status == ProviderStatus.OK
+    assert second.data is not None
+    assert len(transport.calls) == 2
 
 
 @pytest.mark.contract

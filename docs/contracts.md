@@ -112,6 +112,11 @@ Required concepts:
 
 Evidence must support deduplication across repeated searches and providers.
 
+Implemented validation requires source match spans to stay inside the stored evidence text and match
+the exact referenced substring. Derived external records still need source URL/permalink, raw
+identifier, raw snapshot ID, and freshness status; only internal analysis can omit external source
+traceability.
+
 ## Prediction Candidate
 
 `PredictionCandidate` is the central product object.
@@ -156,6 +161,11 @@ Required concepts:
 Technical signals can support or weaken a prediction. They must not create reportable predictions by
 themselves.
 
+Implemented ML dataset contracts reject invalid OHLC relationships, normalize date and aware-datetime
+timestamps to one comparable key, preserve the one-bar lookback used by return features in metadata,
+and enforce purged TimesFM split boundaries so labels from one split do not overlap features in the
+next split.
+
 ## Report
 
 Reports should include:
@@ -174,6 +184,11 @@ Reports should include:
 Markdown and JSON reports should carry the same substantive information. The implemented report
 contract includes `instruments` and `instrument_resolutions`; selected resolution IDs must reference
 report instruments.
+
+Implemented report validation also requires instrument-section and candidate symbols to match their
+referenced instruments, and requires evidence-reference quotes/spans to match the cited source
+evidence text. Markdown rendering includes published/created timestamps, data-quality metadata,
+strategy cluster summaries when present, and audit manifest references or artifact entries.
 
 ## Planning State
 
