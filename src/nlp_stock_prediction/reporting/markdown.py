@@ -292,8 +292,32 @@ def _render_candidate(candidate: PredictionCandidate) -> list[str]:
     ]
     if candidate.signal_artifact_ids:
         lines.append(f"  - Signal artifacts: {_format_code_list(candidate.signal_artifact_ids)}")
+    lines.extend(_render_candidate_evaluation_metadata(candidate))
     lines.append("")
     return lines
+
+
+def _render_candidate_evaluation_metadata(candidate: PredictionCandidate) -> list[str]:
+    metadata = candidate.metadata.get("prediction_evaluation")
+    if not isinstance(metadata, dict):
+        return []
+    label = metadata.get("quality_label")
+    score = metadata.get("score")
+    baseline_verdict = metadata.get("baseline_verdict")
+    artifact_id = metadata.get("artifact_id")
+    parts: list[str] = []
+    if isinstance(label, str) and label.strip():
+        parts.append(_markdown_text(label))
+    if isinstance(score, int | float):
+        parts.append(f"score {score:.2f}")
+    if isinstance(baseline_verdict, str) and baseline_verdict.strip():
+        parts.append(f"baseline {baseline_verdict}")
+    if not parts:
+        return []
+    line = f"  - Evaluation quality: {'; '.join(parts)}"
+    if isinstance(artifact_id, str) and artifact_id.strip():
+        line = f"{line}; artifact `{_markdown_code(artifact_id)}`"
+    return [line]
 
 
 def _render_evidence_ledger(evidence_sources: tuple[SourceEvidence, ...]) -> list[str]:

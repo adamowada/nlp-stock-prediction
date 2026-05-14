@@ -48,6 +48,13 @@ from nlp_stock_prediction.contracts.enums import (
     WarningCode,
     WarningSeverity,
 )
+from nlp_stock_prediction.contracts.evaluation import (
+    BaselineComparison,
+    EvaluationEvidenceCounts,
+    PredictionEvaluation,
+    PredictionEvaluationArtifactPayload,
+    PredictionQualityLanguage,
+)
 from nlp_stock_prediction.contracts.evidence import SourceEvidence, TextSpan
 from nlp_stock_prediction.contracts.extraction import StrategyCluster, StrategyExtraction
 from nlp_stock_prediction.contracts.fixtures import (
@@ -128,6 +135,7 @@ __all__ = [
     "AssetClass",
     "AuditArtifact",
     "AuditManifest",
+    "BaselineComparison",
     "CodexEvidenceImport",
     "Confidence",
     "ContractModel",
@@ -137,6 +145,7 @@ __all__ = [
     "DataReference",
     "DateWindow",
     "Direction",
+    "EvaluationEvidenceCounts",
     "EvidenceReference",
     "EvidenceRequest",
     "ExtractionRequest",
@@ -184,6 +193,9 @@ __all__ = [
     "PositiveDecimal",
     "PositiveInt",
     "PredictionCandidate",
+    "PredictionEvaluation",
+    "PredictionEvaluationArtifactPayload",
+    "PredictionQualityLanguage",
     "PredictionStatus",
     "PriceBar",
     "ProviderHealth",

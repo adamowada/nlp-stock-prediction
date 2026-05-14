@@ -28,6 +28,7 @@ ArtifactType = Literal[
     "technical_package",
     "ml_forecast",
     "instrument_universe",
+    "prediction_evaluation",
     "audit_manifest",
 ]
 

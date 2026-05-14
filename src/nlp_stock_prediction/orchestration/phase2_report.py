@@ -302,6 +302,7 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
         "provider_result",
         "ml_forecast",
         "instrument_universe",
+        "prediction_evaluation",
         "audit_manifest",
     }:
         raise ValueError(f"unknown artifact type: {artifact_type}")
