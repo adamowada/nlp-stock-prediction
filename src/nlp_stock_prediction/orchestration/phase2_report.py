@@ -14,18 +14,15 @@ from nlp_stock_prediction.contracts.enums import (
 from nlp_stock_prediction.contracts.instruments import Instrument
 from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderHealth
 from nlp_stock_prediction.contracts.report import (
-    AuditArtifact,
     AuditManifest,
     DailyReport,
     DataFreshnessSummary,
     InstrumentReportSection,
     InsufficientEvidenceReport,
-    MaterialClaimTrace,
     PriorOutcomeReview,
-    ReportSourceReference,
 )
 from nlp_stock_prediction.instruments.repository import instrument_from_record
-from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex, ArtifactType
+from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
     phase2_instrument,
@@ -33,6 +30,11 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     utc_now,
 )
 from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
+from nlp_stock_prediction.orchestration.report_assembly import (
+    material_claim_traces,
+    prepare_report_assembly_state,
+    report_source_references,
+)
 from nlp_stock_prediction.orchestration.report_candidates import prediction_candidate_from_record
 from nlp_stock_prediction.orchestration.report_data_modes import (
     CODEX_SMOKE_REPORT_DATA_MODE,
@@ -46,7 +48,6 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.storage.records import (
-    ArtifactRecord,
     ResearchRunRecord,
     ToolRunRecord,
 )
@@ -85,14 +86,24 @@ def render_phase2_prediction_report(
     evidence_records = store.list_evidence_for_run(run.run_id)
     evidence_sources = tuple(source_evidence_from_record(record) for record in evidence_records)
     instrument = _primary_instrument(store, symbol=symbol, fallback_generated_at=now)
-    candidates = store.list_prediction_candidates_for_run(run.run_id)
+    candidate_records = store.list_prediction_candidates_for_run(run.run_id)
+    artifact_records = store.list_artifacts_for_run(run.run_id)
+    tool_runs = store.list_tool_runs_for_run(run.run_id)
+    assembly_state = prepare_report_assembly_state(
+        store=store,
+        repo_root=repo_root,
+        artifact_records=artifact_records,
+        evidence_records=evidence_records,
+        candidate_records=candidate_records,
+        tool_runs=tool_runs,
+    )
     prediction_candidates = tuple(
         prediction_candidate_from_record(
             candidate,
             evidence_sources,
             prefer_evaluated_references=True,
         )
-        for candidate in candidates
+        for candidate in assembly_state.usable_candidate_records
     )
     section_refs = tuple(
         EvidenceReference(
@@ -155,33 +166,9 @@ def render_phase2_prediction_report(
         evidence=section_refs,
         data_quality={"codex_search_evidence_count": len(evidence_sources)},
     )
-    audit_artifacts = tuple(
-        _audit_artifact_from_record(record, repo_root)
-        for record in store.list_artifacts_for_run(run.run_id)
-    )
-    source_references = _report_source_references(
-        evidence_sources=evidence_sources,
-        prediction_candidates=prediction_candidates,
-        audit_artifacts=audit_artifacts,
-    )
-    material_claim_traces = _material_claim_traces(
-        prediction_candidates=prediction_candidates,
-        source_references=source_references,
-    )
-    prior_outcome_reviews = _prior_outcome_reviews(prediction_candidates)
+    audit_artifacts = assembly_state.audit_artifacts
     provider_name = _provider_name_for_mode(
         resolved_report_data_mode,
-    )
-    insufficient_evidence = (
-        None
-        if prediction_candidates
-        else InsufficientEvidenceReport(
-            summary=insufficient_evidence_summary or "No candidate could be synthesized.",
-            blocking_reasons=(
-                insufficient_evidence_summary or "No candidate could be synthesized.",
-            ),
-            provider_names=(provider_name,),
-        )
     )
     has_codex_search_evidence = bool(evidence_sources)
     stale_provider_names = _stale_provider_names(evidence_sources)
@@ -191,6 +178,57 @@ def render_phase2_prediction_report(
         else ProviderStatus.OK
         if has_codex_search_evidence
         else ProviderStatus.EMPTY
+    )
+    provider_health = (
+        ProviderHealth(
+            provider_name=provider_name,
+            status=provider_status,
+            checked_at=now,
+            credential_state=CredentialState.NOT_REQUIRED,
+        ),
+        *assembly_state.provider_health,
+    )
+    source_references = report_source_references(
+        evidence_sources=evidence_sources,
+        audit_artifacts=audit_artifacts,
+        provider_health=provider_health,
+        assembly_state=assembly_state,
+    )
+    material_traces = material_claim_traces(
+        prediction_candidates=prediction_candidates,
+        source_references=source_references,
+        assembly_state=assembly_state,
+    )
+    prior_outcome_reviews = _prior_outcome_reviews(prediction_candidates)
+    insufficient_summary = _insufficient_evidence_summary(
+        prediction_candidates=prediction_candidates,
+        assembly_state_blocking_reasons=assembly_state.blocking_reasons,
+        default_summary=insufficient_evidence_summary,
+    )
+    insufficient_blocking_reasons = (
+        assembly_state.blocking_reasons
+        if assembly_state.blocking_reasons
+        else (insufficient_summary,)
+    )
+    insufficient_evidence = (
+        None
+        if prediction_candidates
+        else InsufficientEvidenceReport(
+            summary=insufficient_summary,
+            blocking_reasons=insufficient_blocking_reasons,
+            provider_names=tuple(health.provider_name for health in provider_health),
+        )
+    )
+    instrument_section = instrument_section.model_copy(
+        update={
+            "data_quality": {
+                **instrument_section.data_quality,
+                "stored_candidate_count": len(candidate_records),
+                "assembled_candidate_count": len(prediction_candidates),
+                "excluded_candidate_count": len(assembly_state.excluded_candidate_reasons),
+                "audit_artifact_count": len(audit_artifacts),
+            }
+        }
     )
     report = DailyReport(
         schema_version="daily-report.v2",
@@ -208,23 +246,14 @@ def render_phase2_prediction_report(
             stale_provider_names=stale_provider_names,
             missing_provider_names=() if has_codex_search_evidence else (provider_name,),
         ),
-        provider_health=(
-            ProviderHealth(
-                provider_name=provider_name,
-                status=provider_status,
-                checked_at=now,
-                credential_state=CredentialState.NOT_REQUIRED,
-            ),
-        ),
+        provider_health=provider_health,
         evidence_sources=evidence_sources,
         instrument_sections=(instrument_section,),
         prediction_candidates=prediction_candidates,
         insufficient_evidence=insufficient_evidence,
-        insufficient_evidence_summary=None
-        if prediction_candidates
-        else insufficient_evidence_summary or "No candidate could be synthesized.",
+        insufficient_evidence_summary=None if prediction_candidates else insufficient_summary,
         source_references=source_references,
-        material_claim_traces=material_claim_traces,
+        material_claim_traces=material_traces,
         prior_outcome_reviews=prior_outcome_reviews,
         audit_manifest=AuditManifest(
             run_id=run.run_id,
@@ -312,6 +341,10 @@ def render_phase2_prediction_report(
         "markdown_path": paths.report_path.as_posix(),
         "json_path": paths.json_path.as_posix(),
         "audit_manifest_path": paths.audit_manifest_path.as_posix(),
+        "candidate_count": len(prediction_candidates),
+        "stored_candidate_count": len(candidate_records),
+        "excluded_candidate_ids": list(assembly_state.excluded_candidate_ids),
+        "warnings": list(assembly_state.warnings),
         **mode_metadata,
     }
 
@@ -326,91 +359,6 @@ def _provider_name_for_mode(
     if report_data_mode == CODEX_SMOKE_REPORT_DATA_MODE:
         return "codex-web-search"
     return "dummy-smoke-tools"
-
-
-def _report_source_references(
-    *,
-    evidence_sources: tuple[object, ...],
-    prediction_candidates: tuple[object, ...],
-    audit_artifacts: tuple[AuditArtifact, ...],
-) -> tuple[ReportSourceReference, ...]:
-    references: list[ReportSourceReference] = []
-    candidate_ids = tuple(
-        candidate_id
-        for candidate_id in (
-            getattr(candidate, "candidate_id", None) for candidate in prediction_candidates
-        )
-        if isinstance(candidate_id, str) and candidate_id
-    )
-    for evidence in evidence_sources[:5]:
-        evidence_id = getattr(evidence, "evidence_id", None)
-        if not isinstance(evidence_id, str) or not evidence_id:
-            continue
-        references.append(
-            ReportSourceReference(
-                reference_id=f"source-ref-{evidence_id}",
-                label=f"Source evidence {evidence_id}",
-                reference_type="source_evidence",
-                evidence_ids=(evidence_id,),
-                candidate_ids=candidate_ids,
-            )
-        )
-    for artifact in audit_artifacts:
-        if artifact.artifact_type not in {"prediction_evaluation", "technical_package"}:
-            continue
-        references.append(
-            ReportSourceReference(
-                reference_id=f"source-ref-{artifact.artifact_id}",
-                label=f"Artifact {artifact.artifact_id}",
-                reference_type=(
-                    "prediction_evaluation"
-                    if artifact.artifact_type == "prediction_evaluation"
-                    else "tool_artifact"
-                ),
-                artifact_ids=(artifact.artifact_id,),
-                candidate_ids=candidate_ids,
-            )
-        )
-    return tuple(references)
-
-
-def _material_claim_traces(
-    *,
-    prediction_candidates: tuple[object, ...],
-    source_references: tuple[ReportSourceReference, ...],
-) -> tuple[MaterialClaimTrace, ...]:
-    if not prediction_candidates:
-        return ()
-    source_reference_ids = tuple(reference.reference_id for reference in source_references)
-    traces: list[MaterialClaimTrace] = []
-    for candidate in prediction_candidates:
-        candidate_id = getattr(candidate, "candidate_id", None)
-        thesis = getattr(candidate, "thesis", None)
-        evidence_for = getattr(candidate, "evidence_for", ())
-        evidence_against = getattr(candidate, "evidence_against", ())
-        signal_artifact_ids = getattr(candidate, "signal_artifact_ids", ())
-        if not isinstance(candidate_id, str) or not isinstance(thesis, str):
-            continue
-        has_trace_references = bool(
-            evidence_for or evidence_against or signal_artifact_ids or source_reference_ids
-        )
-        traces.append(
-            MaterialClaimTrace(
-                claim_id=f"claim-{candidate_id}",
-                claim=thesis,
-                claim_type="analysis" if has_trace_references else "labeled_inference",
-                evidence=tuple(evidence_for) + tuple(evidence_against),
-                artifact_ids=tuple(signal_artifact_ids),
-                source_reference_ids=source_reference_ids,
-                candidate_ids=(candidate_id,),
-                rationale=(
-                    None
-                    if has_trace_references
-                    else "Candidate is carried as structured insufficient-evidence context."
-                ),
-            )
-        )
-    return tuple(traces)
 
 
 def _prior_outcome_reviews(
@@ -453,38 +401,6 @@ def _primary_instrument(
     return phase2_instrument(symbol.upper(), fallback_generated_at)
 
 
-def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> AuditArtifact:
-    path = record.path if record.path.is_absolute() else repo_root / record.path
-    artifact_type = record.artifact_type
-    if artifact_type not in {
-        "raw_snapshot",
-        "normalized_evidence",
-        "extraction_output",
-        "analysis_context",
-        "prediction_input",
-        "markdown_report",
-        "json_report",
-        "provider_result",
-        "market_data",
-        "technical_package",
-        "ml_forecast",
-        "instrument_universe",
-        "prediction_evaluation",
-        "audit_manifest",
-    }:
-        raise ValueError(f"unknown artifact type: {artifact_type}")
-    return AuditArtifact(
-        artifact_id=record.artifact_id,
-        artifact_type=cast(ArtifactType, artifact_type),
-        path=path.as_posix(),
-        created_at=record.created_at or utc_now(),
-        produced_by=record.produced_by or "phase2-mcp",
-        sha256=record.sha256,
-        record_count=record.record_count,
-        metadata=record.metadata,
-    )
-
-
 def _stale_provider_names(evidence_sources: tuple[object, ...]) -> tuple[str, ...]:
     provider_names: list[str] = []
     for evidence in evidence_sources:
@@ -496,6 +412,23 @@ def _stale_provider_names(evidence_sources: tuple[object, ...]) -> tuple[str, ..
         if isinstance(provider_name, str) and provider_name:
             provider_names.append(provider_name)
     return tuple(dict.fromkeys(provider_names))
+
+
+def _insufficient_evidence_summary(
+    *,
+    prediction_candidates: tuple[object, ...],
+    assembly_state_blocking_reasons: tuple[str, ...],
+    default_summary: str | None,
+) -> str:
+    if prediction_candidates:
+        return ""
+    if assembly_state_blocking_reasons:
+        return (
+            "Report assembly could not use stored prediction candidates because required "
+            "tool artifacts or evidence were missing, malformed, or not linked through the "
+            "stored run graph."
+        )
+    return default_summary or "No candidate could be synthesized."
 
 
 __all__ = ["render_phase2_prediction_report"]

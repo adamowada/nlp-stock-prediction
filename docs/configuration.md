@@ -48,6 +48,25 @@ Implemented modes:
 The public `research` CLI remains offline-only today. Direct non-offline pipeline calls fail with a
 visible error instead of silently routing to fixture or dummy data.
 
+## Report Assembly Source Of Truth
+
+Phase 5 report assembly reads from the stored research SQLite run graph and persisted artifacts. The
+renderer uses stored evidence, prediction candidates, candidate-evidence links, candidate-artifact
+links, tool runs, artifact paths, and artifact hashes as the report source of truth. It does not
+synthesize replacement candidates or fixture fallback data during final report rendering.
+
+Candidate claims are emitted only when their required stored evidence and artifacts are available and
+valid. Missing linked evidence, missing required artifacts, hash mismatches, or malformed typed
+artifacts exclude the affected candidate and surface as structured insufficient evidence when no
+candidate remains usable. Audit manifests preserve artifact ids, paths, hashes, validation status,
+and whether an artifact was required for assembly.
+
+Report source references are candidate-specific where the run graph supplies the relationship:
+source evidence references point to the candidates that cite them, artifact references point to the
+candidates linked to those artifacts, and provider-health references preserve partial, empty, failed,
+or assembly-level failures. Material claim traces cover candidate thesis, baseline context, and
+prediction-quality evaluation claims.
+
 Run the optional Phase 4 real-Codex smoke after installing the MCP extra:
 
 ```sh

@@ -923,8 +923,7 @@ class Phase4Service:
         normalized_symbol = self._validated_symbol(run, symbol)
         report_data_mode = report_data_mode_from_run(run)
         candidates = self.store.list_prediction_candidates_for_run(run_id)
-        warnings = () if candidates else (MISSING_CANDIDATE_WARNING,)
-        status: Phase4ToolRunStatus = "successful" if candidates else "empty"
+        initial_warnings = () if candidates else (MISSING_CANDIDATE_WARNING,)
 
         def action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
             result = render_phase2_prediction_report(
@@ -938,7 +937,7 @@ class Phase4Service:
                 record_tool_run=False,
                 tool_name=context.tool.tool_name,
                 tool_version=context.tool.tool_version,
-                tool_warnings=warnings,
+                tool_warnings=initial_warnings,
                 produced_by=context.tool.tool_name,
                 artifact_schema_version="phase4-report.v1",
                 insufficient_evidence_summary=MISSING_CANDIDATE_WARNING,
@@ -949,6 +948,10 @@ class Phase4Service:
                 f"artifact-report-json-{stable_digest(run.run_id)}",
                 f"artifact-audit-manifest-{stable_digest(run.run_id)}",
             )
+            emitted_candidate_count = _json_int(result.get("candidate_count"))
+            result_warnings = _json_string_tuple(result.get("warnings"))
+            warnings = tuple(dict.fromkeys((*initial_warnings, *result_warnings)))
+            status: Phase4ToolRunStatus = "successful" if emitted_candidate_count > 0 else "empty"
             return Phase4ToolRunOutcome(
                 status=status,
                 payload=result,
@@ -956,6 +959,10 @@ class Phase4Service:
                 warnings=warnings,
                 metadata={
                     "candidate_count": len(candidates),
+                    "emitted_candidate_count": emitted_candidate_count,
+                    "excluded_candidate_ids": list(
+                        _json_string_tuple(result.get("excluded_candidate_ids"))
+                    ),
                     "final_only": True,
                     **report_data_mode_metadata(report_data_mode),
                 },
@@ -1328,6 +1335,22 @@ def _with_execution_payload(
     payload["artifact_ids"] = list(outcome.artifact_ids)
     payload["warnings"] = list(outcome.warnings)
     return outcome.model_copy(update={"payload": payload})
+
+
+def _json_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return 0
+
+
+def _json_string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(item for item in value if isinstance(item, str) and item)
 
 
 def _phase4_tool_result_payload(result: Phase4ToolResult) -> JsonObject:
