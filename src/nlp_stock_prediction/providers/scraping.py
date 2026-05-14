@@ -24,6 +24,7 @@ from nlp_stock_prediction.providers._base import (
     safe_path_component,
     stable_hash,
 )
+from nlp_stock_prediction.reliability import retry_call
 
 SCRAPE_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT"
 SCRAPE_MIN_DELAY_SECONDS_ENV = "NLP_STOCK_PREDICTION_SCRAPE_MIN_DELAY_SECONDS"
@@ -32,7 +33,7 @@ DEFAULT_SCRAPE_MIN_DELAY_SECONDS = 1.0
 DEFAULT_HTML_MAX_BYTES = 2_000_000
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class HtmlResponse:
     """Raw HTML response plus HTTP metadata from a provider transport."""
 
@@ -40,29 +41,6 @@ class HtmlResponse:
     status_code: int = 200
     headers: Mapping[str, str] = field(default_factory=dict)
     final_url: str | None = None
-
-    def __init__(
-        self,
-        html: str | None = None,
-        *,
-        text: str | None = None,
-        status_code: int = 200,
-        headers: Mapping[str, str] | None = None,
-        final_url: str | None = None,
-    ) -> None:
-        body = html if html is not None else text
-        if body is None:
-            raise TypeError("HtmlResponse requires html or text")
-        object.__setattr__(self, "html", body)
-        object.__setattr__(self, "status_code", status_code)
-        object.__setattr__(self, "headers", dict(headers or {}))
-        object.__setattr__(self, "final_url", final_url)
-
-    @property
-    def text(self) -> str:
-        """Compatibility alias for adapters that still name the body `text`."""
-
-        return self.html
 
 
 class HtmlTransport(Protocol):
@@ -117,6 +95,14 @@ class UrllibHtmlTransport:
             ) from exc
         except URLError as exc:
             raise ProviderTransportError(str(exc), retryable=True, error_type="url_error") from exc
+        except TimeoutError as exc:
+            raise ProviderTransportError(str(exc), retryable=True, error_type="timeout") from exc
+        except (OSError, UnicodeDecodeError, LookupError) as exc:
+            raise ProviderTransportError(
+                str(exc),
+                retryable=True,
+                error_type="read_decode_error",
+            ) from exc
 
 
 @dataclass(frozen=True)
@@ -378,11 +364,15 @@ def fetch_html(
                 content_sha256=cached.content_sha256,
             )
 
-    response = transport.get_html(
-        url,
-        headers=build_scraping_headers(user_agent=user_agent, extra_headers=headers),
-        timeout=timeout,
-        max_bytes=max_bytes,
+    response = retry_call(
+        lambda: transport.get_html(
+            url,
+            headers=build_scraping_headers(user_agent=user_agent, extra_headers=headers),
+            timeout=timeout,
+            max_bytes=max_bytes,
+        ),
+        should_retry=lambda exc: isinstance(exc, ProviderTransportError) and exc.retryable,
+        sleep=lambda _delay: None,
     )
     if not response.html.strip():
         raise MalformedProviderResponse("provider returned empty HTML")

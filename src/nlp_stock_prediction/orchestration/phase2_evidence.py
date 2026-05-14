@@ -5,14 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from nlp_stock_prediction.contracts import (
+from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.contracts.enums import (
     FreshnessStatus,
-    JsonObject,
     RetrievalMethod,
-    SourceEvidence,
     SourceKind,
-    SourceProvenance,
 )
+from nlp_stock_prediction.contracts.evidence import SourceEvidence
+from nlp_stock_prediction.contracts.provenance import SourceProvenance
+from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
     normalize_evidence_stance,
@@ -21,14 +22,12 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     stable_digest,
     utc_now,
 )
-from nlp_stock_prediction.reporting.audit import write_json_artifact
-from nlp_stock_prediction.storage import (
-    ArtifactRecord,
+from nlp_stock_prediction.storage.records import (
     EvidenceRecord,
     SourceQueryRecord,
-    SQLiteStore,
     ToolRunRecord,
 )
+from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 
 def record_codex_search_evidence(
@@ -53,7 +52,7 @@ def record_codex_search_evidence(
     tool_run_id = f"tool-codex-search-{digest}"
     source_query_id = f"query-codex-search-{digest}"
     artifact_id = f"artifact-codex-search-{digest}"
-    artifact_path = paths.audit_dir / f"codex-search-evidence-{digest}.json"
+    artifact_filename = f"codex-search-evidence-{digest}.json"
 
     source_kind = SourceKind.NEWS_ARTICLE
     provenance = SourceProvenance(
@@ -81,14 +80,18 @@ def record_codex_search_evidence(
         permalink=url,
         matched_tickers=((source_ticker,) if source_ticker else ()),
         provenance=provenance,
-        metadata={"codex_search": True, "stance": normalized_stance},
+        metadata={
+            "codex_search": True,
+            "stance": normalized_stance,
+            "extraction_confidence": 0.7,
+            "source_reliability": "codex_search_source",
+        },
     )
     payload: JsonObject = {
         "schema_version": "codex-search-evidence.v1",
         "run_id": run_id,
         "records": [cast(JsonObject, evidence.model_dump(mode="json"))],
     }
-    sha256 = write_json_artifact(artifact_path, payload)
     store.record_tool_run(
         ToolRunRecord(
             tool_run_id=tool_run_id,
@@ -106,6 +109,21 @@ def record_codex_search_evidence(
             completed_at=now,
         )
     )
+    ArtifactIndex.for_directory(
+        store=store,
+        repo_root=repo_root,
+        base_dir=paths.audit_dir,
+        created_at=now,
+        produced_by="record_codex_search_evidence",
+        tool_run_id=tool_run_id,
+        schema_version="codex-search-evidence.v1",
+    ).write_json(
+        artifact_id=artifact_id,
+        artifact_type="normalized_evidence",
+        filename=artifact_filename,
+        payload=payload,
+        metadata={"codex_search": True, "evidence_id": evidence_id},
+    )
     store.record_source_query(
         SourceQueryRecord(
             source_query_id=source_query_id,
@@ -115,18 +133,6 @@ def record_codex_search_evidence(
             url=url,
             retrieved_at=now,
             metadata={"codex_search": True},
-        )
-    )
-    store.record_artifact(
-        ArtifactRecord(
-            artifact_id=artifact_id,
-            tool_run_id=tool_run_id,
-            artifact_type="normalized_evidence",
-            path=artifact_path.relative_to(repo_root),
-            sha256=sha256,
-            schema_version="codex-search-evidence.v1",
-            metadata={"codex_search": True, "evidence_id": evidence_id},
-            created_at=now,
         )
     )
     store.record_evidence(
@@ -161,7 +167,15 @@ def record_codex_search_evidence(
 def source_evidence_from_record(record: EvidenceRecord) -> SourceEvidence:
     source_evidence = record.metadata.get("source_evidence")
     if isinstance(source_evidence, dict):
-        return SourceEvidence.model_validate(source_evidence)
+        source_evidence_payload = dict(source_evidence)
+        raw_metadata = source_evidence.get("metadata")
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        if record.extraction_confidence is not None:
+            metadata["extraction_confidence"] = record.extraction_confidence
+        if record.source_reliability is not None:
+            metadata["source_reliability"] = record.source_reliability
+        source_evidence_payload["metadata"] = metadata
+        return SourceEvidence.model_validate(source_evidence_payload)
     provenance = SourceProvenance.model_validate(record.provenance_json)
     raw_ticker = (
         record.instruments[0].removeprefix("instrument:codex:") if record.instruments else None
@@ -176,7 +190,11 @@ def source_evidence_from_record(record: EvidenceRecord) -> SourceEvidence:
         permalink=record.url,
         matched_tickers=((ticker,) if ticker else ()),
         provenance=provenance,
-        metadata=record.metadata,
+        metadata={
+            **record.metadata,
+            "extraction_confidence": record.extraction_confidence,
+            "source_reliability": record.source_reliability,
+        },
     )
 
 

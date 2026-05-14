@@ -28,8 +28,8 @@ from nlp_stock_prediction.contracts.provenance import ProviderHealth, ProviderWa
 
 
 class DateWindow(ContractModel):
-    start: date | datetime
-    end: date | datetime
+    start: date | AwareDatetime
+    end: date | AwareDatetime
 
     @model_validator(mode="after")
     def validate_order(self) -> DateWindow:
@@ -79,8 +79,11 @@ class ProviderResult[T](ContractModel):
             raise ValueError("provider result and health provider_name must match")
         if self.status != self.health.status:
             raise ValueError("provider result status must match health status")
-        if self.status == ProviderStatus.OK and self.data is None:
-            raise ValueError("ok provider results must include data")
+        if (
+            self.status in {ProviderStatus.OK, ProviderStatus.PARTIAL, ProviderStatus.STALE}
+            and self.data is None
+        ):
+            raise ValueError("usable provider results must include data")
         if self.status != ProviderStatus.OK and not self.warnings:
             raise ValueError("non-ok provider results must include at least one warning")
         if self.status == ProviderStatus.EMPTY and self.data is not None:
@@ -158,6 +161,20 @@ class PriceBar(ContractModel):
     volume: int = Field(ge=0)
     adjusted_close: Decimal | None = None
 
+    @model_validator(mode="after")
+    def validate_ohlc_shape(self) -> PriceBar:
+        if min(self.open, self.high, self.low, self.close) <= 0:
+            raise ValueError("price bars require positive OHLC values")
+        if self.adjusted_close is not None and self.adjusted_close <= 0:
+            raise ValueError("price bars require positive adjusted_close")
+        if self.high < self.low:
+            raise ValueError("price bar high must be greater than or equal to low")
+        if self.open > self.high or self.close > self.high:
+            raise ValueError("price bar open/close cannot exceed high")
+        if self.open < self.low or self.close < self.low:
+            raise ValueError("price bar open/close cannot be below low")
+        return self
+
 
 class ProviderMetric(ContractModel):
     """Provider-supplied fact before analysis lanes interpret it."""
@@ -165,7 +182,7 @@ class ProviderMetric(ContractModel):
     name: NonEmptyStr
     value: Decimal | float | int | str | None
     unit: str | None = None
-    as_of: date | datetime | None = None
+    as_of: date | AwareDatetime | None = None
     metadata: JsonObject = Field(default_factory=dict)
 
 

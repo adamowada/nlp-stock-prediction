@@ -1,0 +1,70 @@
+{
+  "request_id": "fixture-watchlist-request-ai-infrastructure",
+  "as_of": "2026-05-13T12:00:00+00:00",
+  "queries": [
+    {
+      "query": "BTC/USD",
+      "asset_class": "crypto",
+      "provider": "fixture-crypto",
+      "provider_namespace": "pair",
+      "provider_identifier": "BTC-USD"
+    }
+  ],
+  "watchlists": [
+    {
+      "watchlist_id": "watchlist-ai-infrastructure",
+      "name": "AI Infrastructure",
+      "entries": [
+        {
+          "query": {
+            "query": "NVDA",
+            "asset_class": "stock",
+            "venue": "NASDAQ",
+            "aliases": [
+              "NVIDIA"
+            ]
+          },
+          "notes": "Semiconductor single-name exposure for fixture screens.",
+          "tags": [
+            "semiconductor",
+            "ai"
+          ]
+        },
+        {
+          "query": {
+            "query": "QQQ",
+            "asset_class": "etf",
+            "aliases": [
+              "NASDAQ 100 ETF"
+            ]
+          },
+          "notes": "Broad growth proxy for fixture screens.",
+          "tags": [
+            "proxy",
+            "baseline"
+          ]
+        }
+      ],
+      "description": "Fixture watchlist for contract and storage tests.",
+      "metadata": {
+        "fixture": true
+      }
+    }
+  ],
+  "allowed_asset_classes": [
+    "stock",
+    "etf",
+    "crypto",
+    "proxy"
+  ],
+  "provider_names": [
+    "fixture-market",
+    "fixture-crypto",
+    "fixture-broker-directory"
+  ],
+  "include_related_instruments": true,
+  "metadata": {
+    "fixture_version": 1,
+    "scenario": "watchlist_request"
+  }
+}

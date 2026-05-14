@@ -85,8 +85,9 @@ def _replace_bar(
 @pytest.mark.unit
 def test_build_technical_dataset_derives_features_and_forward_labels() -> None:
     config = TechnicalDatasetConfig(feature_window=4, label_horizon_sessions=2)
+    bars = _bars()
 
-    dataset = build_technical_dataset("TSLA", _bars(), config=config)
+    dataset = build_technical_dataset("TSLA", bars, config=config)
 
     first = dataset.rows[0]
     current_close = Decimal("100") + Decimal(4) * Decimal("0.18") + Decimal(2) * Decimal("0.45")
@@ -103,11 +104,13 @@ def test_build_technical_dataset_derives_features_and_forward_labels() -> None:
         "overnight_gap_pct",
     } <= set(dataset.feature_names)
     assert len(first.feature_values) == len(dataset.feature_names)
+    assert first.feature_start == bars[0].timestamp
     assert first.feature_end_index == 4
     assert first.feature_end < first.label_end
     assert first.forward_return == pytest.approx(expected_forward_return)
     assert first.target == int(expected_forward_return > 0.0)
     assert all(isinstance(value, float) for value in first.feature_values)
+    assert dataset.metadata["feature_lookback_includes_prior_bar"] is True
 
 
 @pytest.mark.unit
@@ -165,6 +168,25 @@ def test_dataset_rejects_duplicate_bar_timestamps() -> None:
 
 
 @pytest.mark.unit
+def test_dataset_rejects_duplicate_mixed_date_and_datetime_timestamps() -> None:
+    bars = list(_bars())
+    duplicate_day = bars[3].timestamp
+    assert isinstance(duplicate_day, date)
+    bars[4] = _replace_bar(
+        bars[4],
+        timestamp=datetime(
+            duplicate_day.year,
+            duplicate_day.month,
+            duplicate_day.day,
+            tzinfo=UTC,
+        ),
+    )
+
+    with pytest.raises(DatasetValidationError, match="duplicate"):
+        build_technical_dataset("TSLA", bars)
+
+
+@pytest.mark.unit
 def test_dataset_rejects_missing_or_impossible_ohlcv() -> None:
     missing_close = _bar(20, close=Decimal("100"))
     object.__setattr__(missing_close, "close", None)
@@ -172,15 +194,12 @@ def test_dataset_rejects_missing_or_impossible_ohlcv() -> None:
     with pytest.raises(DatasetValidationError, match="missing OHLCV"):
         build_technical_dataset("TSLA", (*_bars(8), missing_close))
 
-    impossible = PriceBar(
-        ticker="TSLA",
+    impossible = _replace_bar(
+        _bar(21, close=Decimal("100")),
         timestamp=RUN_DATE + timedelta(days=1),
-        open=Decimal("100"),
-        high=Decimal("98"),
-        low=Decimal("99"),
-        close=Decimal("100"),
-        volume=1_000,
     )
+    object.__setattr__(impossible, "high", Decimal("98"))
+    object.__setattr__(impossible, "low", Decimal("99"))
 
     with pytest.raises(DatasetValidationError, match="impossible"):
         build_technical_dataset("TSLA", (*_bars(8), impossible))

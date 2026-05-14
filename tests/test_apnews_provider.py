@@ -16,7 +16,8 @@ from nlp_stock_prediction.contracts import (
     SourceKind,
     WarningCode,
 )
-from nlp_stock_prediction.providers.apnews import APNewsProvider, HtmlResponse
+from nlp_stock_prediction.providers.apnews import APNewsProvider
+from nlp_stock_prediction.providers.scraping import HtmlResponse
 
 RUN_DATE = date(2026, 5, 11)
 FETCHED_AT = datetime(2026, 5, 11, 18, 0, tzinfo=UTC)
@@ -195,4 +196,24 @@ def test_apnews_provider_reports_drift_when_hub_has_no_article_links() -> None:
     assert result.data is None
     assert result.warnings[0].code == WarningCode.SCRAPING_DRIFT
     assert result.warnings[0].metadata["validation"] == "missing_ap_article_links"
+    assert transport.calls == ["https://apnews.com/hub/financial-markets"]
+
+
+@pytest.mark.contract
+def test_apnews_provider_reports_malformed_when_hub_html_has_no_readable_text() -> None:
+    transport = _FakeHtmlTransport({"hub/financial-markets": "   "})
+    provider = APNewsProvider(transport=transport, now=lambda: FETCHED_AT)
+    request = EvidenceRequest(
+        request_id="apnews-empty-hub-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+        limit=3,
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.MALFORMED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.SCRAPING_DRIFT
+    assert result.warnings[0].metadata["validation"] == "malformed_ap_hub"
     assert transport.calls == ["https://apnews.com/hub/financial-markets"]

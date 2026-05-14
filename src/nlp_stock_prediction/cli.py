@@ -14,7 +14,6 @@ from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.pipeline import generate_daily_report
 
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
-PHASE_0_NOT_IMPLEMENTED_EXIT_CODE = CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
 _CLI_EPILOG = """Examples:
   python -m nlp_stock_prediction research --date 2026-05-12 --output reports/ --offline
 
@@ -94,7 +93,7 @@ def build_research_config(args: argparse.Namespace) -> RunConfig:
         fixture_dir=args.fixture_dir,
         cache_dir=args.cache_dir,
         offline=args.offline,
-        source_mode="offline" if args.offline else "disabled",
+        source_mode="offline",
     )
 
 
@@ -120,7 +119,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE",
-    "PHASE_0_NOT_IMPLEMENTED_EXIT_CODE",
     "build_parser",
     "build_research_config",
     "main",

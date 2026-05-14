@@ -1,6 +1,7 @@
 # Contracts
 
-This document defines target contracts and invariants for the prediction research rebuild.
+This document defines implemented and target contracts for the prediction research rebuild. When a
+section describes behavior beyond the current command surface, it is labeled as target behavior.
 
 ## Core Invariants
 
@@ -17,21 +18,63 @@ This document defines target contracts and invariants for the prediction researc
 
 ## Instrument
 
-An instrument record should identify what the app is researching.
+An instrument record identifies what the app is researching. Phase 3 implements the public Pydantic
+contracts for instruments, universe requests/results, watchlists, and resolution outcomes, plus
+SQLite registry tables and query helpers for persisted instrument records.
 
 Required concepts:
 
-- canonical symbol or identifier;
+- canonical instrument ID;
+- normalized symbol or identifier;
 - display name;
 - asset class;
 - venue or provider namespace;
 - aliases;
+- provider IDs;
 - related instruments;
 - tradability evidence;
 - data availability;
 - sector, category, or theme when applicable.
 
-Ambiguous symbols must not resolve silently.
+Implemented asset classes are `stock`, `etf`, `crypto`, `currency`, `commodity`, `futures`, `fund`,
+`index`, `proxy`, and `unknown`. Provider IDs are namespaced so one provider can contribute multiple
+identifiers, such as ticker and CIK, without overwriting each other.
+
+Tradability/access evidence is provenance, not a trading instruction. Each observation must include
+provider, status, retrieval timestamp, and at least one traceable source field such as `source_url`,
+`permalink`, or `raw_identifier`.
+
+Resolution results use explicit statuses:
+
+- `resolved`: exactly one selected instrument ID that appears in the matches.
+- `ambiguous`: two or more matches and no silent selection.
+- `unsupported`: the app cannot represent or process the requested instrument class yet.
+- `unavailable`: the app can represent the class but available providers did not return access or
+  data.
+
+Ambiguous symbols must not resolve silently. `AI`, for example, can remain an ambiguous stock/token
+resolution until the request supplies asset class, venue, provider namespace, or another disambiguator.
+
+## Instrument Universe And Watchlists
+
+Implemented Phase 3 contracts:
+
+- `InstrumentQuery`: a direct user/provider query with optional asset class, venue, provider, and
+  provider identifier hints.
+- `Watchlist` and `WatchlistEntry`: named collections of instrument queries with local notes, tags,
+  and optional requested instrument IDs.
+- `InstrumentUniverseRequest`: a mixed input containing direct queries, watchlists, allowed asset
+  classes, provider names, and a flag for related instruments.
+- `InstrumentUniverse`: resolved instruments plus request-to-instrument traceability.
+
+SQLite currently persists normalized instrument rows, aliases, provider IDs, related instruments,
+data availability, tradability evidence, watchlists, and watchlist items. Helper queries cover symbol
+or alias lookup, provider ID lookup, asset-class filtering, latest tradability evidence by provider,
+and watchlist instrument listing.
+
+Target behavior: first-class live universe discovery tools will turn provider/search/watchlist input
+into these contracts. Today, fixture and smoke paths exercise the contracts and storage; they do not
+claim live provider coverage for all asset classes.
 
 ## Tool Run
 
@@ -68,6 +111,11 @@ Required concepts:
 - artifact link.
 
 Evidence must support deduplication across repeated searches and providers.
+
+Implemented validation requires source match spans to stay inside the stored evidence text and match
+the exact referenced substring. Derived external records still need source URL/permalink, raw
+identifier, raw snapshot ID, and freshness status; only internal analysis can omit external source
+traceability.
 
 ## Prediction Candidate
 
@@ -113,6 +161,11 @@ Required concepts:
 Technical signals can support or weaken a prediction. They must not create reportable predictions by
 themselves.
 
+Implemented ML dataset contracts reject invalid OHLC relationships, normalize date and aware-datetime
+timestamps to one comparable key, preserve the one-bar lookback used by return features in metadata,
+and enforce purged TimesFM split boundaries so labels from one split do not overlap features in the
+next split.
+
 ## Report
 
 Reports should include:
@@ -128,7 +181,14 @@ Reports should include:
 - unavailable or stale data warnings;
 - what would change the prediction.
 
-Markdown and JSON reports should carry the same substantive information.
+Markdown and JSON reports should carry the same substantive information. The implemented report
+contract includes `instruments` and `instrument_resolutions`; selected resolution IDs must reference
+report instruments.
+
+Implemented report validation also requires instrument-section and candidate symbols to match their
+referenced instruments, and requires evidence-reference quotes/spans to match the cited source
+evidence text. Markdown rendering includes published/created timestamps, data-quality metadata,
+strategy cluster summaries when present, and audit manifest references or artifact entries.
 
 ## Planning State
 

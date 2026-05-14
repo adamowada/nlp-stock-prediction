@@ -113,7 +113,12 @@ class FredMacroProvider:
             raw_snapshot_ids.append(result.raw_snapshot_id)
             cache_keys.append(result.cache_key)
             try:
-                mapped_series, stale_warning = self._map_series(series_id, result, request.run_date)
+                mapped_series, stale_warning = self._map_series(
+                    series_id,
+                    result,
+                    run_date=request.run_date,
+                    fetched_at=fetched_at,
+                )
             except MalformedProviderResponse as exc:
                 warnings.append(self._mapping_warning(series_id, result, exc, fetched_at))
                 continue
@@ -122,13 +127,19 @@ class FredMacroProvider:
                 warnings.append(stale_warning)
         if not series:
             if warnings:
+                status = (
+                    ProviderStatus.RATE_LIMITED
+                    if all(warning.code == WarningCode.RATE_LIMITED for warning in warnings)
+                    else ProviderStatus.FAILED
+                )
                 return provider_result(
                     provider_name=self.provider_name,
-                    status=ProviderStatus.FAILED,
+                    status=status,
                     request=request,
                     fetched_at=fetched_at,
                     credential_state=CredentialState.CONFIGURED,
                     warnings=tuple(warnings),
+                    rate_limit_remaining=0 if status == ProviderStatus.RATE_LIMITED else None,
                 )
             return no_data_result(
                 provider_name=self.provider_name,
@@ -266,7 +277,9 @@ class FredMacroProvider:
         self,
         series_id: str,
         fetched: JsonFetch,
+        *,
         run_date: date,
+        fetched_at: datetime,
     ) -> tuple[MacroSeries, ProviderWarning | None]:
         normalized_series_id = series_id.upper()
         observations = fetched.payload.get("observations")
@@ -283,10 +296,13 @@ class FredMacroProvider:
             observation_date = parse_provider_date(raw_observation.get("date"))
             if observation_date is None:
                 continue
+            value = parse_decimal(raw_observation.get("value"))
+            if value is None:
+                continue
             values.append(
                 ProviderMetric(
                     name="observation",
-                    value=parse_decimal(raw_observation.get("value")),
+                    value=value,
                     unit=definition.unit,
                     as_of=observation_date,
                     metadata={
@@ -307,7 +323,7 @@ class FredMacroProvider:
                 code=WarningCode.STALE_DATA,
                 severity=WarningSeverity.WARNING,
                 message=f"FRED series {normalized_series_id} is stale: {latest_date.isoformat()}",
-                occurred_at=self._now(),
+                occurred_at=fetched_at,
                 raw_snapshot_id=fetched.raw_snapshot_id,
                 metadata={
                     "series_id": normalized_series_id,

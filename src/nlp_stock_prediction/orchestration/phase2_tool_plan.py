@@ -31,7 +31,7 @@ PHASE2_RESEARCH_TOOLS: tuple[Phase2ToolDefinition, ...] = (
     Phase2ToolDefinition(
         tool_name="run_dummy_universe_tool",
         stage="discover",
-        description="Write a deterministic retail-accessible instrument universe.",
+        description="Write a deterministic Phase 3 mixed-asset fixture universe.",
     ),
     Phase2ToolDefinition(
         tool_name="run_dummy_analysis_tool",

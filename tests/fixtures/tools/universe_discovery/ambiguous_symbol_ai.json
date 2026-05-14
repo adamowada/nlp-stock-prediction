@@ -1,0 +1,66 @@
+{
+  "request_id": "fixture-universe-ambiguous-ai",
+  "generated_at": "2026-05-13T12:00:00+00:00",
+  "resolutions": [
+    {
+      "query": "AI",
+      "status": "ambiguous",
+      "matches": [
+        {
+          "instrument_id": "instrument:equity:us:ai",
+          "symbol": "AI",
+          "display_name": "C3.ai Inc.",
+          "asset_class": "stock",
+          "venue": "NYSE",
+          "provider_ids": [
+            {
+              "provider": "fixture-market",
+              "identifier": "AI",
+              "namespace": "symbol"
+            }
+          ],
+          "tradability_evidence": [
+            {
+              "provider": "fixture-broker-directory",
+              "status": "available",
+              "retrieved_at": "2026-05-13T12:00:00+00:00",
+              "raw_identifier": "fixture-broker:AI:equity"
+            }
+          ]
+        },
+        {
+          "instrument_id": "instrument:crypto:ai-token",
+          "symbol": "AI",
+          "display_name": "AI Token Fixture",
+          "asset_class": "crypto",
+          "provider_ids": [
+            {
+              "provider": "fixture-crypto",
+              "identifier": "AI-USD",
+              "namespace": "pair"
+            }
+          ],
+          "tradability_evidence": [
+            {
+              "provider": "fixture-crypto-directory",
+              "status": "unknown",
+              "retrieved_at": "2026-05-13T12:00:00+00:00",
+              "raw_identifier": "fixture-crypto:AI-USD"
+            }
+          ]
+        }
+      ],
+      "warnings": [
+        "AI matches multiple instrument classes; caller must disambiguate before report synthesis."
+      ]
+    }
+  ],
+  "instruments": [],
+  "warnings": [
+    "No selected instrument is materialized for ambiguous fixture resolutions."
+  ],
+  "metadata": {
+    "fixture_version": 1,
+    "scenario": "ambiguous_symbol_ai"
+  }
+}

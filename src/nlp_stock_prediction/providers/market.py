@@ -6,20 +6,21 @@ from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 
-from nlp_stock_prediction.contracts import (
+from nlp_stock_prediction.contracts.enums import (
     CredentialState,
+    ProviderStatus,
+    WarningCode,
+    WarningSeverity,
+)
+from nlp_stock_prediction.contracts.provenance import ProviderHealth, ProviderWarning
+from nlp_stock_prediction.contracts.providers import (
     FundamentalsRequest,
     FundamentalsSnapshot,
     MarketDataRequest,
     MarketSnapshot,
     PriceBar,
-    ProviderHealth,
     ProviderMetric,
     ProviderResult,
-    ProviderStatus,
-    ProviderWarning,
-    WarningCode,
-    WarningSeverity,
 )
 from nlp_stock_prediction.providers._base import (
     JsonFetch,
@@ -43,8 +44,13 @@ from nlp_stock_prediction.providers._base import (
     transport_error_result,
     utc_now,
 )
+from nlp_stock_prediction.providers.execution import rate_limited_result
 
 ALPHA_VANTAGE_ENDPOINT = "https://www.alphavantage.co/query"
+
+
+class AlphaVantageRateLimitNotice(Exception):
+    """Raised when Alpha Vantage returns a quota/rate-limit notice payload."""
 
 
 class AlphaVantageMarketDataProvider:
@@ -118,6 +124,7 @@ class AlphaVantageMarketDataProvider:
                 fetched_at=fetched_at,
                 cache=self._cache,
                 timeout=self._timeout,
+                cacheable_payload=_is_alpha_vantage_cacheable,
             )
             snapshot = self._map_daily_payload(ticker, fetched.payload)
         except ProviderTransportError as exc:
@@ -127,6 +134,15 @@ class AlphaVantageMarketDataProvider:
                 fetched_at=fetched_at,
                 error=exc,
                 credential_state=CredentialState.CONFIGURED,
+            )
+        except AlphaVantageRateLimitNotice as exc:
+            return rate_limited_result(
+                provider_name=self.provider_name,
+                request=request,
+                fetched_at=fetched_at,
+                message=str(exc),
+                raw_snapshot_id=fetched.raw_snapshot_id,
+                cache_key=fetched.cache_key,
             )
         except MalformedProviderResponse as exc:
             return malformed_result(
@@ -222,18 +238,23 @@ class AlphaVantageMarketDataProvider:
                 raise MalformedProviderResponse(
                     "Alpha Vantage daily bar has missing or invalid OHLCV fields"
                 )
-            bars.append(
-                PriceBar(
-                    ticker=ticker,
-                    timestamp=bar_date,
-                    open=open_price or Decimal("0"),
-                    high=high or Decimal("0"),
-                    low=low or Decimal("0"),
-                    close=close or Decimal("0"),
-                    adjusted_close=adjusted_close,
-                    volume=volume,
+            try:
+                bars.append(
+                    PriceBar(
+                        ticker=ticker,
+                        timestamp=bar_date,
+                        open=open_price or Decimal("0"),
+                        high=high or Decimal("0"),
+                        low=low or Decimal("0"),
+                        close=close or Decimal("0"),
+                        adjusted_close=adjusted_close,
+                        volume=volume,
+                    )
                 )
-            )
+            except ValueError as exc:
+                raise MalformedProviderResponse(
+                    "Alpha Vantage daily bar has invalid OHLCV price relationships"
+                ) from exc
         return MarketSnapshot(
             ticker=ticker,
             bars=tuple(bars),
@@ -306,6 +327,7 @@ class AlphaVantageFundamentalsProvider:
                 fetched_at=fetched_at,
                 cache=self._cache,
                 timeout=self._timeout,
+                cacheable_payload=_is_alpha_vantage_cacheable,
             )
             snapshot = self._map_overview_payload(ticker, fetched)
         except ProviderTransportError as exc:
@@ -315,6 +337,15 @@ class AlphaVantageFundamentalsProvider:
                 fetched_at=fetched_at,
                 error=exc,
                 credential_state=CredentialState.CONFIGURED,
+            )
+        except AlphaVantageRateLimitNotice as exc:
+            return rate_limited_result(
+                provider_name=self.provider_name,
+                request=request,
+                fetched_at=fetched_at,
+                message=str(exc),
+                raw_snapshot_id=fetched.raw_snapshot_id,
+                cache_key=fetched.cache_key,
             )
         except MalformedProviderResponse as exc:
             return malformed_result(
@@ -408,9 +439,13 @@ class AlphaVantageFundamentalsProvider:
 
 def _raise_for_alpha_vantage_message(payload: dict[str, object]) -> None:
     if "Note" in payload or "Information" in payload:
-        raise MalformedProviderResponse("Alpha Vantage response indicates rate limit or notice")
+        raise AlphaVantageRateLimitNotice("Alpha Vantage response indicates rate limit or notice")
     if "Error Message" in payload:
         raise MalformedProviderResponse("Alpha Vantage response contains an error message")
+
+
+def _is_alpha_vantage_cacheable(payload: dict[str, object]) -> bool:
+    return not any(key in payload for key in ("Note", "Information", "Error Message"))
 
 
 def _liquidity_metrics(bars: list[PriceBar]) -> tuple[ProviderMetric, ...]:

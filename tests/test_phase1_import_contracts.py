@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import importlib
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from subprocess_helpers import module_subprocess_env
 
 pytestmark = pytest.mark.unit
 
@@ -14,13 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _subprocess_env() -> dict[str, str]:
-    env = os.environ.copy()
-    src_path = str(REPO_ROOT / "src")
-    existing_pythonpath = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = (
-        src_path if existing_pythonpath is None else f"{src_path}{os.pathsep}{existing_pythonpath}"
-    )
-    return env
+    return module_subprocess_env(REPO_ROOT)
 
 
 def test_contract_namespace_exports_clean_report_surface() -> None:
@@ -61,6 +56,7 @@ def test_contract_namespace_star_import_matches_public_all() -> None:
         "extraction",
         "fixtures",
         "instruments",
+        "orchestration",
         "provenance",
         "providers",
         "report",

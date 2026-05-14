@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from math import exp, isfinite, log, sqrt
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -28,6 +28,7 @@ from nlp_stock_prediction.ml.dataset import (
     TechnicalFeatureRow,
     temporal_train_validation_split,
 )
+from nlp_stock_prediction.reporting.audit import write_json_artifact
 
 DeviceRequest = Literal["auto", "cpu", "cuda"]
 SelectedDevice = Literal["cpu", "cuda"]
@@ -159,20 +160,37 @@ def detect_training_device(requested_device: DeviceRequest = "auto") -> Training
     cuda_available = False
     gpu_name: str | None = None
     cuda_version: str | None = None
+    if requested_device == "cpu":
+        return TrainingDeviceMetadata(
+            requested_device=requested_device,
+            selected_device="cpu",
+            cuda_available=False,
+            backend="pure-python-logistic-regression",
+            notes=(),
+        )
     try:
         torch_module = importlib.import_module("torch")
-    except ImportError:
+    except (ImportError, OSError, RuntimeError) as exc:
+        if requested_device == "cuda":
+            raise RuntimeError("CUDA was requested but torch could not be imported") from exc
         notes.append("torch is not installed; using the pure-Python CPU baseline")
     else:
         cuda = getattr(torch_module, "cuda", None)
-        if cuda is not None and bool(cuda.is_available()):
-            cuda_available = True
-            gpu_name = str(cuda.get_device_name(0))
-            version = getattr(torch_module, "version", None)
-            version_cuda = getattr(version, "cuda", None)
-            cuda_version = str(version_cuda) if version_cuda is not None else None
-        else:
-            notes.append("torch is installed but CUDA is not available")
+        try:
+            cuda_available = bool(cuda is not None and cuda.is_available())
+            if cuda_available:
+                assert cuda is not None
+                gpu_name = str(cuda.get_device_name(0))
+                version = getattr(torch_module, "version", None)
+                version_cuda = getattr(version, "cuda", None)
+                cuda_version = str(version_cuda) if version_cuda is not None else None
+            else:
+                notes.append("torch is installed but CUDA is not available")
+        except (OSError, RuntimeError) as exc:
+            if requested_device == "cuda":
+                raise RuntimeError("CUDA was requested but CUDA probing failed") from exc
+            cuda_available = False
+            notes.append("torch CUDA probing failed; using the pure-Python CPU baseline")
 
     if requested_device == "cuda" and not cuda_available:
         raise RuntimeError("CUDA was requested but no CUDA device is available")
@@ -303,7 +321,10 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
     model_path = output_dir / "model.json"
     metrics_path = output_dir / "metrics.json"
     metadata_path = output_dir / "metadata.json"
-    model_path.write_text(result.model.model_dump_json(indent=2), encoding="utf-8")
+    model_sha256 = write_json_artifact(
+        model_path,
+        cast(JsonObject, result.model.model_dump(mode="json")),
+    )
     metrics_payload = {
         "schema_version": "ml.training_metrics.v1",
         "dataset_hash": result.dataset_hash,
@@ -311,12 +332,7 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
         "train": result.train_metrics.model_dump(mode="json"),
         "validation": result.validation_metrics.model_dump(mode="json"),
     }
-    metrics_path.write_text(
-        json.dumps(metrics_payload, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    model_sha256 = _file_sha256(model_path)
-    metrics_sha256 = _file_sha256(metrics_path)
+    metrics_sha256 = write_json_artifact(metrics_path, cast(JsonObject, metrics_payload))
     metadata_payload = {
         "schema_version": "ml.training_metadata.v1",
         "config": result.config.model_dump(mode="json"),
@@ -334,11 +350,7 @@ def write_training_artifacts(result: TrainingResult, output_dir: Path) -> Traini
         "split": _split_metadata(result.split),
         "trained_at": result.trained_at.isoformat(),
     }
-    metadata_path.write_text(
-        json.dumps(metadata_payload, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    metadata_sha256 = _file_sha256(metadata_path)
+    metadata_sha256 = write_json_artifact(metadata_path, cast(JsonObject, metadata_payload))
     return TrainingArtifactPaths(
         model_path=model_path,
         metrics_path=metrics_path,
@@ -486,10 +498,6 @@ def _hash_model(
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _runtime_metadata(device: TrainingDeviceMetadata) -> JsonObject:

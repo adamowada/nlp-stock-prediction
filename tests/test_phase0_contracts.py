@@ -122,6 +122,20 @@ def test_valid_ticker_discovery_requires_candidates_and_raw_snapshot() -> None:
 
 
 @pytest.mark.schema
+def test_derived_external_provenance_still_requires_traceable_source() -> None:
+    with pytest.raises(ValidationError, match="source_url or permalink"):
+        SourceProvenance(
+            provider_name="derived-news",
+            source_kind=SourceKind.NEWS_ARTICLE,
+            retrieval_method=RetrievalMethod.DERIVED,
+            fetched_at=_fetched_at(),
+            raw_identifier="derived-news-1",
+            raw_snapshot_id="raw-derived-news-1",
+            freshness_status=FreshnessStatus.FRESH,
+        )
+
+
+@pytest.mark.schema
 def test_provider_result_envelope_serializes_health_and_request() -> None:
     request = ProviderRequest(
         request_id="provider-request-1",

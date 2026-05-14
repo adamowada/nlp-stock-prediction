@@ -27,6 +27,11 @@ def _load_script_module() -> Any:
     return module
 
 
+def _option_value(command: list[str], option: str) -> str:
+    index = command.index(option)
+    return command[index + 1]
+
+
 @pytest.mark.unit
 def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> None:
     smoke = codex_smoke
@@ -41,15 +46,18 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
     command = smoke.build_codex_command(config)
     rendered = " ".join(command)
 
-    assert command[:4] == ["codex", "--ask-for-approval", "never", "--search"]
+    assert command[0] == "codex"
+    assert _option_value(command, "--ask-for-approval") == "never"
+    assert "--search" in command
+    assert "exec" in command
+    assert _option_value(command, "-s") == "danger-full-access"
     assert "mcp_servers.nlp-stock-prediction.command" in rendered
     assert "-B" in rendered
     assert "nlp_stock_prediction.codex_mcp" in rendered
     assert "--repo-root" in rendered
     assert "--database" in rendered
     assert "phase2-codex-smoke-2026-05-13-tsla.sqlite3" in rendered
-    assert "danger-full-access" in command
-    assert str(config.final_message_path) in command
+    assert _option_value(command, "--output-last-message") == str(config.final_message_path)
     assert "Do not import project modules directly" in command[-1]
     assert "record_codex_search_evidence" in command[-1]
     assert "stance set to" in command[-1]

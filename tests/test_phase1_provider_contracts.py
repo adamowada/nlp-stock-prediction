@@ -553,7 +553,7 @@ def test_provider_result_empty_envelope_requires_no_data_warning_and_no_data() -
 def test_provider_result_rejects_invalid_envelope_semantics() -> None:
     request = ProviderRequest(request_id="invalid-envelope", run_date=RUN_DATE)
 
-    with pytest.raises(ValidationError, match="ok provider results must include data"):
+    with pytest.raises(ValidationError, match="usable provider results must include data"):
         ProviderResult[str](
             provider_name="fixture-provider",
             status=ProviderStatus.OK,
@@ -674,4 +674,10 @@ def test_date_window_rejects_end_before_start() -> None:
         DateWindow(
             start=datetime(2026, 5, 11, 16, 0, tzinfo=UTC),
             end=datetime(2026, 5, 11, 9, 30, tzinfo=UTC),
+        )
+
+    with pytest.raises(ValidationError, match="timezone-aware"):
+        DateWindow(
+            start=datetime(2026, 5, 11, 9, 30),
+            end=datetime(2026, 5, 11, 16, 0, tzinfo=UTC),
         )

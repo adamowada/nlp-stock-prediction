@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from nlp_stock_prediction.contracts import Direction, JsonObject, TimeHorizon
+from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.contracts.enums import Direction, TimeHorizon
+from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
     stable_digest,
@@ -13,15 +15,13 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     utc_now,
 )
 from nlp_stock_prediction.orchestration.phase2_evidence import evidence_stance_from_record
-from nlp_stock_prediction.reporting.audit import write_json_artifact
-from nlp_stock_prediction.storage import (
-    ArtifactRecord,
+from nlp_stock_prediction.storage.records import (
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
     PredictionCandidateRecord,
-    SQLiteStore,
     ToolRunRecord,
 )
+from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 
 def synthesize_prediction_candidates(
@@ -41,7 +41,7 @@ def synthesize_prediction_candidates(
     evidence_for = tuple(
         record.evidence_id
         for record in evidence
-        if evidence_stance_from_record(record) in {"supports", "neutral"}
+        if evidence_stance_from_record(record) == "supports"
     )
     evidence_against = tuple(
         record.evidence_id
@@ -97,8 +97,6 @@ def synthesize_prediction_candidates(
     }
     artifact_id = f"artifact-prediction-inputs-{stable_digest(run_id)}"
     tool_run_id = f"tool-candidate-synthesis-{run_id}"
-    path = paths.audit_dir / "prediction-inputs.json"
-    sha256 = write_json_artifact(path, payload)
     store.record_tool_run(
         ToolRunRecord(
             tool_run_id=tool_run_id,
@@ -111,17 +109,20 @@ def synthesize_prediction_candidates(
             inputs={"symbol": symbol, "evidence_count": len(evidence)},
         )
     )
-    store.record_artifact(
-        ArtifactRecord(
-            artifact_id=artifact_id,
-            tool_run_id=tool_run_id,
-            artifact_type="prediction_input",
-            path=path.relative_to(repo_root),
-            sha256=sha256,
-            schema_version="phase2-candidate-synthesis.v1",
-            metadata={"candidate_id": candidate_id},
-            created_at=now,
-        )
+    ArtifactIndex.for_directory(
+        store=store,
+        repo_root=repo_root,
+        base_dir=paths.audit_dir,
+        created_at=now,
+        produced_by="synthesize_prediction_candidates",
+        tool_run_id=tool_run_id,
+        schema_version="phase2-candidate-synthesis.v1",
+    ).write_json(
+        artifact_id=artifact_id,
+        artifact_type="prediction_input",
+        filename="prediction-inputs.json",
+        payload=payload,
+        metadata={"candidate_id": candidate_id},
     )
     store.upsert_prediction_candidate(candidate)
     for evidence_id in candidate.evidence_for:

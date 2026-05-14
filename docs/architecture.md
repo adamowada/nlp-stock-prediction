@@ -99,3 +99,26 @@ Every material report claim should trace to one of:
 
 Evidence for and evidence against must both be preserved. Contradictions are useful signal, not
 reporting noise.
+
+Implemented hardening currently enforces that normalized source match spans and report evidence
+reference quotes point back into the stored evidence text. External evidence provenance must remain
+traceable even when a record is derived from another source, and neutral context is preserved as
+context rather than counted as positive support for a prediction.
+
+## Failure And Artifact Discipline
+
+Provider and tool failures are represented as contract-shaped warning results where practical. Shared
+HTTP/HTML fetch helpers retry retryable transport failures deterministically, avoid caching known
+provider error payloads, and surface malformed provider payloads without dropping warning context.
+
+Report bundles write Markdown, JSON, and audit-manifest artifacts. The final audit manifest includes
+the rendered report artifacts and their hashes, while SQLite run-graph queries include artifacts and
+source queries reachable through evidence and candidate links. Phase 2 smoke runs use deterministic
+run IDs, reject duplicate starts, and remove newly written files if a transactional tool step fails.
+
+## ML Signal Discipline
+
+Technical ML sidecars are conservative audit inputs. OHLCV timestamps are normalized across date and
+timezone-aware datetime values, impossible OHLC relationships are rejected at the provider contract,
+TimesFM train/validation/test splits include a purge that separates labels from later features, and
+model/evaluation hash mismatches degrade to an unavailable ML signal instead of producing support.

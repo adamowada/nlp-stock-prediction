@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
-import os
 import subprocess
 import sys
 from datetime import date, datetime, timedelta
@@ -26,6 +25,7 @@ from nlp_stock_prediction.ml.training import (
     train_technical_model,
     write_training_artifacts,
 )
+from subprocess_helpers import module_subprocess_env
 
 RUN_DATE = date(2026, 5, 11)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -175,11 +175,53 @@ def test_technical_ml_signal_sidecar_from_evaluation_attaches_metrics() -> None:
 
 
 @pytest.mark.unit
+def test_technical_ml_signal_rejects_evaluation_model_hash_mismatch() -> None:
+    dataset = build_technical_dataset(
+        "AMD",
+        _training_bars(),
+        config=TechnicalDatasetConfig(feature_window=5, label_horizon_sessions=2),
+    )
+    result = train_technical_model(
+        dataset,
+        config=TrainingConfig(epochs=20, seed=17, requested_device="cpu"),
+    )
+    evaluation = evaluate_model(result.model, dataset.rows[-8:]).model_copy(
+        update={"model_hash": "f" * 64}
+    )
+
+    signal = build_technical_ml_signal(
+        model=result.model,
+        evaluation=evaluation,
+        as_of=RUN_DATE,
+    )
+
+    assert signal.status == "unavailable"
+    assert signal.warning_ids == ("ml-technical-signal:model_hash_mismatch",)
+    assert signal.metadata["evaluation_model_hash"] == "f" * 64
+
+
+@pytest.mark.unit
 def test_auto_device_detection_does_not_require_cuda() -> None:
     device = detect_training_device("auto")
 
     assert device.selected_device in {"cpu", "cuda"}
     assert isinstance(device.cuda_available, bool)
+
+
+@pytest.mark.unit
+def test_cpu_device_detection_skips_torch_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_import(name: str, package: str | None = None) -> object:
+        if name == "torch":
+            raise AssertionError("cpu detection should not import torch")
+        return importlib.import_module(name, package)
+
+    monkeypatch.setattr("nlp_stock_prediction.ml.training.importlib.import_module", fail_import)
+
+    device = detect_training_device("cpu")
+
+    assert device.selected_device == "cpu"
+    assert device.cuda_available is False
+    assert device.notes == ()
 
 
 @pytest.mark.unit
@@ -371,20 +413,4 @@ def _install_fake_torch(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _module_env() -> dict[str, str]:
-    env: dict[str, str] = {}
-    for key in (
-        "COMSPEC",
-        "PATH",
-        "PATHEXT",
-        "SYSTEMROOT",
-        "TEMP",
-        "TMP",
-        "WINDIR",
-    ):
-        value = os.environ.get(key)
-        if value is not None:
-            env[key] = value
-    src_path = str(PROJECT_ROOT / "src")
-    env["PYTHONPATH"] = src_path
-    env["NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS"] = "0"
-    return env
+    return module_subprocess_env(PROJECT_ROOT)

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from decimal import Decimal
 from math import isfinite
-from typing import Annotated, Any, NoReturn, overload
+from typing import Annotated, Any, NoReturn, Self, SupportsIndex, overload
 
 from pydantic import (
     AfterValidator,
@@ -84,11 +85,15 @@ class FrozenJsonDict(dict[str, JsonValue]):
     def update(self, *args: Any, **kwargs: JsonValue) -> None:
         self._immutable()
 
+    def __ior__(self, other: object, /) -> Self:  # type: ignore[override,misc]
+        del other
+        self._immutable()
+
 
 class FrozenJsonList(list[JsonValue]):
     """A JSON array that rejects mutation after contract validation."""
 
-    def _immutable(self, *_args: object, **_kwargs: object) -> None:
+    def _immutable(self, *_args: object, **_kwargs: object) -> NoReturn:
         raise TypeError("JSON metadata is immutable")
 
     __setitem__ = _immutable
@@ -101,6 +106,14 @@ class FrozenJsonList(list[JsonValue]):
     remove = _immutable
     reverse = _immutable
     sort = _immutable
+
+    def __iadd__(self, values: Iterable[Any], /) -> Self:  # type: ignore[override,misc]
+        del values
+        self._immutable()
+
+    def __imul__(self, value: SupportsIndex) -> Self:
+        del value
+        self._immutable()
 
 
 def _freeze_json_value(value: Any) -> Any:

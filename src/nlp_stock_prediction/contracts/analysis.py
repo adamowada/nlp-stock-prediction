@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
 from nlp_stock_prediction.contracts.base import (
+    AwareDatetime,
     Confidence,
     ContractModel,
     JsonObject,
@@ -31,7 +32,7 @@ class MetricValue(ContractModel):
     name: NonEmptyStr
     value: Decimal | float | int | str | None
     unit: str | None = None
-    as_of: date | datetime | None = None
+    as_of: date | AwareDatetime | None = None
     provenance: SourceProvenance | None = None
     metadata: JsonObject = Field(default_factory=dict)
 
@@ -55,8 +56,8 @@ class TechnicalMlSignal(ContractModel):
 
     model_hash: NonEmptyStr
     dataset_hash: NonEmptyStr
-    as_of: date | datetime
-    feature_end: date | datetime
+    as_of: date | AwareDatetime
+    feature_end: date | AwareDatetime
     prediction_horizon_sessions: int = Field(ge=1)
     probability_positive: Confidence
     calibrated_confidence: Confidence
@@ -120,7 +121,7 @@ class FundamentalNlpAnalysisRequest(ProviderRequest):
     request_id: NonEmptyStr
     ticker: TickerSymbol
     run_date: date
-    as_of: date | datetime
+    as_of: date | AwareDatetime
     evidence: tuple[SourceEvidence, ...] = Field(default_factory=tuple)
     metrics: tuple[MetricValue, ...] = Field(default_factory=tuple)
     prompt_version: NonEmptyStr
@@ -179,6 +180,12 @@ class FundamentalNlpClaim(ContractModel):
     confidence: Confidence = 0.0
     metadata: JsonObject = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def validate_cited_claims(self) -> FundamentalNlpClaim:
+        if self.claim_type in {"observed", "interpretation", "risk"} and not self.citations:
+            raise ValueError("observed, interpretation, and risk claims require citations")
+        return self
+
 
 class FundamentalNlpRisk(ContractModel):
     """A cited risk identified by the agent for later report and audit lanes."""
@@ -188,6 +195,12 @@ class FundamentalNlpRisk(ContractModel):
     severity: Literal["low", "medium", "high", "unknown"] = "unknown"
     citations: tuple[FundamentalNlpCitation, ...] = Field(default_factory=tuple)
     metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_cited_risk(self) -> FundamentalNlpRisk:
+        if not self.citations:
+            raise ValueError("fundamental NLP risks require citations")
+        return self
 
 
 class FundamentalAgentAuditMetadata(ContractModel):
@@ -209,7 +222,7 @@ class FundamentalNlpAnalysisResponse(AnalysisComponent):
 
     request_id: NonEmptyStr
     ticker: TickerSymbol
-    as_of: date | datetime
+    as_of: date | AwareDatetime
     source_evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     citations: tuple[FundamentalNlpCitation, ...] = Field(default_factory=tuple)
     claims: tuple[FundamentalNlpClaim, ...] = Field(default_factory=tuple)
@@ -249,7 +262,7 @@ class SectorContext(AnalysisComponent):
 
 
 class MacroContext(AnalysisComponent):
-    as_of: date | datetime
+    as_of: date | AwareDatetime
     horizon: TimeHorizon = TimeHorizon.UNKNOWN
     supportive_factors: tuple[str, ...] = Field(default_factory=tuple)
     conflicting_factors: tuple[str, ...] = Field(default_factory=tuple)
@@ -260,7 +273,7 @@ class AnalysisBundle(ContractModel):
 
     analysis_id: NonEmptyStr
     ticker: TickerSymbol
-    as_of: date | datetime
+    as_of: date | AwareDatetime
     strategy_cluster_ids: tuple[str, ...] = Field(default_factory=tuple)
     technical: TechnicalAnalysis | None = None
     fundamental: FundamentalAnalysis | None = None
@@ -277,10 +290,14 @@ class AnalysisBundle(ContractModel):
 __all__ = [
     "AnalysisBundle",
     "AnalysisComponent",
+    "FundamentalAgentAuditMetadata",
     "FundamentalAgentSignal",
     "FundamentalAnalysis",
     "FundamentalNlpAnalysisRequest",
     "FundamentalNlpAnalysisResponse",
+    "FundamentalNlpCitation",
+    "FundamentalNlpClaim",
+    "FundamentalNlpRisk",
     "MacroContext",
     "MetricValue",
     "SectorContext",

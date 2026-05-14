@@ -456,7 +456,21 @@ def _meaningful_tokens(value: str) -> tuple[str, ...]:
 
 
 def _contains_any(text: str, keywords: Sequence[str]) -> bool:
-    return any(keyword in text for keyword in keywords)
+    text_tokens = _meaningful_tokens(text)
+    text_token_set = set(text_tokens)
+    for keyword in keywords:
+        keyword_tokens = _meaningful_tokens(keyword)
+        if not keyword_tokens:
+            continue
+        if len(keyword_tokens) == 1:
+            if keyword_tokens[0] in text_token_set:
+                return True
+            continue
+        window_size = len(keyword_tokens)
+        for index in range(0, len(text_tokens) - window_size + 1):
+            if text_tokens[index : index + window_size] == keyword_tokens:
+                return True
+    return False
 
 
 def _contains_recommendation_phrase(value: str) -> bool:

@@ -133,19 +133,7 @@ def normalize_evidence_stance(stance: str | None, claim: str) -> str:
         if normalized in {"neutral", "mixed", "unclear", "context"}:
             return "neutral"
         raise ValueError("stance must be supports, contradicts, or neutral")
-    lowered = claim.lower()
-    contradiction_terms = (
-        "contradict",
-        "conflict",
-        "risk",
-        "miss",
-        "decline",
-        "pressure",
-        "weaker",
-        "negative",
-        "bearish",
-    )
-    return "contradicts" if any(term in lowered for term in contradiction_terms) else "supports"
+    return "neutral"
 
 
 def run_date_from_run(run: ResearchRunRecord) -> date:

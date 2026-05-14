@@ -6,12 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from nlp_stock_prediction.contracts import JsonObject
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
     EvidenceRecord,
     InstrumentRecord,
+    InstrumentTradabilityEvidenceRecord,
     PlanAcceptanceCriterionRecord,
     PlanArtifactLinkRecord,
     PlanCommitLinkRecord,
@@ -25,6 +27,8 @@ from nlp_stock_prediction.storage import (
     SourceQueryRecord,
     SQLiteStore,
     ToolRunRecord,
+    WatchlistItemRecord,
+    WatchlistRecord,
 )
 from nlp_stock_prediction.storage.sqlite import (
     CURRENT_PLANNING_SCHEMA_VERSION,
@@ -75,17 +79,24 @@ def test_research_database_initialization_is_idempotent_and_excludes_planning(
 
     with store.connect() as connection:
         migration_count = connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
-    assert migration_count == 1
+    assert migration_count == CURRENT_RESEARCH_SCHEMA_VERSION
     assert {
         "artifacts",
         "candidate_artifact_links",
         "candidate_evidence_links",
         "evidence_items",
         "instruments",
+        "instrument_aliases",
+        "instrument_data_availability",
+        "instrument_provider_ids",
+        "instrument_related_instruments",
+        "instrument_tradability_evidence",
         "prediction_candidates",
         "research_runs",
         "source_queries",
         "tool_runs",
+        "watchlist_items",
+        "watchlists",
     }.issubset(_table_names(store))
     assert "plans" not in _table_names(store)
 
@@ -107,7 +118,7 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
     tmp_path: Path,
 ) -> None:
     store = _research_store(tmp_path)
-    with store.connect() as connection:
+    with store.connect(create=True) as connection:
         connection.executescript(
             """
             CREATE TABLE schema_migrations (
@@ -228,10 +239,17 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
     assert {
         "candidate_artifact_links",
         "candidate_evidence_links",
+        "instrument_aliases",
+        "instrument_data_availability",
+        "instrument_provider_ids",
+        "instrument_related_instruments",
+        "instrument_tradability_evidence",
+        "watchlist_items",
+        "watchlists",
     }.issubset(_table_names(store))
     with store.connect() as connection:
         migration_count = connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
-    assert migration_count == 2
+    assert migration_count == CURRENT_RESEARCH_SCHEMA_VERSION
 
 
 @pytest.mark.unit
@@ -481,6 +499,355 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
             created_at=_timestamp(),
         ),
     )
+
+
+@pytest.mark.unit
+def test_instrument_registry_tables_round_trip_and_query_helpers(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="equity:NASDAQ:TSLA",
+            symbol="TSLA",
+            asset_class="stock",
+            name="Tesla Inc.",
+            venue="NASDAQ",
+            aliases=("Tesla", "$TSLA", "common-alias"),
+            provider_ids=(
+                {
+                    "provider": "ExampleMarket",
+                    "namespace": "ticker",
+                    "identifier": "TSLA",
+                    "region": "US",
+                },
+                {
+                    "provider": "FIGI",
+                    "namespace": "composite",
+                    "identifier": "BBG000N9MNX3",
+                },
+            ),
+            related_instruments=(
+                {
+                    "instrument_id": "equity:NASDAQ:TSLA_OPTIONS",
+                    "relationship": "derivative-chain",
+                    "source": "fixture",
+                },
+            ),
+            tradability_evidence=(
+                {
+                    "provider": "ExampleBroker",
+                    "status": "available",
+                    "retrieved_at": _timestamp().isoformat(),
+                    "source_url": "https://example.test/tradability/tsla",
+                    "raw_identifier": "tsla-availability",
+                    "extraction_confidence": 0.9,
+                    "restriction": "none",
+                },
+            ),
+            data_availability=(
+                {
+                    "provider": "ExampleMarket",
+                    "data_type": "daily_ohlcv",
+                    "status": "available",
+                    "checked_at": _timestamp().isoformat(),
+                    "lag": "1d",
+                },
+            ),
+            metadata={"sector": "consumer_discretionary"},
+        )
+    )
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="crypto:BTC",
+            symbol="BTC",
+            asset_class="crypto",
+            aliases=("Bitcoin", "common-alias"),
+            provider_ids=(
+                {
+                    "provider": "ExampleMarket",
+                    "namespace": "ticker",
+                    "identifier": "BTC-USD",
+                },
+            ),
+        )
+    )
+
+    assert tuple(item.instrument_id for item in store.list_instruments()) == (
+        "crypto:BTC",
+        "equity:NASDAQ:TSLA",
+    )
+    assert tuple(
+        item.instrument_id for item in store.find_instruments_by_symbol_or_alias("common-alias")
+    ) == ("crypto:BTC", "equity:NASDAQ:TSLA")
+    tesla_matches = store.find_instruments_by_symbol_or_alias("tesla")
+    assert tuple(item.instrument_id for item in tesla_matches) == ("equity:NASDAQ:TSLA",)
+    assert store.find_instrument_by_provider_id(
+        "examplemarket", "ticker", "TSLA"
+    ) == store.get_instrument("equity:NASDAQ:TSLA")
+    assert store.find_instrument_by_provider_id("FIGI", "composite", "missing") is None
+    assert tuple(item.instrument_id for item in store.list_instruments_by_asset_class("STOCK")) == (
+        "equity:NASDAQ:TSLA",
+    )
+
+    latest = store.get_latest_tradability_evidence("equity:NASDAQ:TSLA", "examplebroker")
+    assert latest == InstrumentTradabilityEvidenceRecord(
+        instrument_id="equity:NASDAQ:TSLA",
+        provider="ExampleBroker",
+        status="available",
+        retrieved_at=_timestamp(),
+        url="https://example.test/tradability/tsla",
+        raw_identifier="tsla-availability",
+        extraction_confidence=0.9,
+        metadata={"restriction": "none"},
+    )
+
+    with store.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM instrument_aliases").fetchone()[0] == 5
+        assert connection.execute("SELECT count(*) FROM instrument_provider_ids").fetchone()[0] == 3
+        assert (
+            connection.execute("SELECT count(*) FROM instrument_data_availability").fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.unit
+def test_instrument_upsert_replaces_normalized_children_idempotently(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="etf:NYSEARCA:SPY",
+            symbol="SPY",
+            asset_class="etf",
+            aliases=("SPDR S&P 500 ETF", "SPY ETF"),
+            provider_ids=(
+                {"provider": "ExampleMarket", "namespace": "ticker", "identifier": "SPY"},
+            ),
+        )
+    )
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="etf:NYSEARCA:SPY",
+            symbol="SPY",
+            asset_class="etf",
+            aliases=("SPY Trust",),
+            provider_ids=(
+                {"provider": "ExampleMarket", "namespace": "ticker", "identifier": "SPY"},
+            ),
+        )
+    )
+
+    assert (
+        tuple(item.instrument_id for item in store.find_instruments_by_symbol_or_alias("SPY ETF"))
+        == ()
+    )
+    spy_trust_matches = store.find_instruments_by_symbol_or_alias("SPY Trust")
+    assert tuple(item.instrument_id for item in spy_trust_matches) == ("etf:NYSEARCA:SPY",)
+    with store.connect() as connection:
+        assert connection.execute("SELECT count(*) FROM instrument_aliases").fetchone()[0] == 1
+        assert connection.execute("SELECT count(*) FROM instrument_provider_ids").fetchone()[0] == 1
+
+
+@pytest.mark.unit
+def test_watchlists_round_trip_and_list_instruments(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="equity:NASDAQ:NVDA",
+            symbol="NVDA",
+            asset_class="stock",
+        )
+    )
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="etf:NYSEARCA:QQQ",
+            symbol="QQQ",
+            asset_class="etf",
+        )
+    )
+    store.upsert_watchlist(
+        WatchlistRecord(
+            watchlist_id="watchlist-ai",
+            name="AI Research",
+            description="Phase 3 fixture watchlist",
+            metadata={"owner": "tests"},
+        )
+    )
+    store.upsert_watchlist_item(
+        WatchlistItemRecord(
+            watchlist_id="watchlist-ai",
+            instrument_id="equity:NASDAQ:NVDA",
+            sort_order=2,
+            notes="single-name exposure",
+            metadata={"reason": "semis"},
+        )
+    )
+    store.upsert_watchlist_item(
+        WatchlistItemRecord(
+            watchlist_id="watchlist-ai",
+            instrument_id="etf:NYSEARCA:QQQ",
+            sort_order=1,
+        )
+    )
+    store.upsert_watchlist_item(
+        WatchlistItemRecord(
+            watchlist_id="watchlist-ai",
+            instrument_id="equity:NASDAQ:NVDA",
+            sort_order=3,
+            notes="updated note",
+        )
+    )
+
+    assert store.get_watchlist("watchlist-ai") == WatchlistRecord(
+        watchlist_id="watchlist-ai",
+        name="AI Research",
+        description="Phase 3 fixture watchlist",
+        metadata={"owner": "tests"},
+    )
+    assert store.list_watchlists() == (
+        WatchlistRecord(
+            watchlist_id="watchlist-ai",
+            name="AI Research",
+            description="Phase 3 fixture watchlist",
+            metadata={"owner": "tests"},
+        ),
+    )
+    assert store.list_watchlist_items("watchlist-ai") == (
+        WatchlistItemRecord(
+            watchlist_id="watchlist-ai",
+            instrument_id="etf:NYSEARCA:QQQ",
+            sort_order=1,
+        ),
+        WatchlistItemRecord(
+            watchlist_id="watchlist-ai",
+            instrument_id="equity:NASDAQ:NVDA",
+            sort_order=3,
+            notes="updated note",
+        ),
+    )
+    watchlist_instruments = store.list_watchlist_instruments("watchlist-ai")
+    assert tuple(item.instrument_id for item in watchlist_instruments) == (
+        "etf:NYSEARCA:QQQ",
+        "equity:NASDAQ:NVDA",
+    )
+
+
+@pytest.mark.unit
+def test_append_tradability_evidence_returns_latest_by_provider(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="crypto:ETH",
+            symbol="ETH",
+            asset_class="crypto",
+        )
+    )
+
+    store.append_tradability_evidence(
+        InstrumentTradabilityEvidenceRecord(
+            instrument_id="crypto:ETH",
+            provider="ExampleBroker",
+            status="unavailable",
+            retrieved_at=datetime(2026, 5, 12, 12, 0, tzinfo=UTC),
+            metadata={"reason": "fixture-old"},
+        )
+    )
+    store.append_tradability_evidence(
+        InstrumentTradabilityEvidenceRecord(
+            instrument_id="crypto:ETH",
+            provider="ExampleBroker",
+            status="available",
+            retrieved_at=_timestamp(),
+            url="https://example.test/eth",
+            metadata={"reason": "fixture-new"},
+        )
+    )
+
+    assert store.get_latest_tradability_evidence(
+        "crypto:ETH", "examplebroker"
+    ) == InstrumentTradabilityEvidenceRecord(
+        instrument_id="crypto:ETH",
+        provider="ExampleBroker",
+        status="available",
+        retrieved_at=_timestamp(),
+        url="https://example.test/eth",
+        metadata={"reason": "fixture-new"},
+    )
+
+
+@pytest.mark.unit
+def test_instrument_upsert_does_not_erase_appended_tradability_evidence(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="crypto:SOL",
+            symbol="SOL",
+            asset_class="crypto",
+        )
+    )
+    store.append_tradability_evidence(
+        InstrumentTradabilityEvidenceRecord(
+            instrument_id="crypto:SOL",
+            provider="ExampleBroker",
+            status="available",
+            retrieved_at=_timestamp(),
+        )
+    )
+
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="crypto:SOL",
+            symbol="SOL",
+            asset_class="crypto",
+            aliases=("Solana",),
+        )
+    )
+
+    assert store.get_latest_tradability_evidence(
+        "crypto:SOL",
+        "ExampleBroker",
+    ) == InstrumentTradabilityEvidenceRecord(
+        instrument_id="crypto:SOL",
+        provider="ExampleBroker",
+        status="available",
+        retrieved_at=_timestamp(),
+    )
+
+
+@pytest.mark.unit
+def test_provider_identifier_conflict_is_rejected(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    provider_id: JsonObject = {
+        "provider": "ExampleMarket",
+        "namespace": "ticker",
+        "identifier": "TSLA",
+    }
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="equity:NASDAQ:TSLA",
+            symbol="TSLA",
+            asset_class="stock",
+            provider_ids=(provider_id,),
+        )
+    )
+
+    with pytest.raises(ValueError, match="provider identifier is already assigned"):
+        store.upsert_instrument(
+            InstrumentRecord(
+                instrument_id="equity:NYSE:TSLA",
+                symbol="TSLA",
+                asset_class="stock",
+                provider_ids=(provider_id,),
+            )
+        )
 
 
 @pytest.mark.unit

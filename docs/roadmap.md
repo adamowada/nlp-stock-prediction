@@ -48,7 +48,10 @@ Goal: make Codex the disciplined prediction research assistant.
 Status: initial orchestrator implemented. The deterministic offline `research` command runs through
 dummy tools, and an opt-in real Codex smoke path exposes Phase 2 tools through local MCP, records
 live-search evidence, writes ignored artifacts, and renders Markdown/JSON reports. The research tools
-themselves remain dummy/fixture-backed until Phase 4.
+themselves remain dummy/fixture-backed until Phase 4. The smoke service now rejects duplicate
+deterministic run starts, preserves neutral evidence as insufficient context unless supporting or
+contradictory evidence is present, writes report artifacts into the audit manifest, and removes newly
+written files when a transactional tool step fails.
 
 Build:
 
@@ -70,29 +73,46 @@ Acceptance:
 
 Goal: support a broad retail-accessible universe.
 
-Build:
+Status: contract and storage layer implemented. The app can represent broad instrument identities,
+explicit query resolutions, provider IDs, watchlists, tradability/access evidence, related
+instruments, and fixture-backed universe artifacts. Resolution contracts now reject matches on
+unsupported/unavailable results, and report contracts verify that instrument sections and candidates
+use symbols that match their referenced instruments. The default CLI has not added a separate universe
+command, and live universe-discovery providers are not yet implemented.
 
-- instrument registry;
+Built:
+
+- instrument registry contracts and SQLite tables;
 - aliases and ambiguity handling;
-- asset classes;
+- asset classes: stocks, ETFs, crypto, currencies, commodities, futures context, funds, indexes,
+  proxies, and unknowns;
 - related instruments;
 - watchlists;
 - provider IDs;
-- tradability evidence.
+- tradability/access evidence;
+- instrument universe requests/results;
+- report-level instrument resolution references;
+- small fixture-backed universe discovery scenarios.
 
-Acceptance:
+Acceptance status:
 
-- stocks, ETFs, crypto, currency/commodity proxies, and futures context can be represented;
-- ambiguous symbols require explicit resolution;
-- universe discovery can write instrument records.
+- stocks, ETFs, crypto, currency/commodity exposure, and futures context can be represented in
+  contracts and registry storage;
+- ambiguous symbols require explicit resolution and cannot select an instrument silently;
+- fixture/dummy universe paths can write instrument records and artifacts;
+- first-class live universe discovery remains Phase 4 work.
 
 ## Phase 4: Tool Suite
 
 Goal: convert research capabilities into first-class independent tools.
 
+Status: provider and tool contract hardening has started ahead of the full tool-suite expansion.
+Shared provider fetch helpers retry retryable failures, avoid caching known error payloads, validate
+stored source spans, and degrade malformed/missing provider data into explicit warning results.
+
 Build:
 
-- universe discovery tool;
+- universe discovery tool over the Phase 3 contracts and registry;
 - market data tool;
 - technical package tool;
 - social evidence tool;

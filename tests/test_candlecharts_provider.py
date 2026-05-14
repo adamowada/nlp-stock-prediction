@@ -116,6 +116,49 @@ def test_candlecharts_malformed_ohlcv_returns_warning_result() -> None:
 
 
 @pytest.mark.contract
+def test_candlecharts_malformed_later_ohlcv_item_returns_warning_result() -> None:
+    html = """
+    <!doctype html>
+    <script id="candlecharts-data" type="application/json">
+      {
+        "symbol": "TSLA",
+        "ohlcv": [
+          {
+            "date": "2026-05-11",
+            "open": "181.00",
+            "high": "186.00",
+            "low": "180.50",
+            "close": "184.25",
+            "volume": "123456789"
+          },
+          {
+            "date": "2026-05-08",
+            "open": "177.50",
+            "high": "182.20",
+            "low": "176.80",
+            "close": "181.00",
+            "volume": "not-a-number"
+          }
+        ]
+      }
+    </script>
+    """
+    provider = CandlechartsMarketDataProvider(html=html, now=lambda: FETCHED_AT)
+    request = MarketDataRequest(
+        request_id="candlecharts-later-malformed-tsla-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_daily_candles(request)
+
+    assert result.status == ProviderStatus.MALFORMED
+    assert result.data is None
+    assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
+    assert "invalid OHLCV" in result.warnings[0].message
+
+
+@pytest.mark.contract
 def test_candlecharts_marks_stale_ohlcv_data() -> None:
     provider = CandlechartsMarketDataProvider(
         html=_html("stale_ohlcv_tsla.html"),

@@ -44,7 +44,7 @@ def decimal_from_value(value: Decimal | float | int | str | None) -> Decimal | N
     if isinstance(value, Decimal):
         return value if value.is_finite() else None
     if isinstance(value, bool):
-        return Decimal(int(value))
+        return None
     if isinstance(value, int):
         return Decimal(value)
     if isinstance(value, float):

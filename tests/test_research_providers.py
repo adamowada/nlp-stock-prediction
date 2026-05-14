@@ -39,7 +39,10 @@ FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "raw"
 
 
 def _fixture(*parts: str) -> dict[str, Any]:
-    return cast(dict[str, Any], json.loads((FIXTURE_ROOT.joinpath(*parts)).read_text()))
+    return cast(
+        dict[str, Any],
+        json.loads((FIXTURE_ROOT.joinpath(*parts)).read_text(encoding="utf-8")),
+    )
 
 
 @dataclass
@@ -81,6 +84,24 @@ class _FailingJsonTransport:
         self.calls.append(url)
         self.headers.append(headers)
         raise self.error
+
+
+@dataclass
+class _SequencedJsonTransport:
+    responses: tuple[JsonResponse, ...]
+    calls: list[str] = field(default_factory=list)
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+    ) -> JsonResponse:
+        del headers, timeout
+        self.calls.append(url)
+        index = min(len(self.calls) - 1, len(self.responses) - 1)
+        return self.responses[index]
 
 
 @pytest.mark.unit
@@ -370,7 +391,7 @@ def test_public_news_provider_maps_rate_limit_transport_failure() -> None:
     assert result.warnings[0].provider_error_type == "http_error"
     assert result.health.status == ProviderStatus.RATE_LIMITED
     assert result.health.rate_limit_remaining == 0
-    assert len(transport.calls) == 1
+    assert len(transport.calls) == 3
 
 
 @pytest.mark.contract
@@ -404,7 +425,7 @@ def test_public_news_provider_maps_upstream_unavailable_transport_failure() -> N
     assert result.warnings[0].provider_status_code == 503
     assert result.warnings[0].provider_error_type == "http_error"
     assert result.health.status == ProviderStatus.FAILED
-    assert len(transport.calls) == 1
+    assert len(transport.calls) == 3
 
 
 @pytest.mark.contract
@@ -516,6 +537,39 @@ def test_alpha_vantage_daily_candles_reports_malformed_volume() -> None:
 
 
 @pytest.mark.contract
+def test_alpha_vantage_daily_candles_does_not_cache_provider_note_payloads(
+    tmp_path: Path,
+) -> None:
+    valid_payload = _fixture("alpha_vantage", "daily_tsla.json")
+    transport = _SequencedJsonTransport(
+        (
+            JsonResponse(payload={"Note": "API call frequency exceeded."}),
+            JsonResponse(payload=valid_payload),
+        )
+    )
+    provider = AlphaVantageMarketDataProvider(
+        api_key="fixture-key",
+        transport=transport,
+        cache=ProviderCache(tmp_path),
+        now=lambda: FETCHED_AT,
+    )
+    request = MarketDataRequest(
+        request_id="market-tsla-note-cache-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    first = provider.fetch_daily_candles(request)
+    second = provider.fetch_daily_candles(request)
+
+    assert first.status == ProviderStatus.RATE_LIMITED
+    assert first.data is None
+    assert second.status == ProviderStatus.OK
+    assert second.data is not None
+    assert len(transport.calls) == 2
+
+
+@pytest.mark.contract
 def test_alpha_vantage_market_provider_returns_missing_credentials_warning() -> None:
     provider = AlphaVantageMarketDataProvider(
         transport=_FakeJsonTransport({}),
@@ -595,6 +649,7 @@ def test_sec_edgar_maps_company_facts_and_recent_filings() -> None:
     )
     provider = SecEdgarFundamentalsProvider(
         ticker_cik_map={"TSLA": "1318605"},
+        user_agent="nlp-stock-prediction-test contact@example.test",
         transport=transport,
         now=lambda: FETCHED_AT,
     )
@@ -624,6 +679,7 @@ def test_sec_edgar_maps_company_facts_and_recent_filings() -> None:
 def test_sec_edgar_warns_when_ticker_cik_mapping_is_unconfigured() -> None:
     provider = SecEdgarFundamentalsProvider(
         ticker_cik_map={},
+        user_agent="nlp-stock-prediction-test contact@example.test",
         transport=_FakeJsonTransport({}),
         now=lambda: FETCHED_AT,
     )

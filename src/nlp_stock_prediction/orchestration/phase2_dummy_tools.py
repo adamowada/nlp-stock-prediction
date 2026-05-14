@@ -4,22 +4,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import cast
 
-from nlp_stock_prediction.contracts import JsonObject
+from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.instruments.registry import instrument_to_record
+from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase2_common import (
     Phase2RunPaths,
     phase2_instrument,
     stable_digest,
     utc_now,
 )
-from nlp_stock_prediction.reporting.audit import write_json_artifact
-from nlp_stock_prediction.storage import (
-    ArtifactRecord,
-    InstrumentRecord,
-    SQLiteStore,
-    ToolRunRecord,
+from nlp_stock_prediction.orchestration.phase3_universe import (
+    Phase3FixtureUniverseTool,
 )
+from nlp_stock_prediction.storage.records import ToolRunRecord
+from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 
 def run_phase2_dummy_universe_tool(
@@ -31,46 +30,62 @@ def run_phase2_dummy_universe_tool(
     symbol: str,
 ) -> JsonObject:
     now = utc_now()
-    instruments = (phase2_instrument(symbol.strip().upper(), now),)
-    payload: JsonObject = {
-        "schema_version": "dummy-universe.v1",
-        "run_id": run_id,
-        "records": [instrument.model_dump(mode="json") for instrument in instruments],
-    }
-    artifact_id = f"artifact-dummy-universe-{stable_digest(run_id)}"
-    path = paths.audit_dir / "dummy-universe.json"
-    sha256 = write_json_artifact(path, payload)
+    normalized_symbol = symbol.strip().upper()
+    universe_result = Phase3FixtureUniverseTool().run(
+        request_id=f"phase3-fixture-universe-{stable_digest(f'{run_id}:{normalized_symbol}')}",
+        generated_at=now,
+        run_id=run_id,
+        primary_symbol=normalized_symbol,
+        primary_instrument_id=f"instrument:codex:{normalized_symbol}",
+    )
+    universe = universe_result.universe
+    artifact_id = f"artifact-instrument-universe-{stable_digest(run_id)}"
     tool_run_id = f"tool-dummy-universe-{run_id}"
     store.record_tool_run(
         ToolRunRecord(
             tool_run_id=tool_run_id,
             run_id=run_id,
             tool_name="run_dummy_universe_tool",
-            tool_version="phase2.v1",
+            tool_version="phase3.fixture.v1",
             status="ok",
             started_at=now,
             completed_at=now,
-            inputs={"symbol": symbol},
+            inputs={"symbol": symbol, "universe_id": universe.request_id},
+            warnings=universe.warnings,
         )
     )
-    for instrument in instruments:
-        upsert_phase2_instrument(store, symbol=instrument.symbol, retrieved_at=now)
-    store.record_artifact(
-        ArtifactRecord(
-            artifact_id=artifact_id,
-            tool_run_id=tool_run_id,
-            artifact_type="provider_result",
-            path=path.relative_to(repo_root),
-            sha256=sha256,
-            schema_version="dummy-universe.v1",
-            metadata={"instrument_ids": [item.instrument_id for item in instruments]},
-            created_at=now,
-        )
+    ArtifactIndex.for_directory(
+        store=store,
+        repo_root=repo_root,
+        base_dir=paths.audit_dir,
+        created_at=now,
+        produced_by="run_dummy_universe_tool",
+        tool_run_id=tool_run_id,
+        schema_version="phase3.instrument-universe.v1",
+    ).write_json(
+        artifact_id=artifact_id,
+        artifact_type="instrument_universe",
+        filename="instrument-universe.json",
+        payload=universe_result.artifact_payload,
+        metadata={
+            "universe_id": universe.request_id,
+            "instrument_ids": list(universe.instrument_ids),
+            "resolution_status_counts": universe.metadata.get(
+                "resolution_status_counts",
+                {},
+            ),
+            "warnings": list(universe.warnings),
+        },
     )
+    for instrument_record in universe_result.instrument_records:
+        store.upsert_instrument(instrument_record)
     return {
         "run_id": run_id,
-        "instrument_ids": [instrument.instrument_id for instrument in instruments],
+        "tool_run_id": tool_run_id,
+        "universe_id": universe.request_id,
+        "instrument_ids": list(universe.instrument_ids),
         "artifact_id": artifact_id,
+        "warnings": list(universe.warnings),
     }
 
 
@@ -97,8 +112,6 @@ def run_phase2_dummy_analysis_tool(
             }
         ],
     }
-    path = paths.audit_dir / "dummy-analysis.json"
-    sha256 = write_json_artifact(path, payload)
     store.record_tool_run(
         ToolRunRecord(
             tool_run_id=tool_run_id,
@@ -111,44 +124,27 @@ def run_phase2_dummy_analysis_tool(
             inputs={"symbol": symbol},
         )
     )
-    store.record_artifact(
-        ArtifactRecord(
-            artifact_id=artifact_id,
-            tool_run_id=tool_run_id,
-            artifact_type="analysis_context",
-            path=path.relative_to(repo_root),
-            sha256=sha256,
-            schema_version="dummy-analysis.v1",
-            metadata={"symbol": symbol.upper()},
-            created_at=now,
-        )
+    ArtifactIndex.for_directory(
+        store=store,
+        repo_root=repo_root,
+        base_dir=paths.audit_dir,
+        created_at=now,
+        produced_by="run_dummy_analysis_tool",
+        tool_run_id=tool_run_id,
+        schema_version="dummy-analysis.v1",
+    ).write_json(
+        artifact_id=artifact_id,
+        artifact_type="analysis_context",
+        filename="dummy-analysis.json",
+        payload=payload,
+        metadata={"symbol": symbol.upper()},
     )
     return {"run_id": run_id, "artifact_id": artifact_id}
 
 
 def upsert_phase2_instrument(store: SQLiteStore, *, symbol: str, retrieved_at: datetime) -> None:
     instrument = phase2_instrument(symbol.strip().upper(), retrieved_at)
-    store.upsert_instrument(
-        InstrumentRecord(
-            instrument_id=instrument.instrument_id,
-            symbol=instrument.symbol,
-            asset_class=instrument.asset_class.value,
-            name=instrument.display_name,
-            venue=instrument.venue,
-            provider_ids=tuple(
-                cast(JsonObject, item.model_dump(mode="json")) for item in instrument.provider_ids
-            ),
-            tradability_evidence=tuple(
-                cast(JsonObject, item.model_dump(mode="json"))
-                for item in instrument.tradability_evidence
-            ),
-            data_availability=tuple(
-                cast(JsonObject, item.model_dump(mode="json"))
-                for item in instrument.data_availability
-            ),
-            metadata={"phase2_mcp": True},
-        )
-    )
+    store.upsert_instrument(instrument_to_record(instrument, metadata={"phase2_mcp": True}))
 
 
 __all__ = [
