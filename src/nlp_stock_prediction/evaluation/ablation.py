@@ -90,6 +90,7 @@ class SignalFamilyAblationArtifactPayload(ContractModel):
     source_target_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     source_outcome_evaluation_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     source_artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    excluded_outcome_evaluation_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     metadata: JsonObject = Field(default_factory=dict)
 
@@ -133,7 +134,7 @@ def compute_signal_family_ablations(
     """Compute included-versus-excluded outcome quality for each signal family."""
 
     created = _aware_utc(created_at, "created_at")
-    requested_families = tuple(families) if families is not None else _SIGNAL_FAMILY_ORDER
+    requested_families = _requested_families(families)
     filtered_inputs = _filtered_inputs(
         tuple(inputs),
         prediction_type=prediction_type,
@@ -179,10 +180,16 @@ def write_signal_family_ablation_artifact(
     cutoff = _aware_utc(point_in_time_cutoff, "point_in_time_cutoff")
     ablation_inputs = tuple(inputs)
     _validate_inputs_for_run(ablation_inputs, run_id)
-    requested_families = tuple(families) if families is not None else _SIGNAL_FAMILY_ORDER
-    source_outcome_evaluation_ids = _source_outcome_evaluation_ids(ablation_inputs)
-    source_target_ids = _source_target_ids(ablation_inputs)
-    source_artifact_ids = _source_artifact_ids(ablation_inputs)
+    requested_families = _requested_families(families)
+    eligible_inputs, excluded_ids, eligibility_limitations = _eligible_inputs(
+        ablation_inputs,
+        point_in_time_cutoff=cutoff,
+        prediction_type=prediction_type,
+        horizon=horizon,
+    )
+    source_outcome_evaluation_ids = _source_outcome_evaluation_ids(eligible_inputs)
+    source_target_ids = _source_target_ids(eligible_inputs)
+    source_artifact_ids = _source_artifact_ids(eligible_inputs)
     resolved_calibration_id = calibration_id or _calibration_id(
         run_id=run_id,
         cohort_id=cohort_id,
@@ -202,20 +209,22 @@ def write_signal_family_ablation_artifact(
         )
     )
     resolved_tool_run_id = tool_run_id or f"tool-signal-family-ablation-{digest[:12]}"
-    filtered_inputs = _filtered_inputs(
-        ablation_inputs,
-        prediction_type=prediction_type,
-        horizon=horizon,
-    )
     ablations = compute_signal_family_ablations(
         cohort_id=cohort_id,
         created_at=created,
-        inputs=ablation_inputs,
+        inputs=eligible_inputs,
         families=requested_families,
         prediction_type=prediction_type,
         horizon=horizon,
     )
-    limitations = _payload_limitations(ablations, filtered_inputs, requested_families)
+    limitations = tuple(
+        dict.fromkeys(
+            (
+                *eligibility_limitations,
+                *_payload_limitations(ablations, eligible_inputs, requested_families),
+            )
+        )
+    )
     payload = SignalFamilyAblationArtifactPayload(
         run_id=run_id,
         calibration_id=resolved_calibration_id,
@@ -226,13 +235,14 @@ def write_signal_family_ablation_artifact(
         source_target_ids=source_target_ids,
         source_outcome_evaluation_ids=source_outcome_evaluation_ids,
         source_artifact_ids=source_artifact_ids,
+        excluded_outcome_evaluation_ids=excluded_ids,
         limitations=limitations,
         metadata={
             "prediction_type": prediction_type.value if prediction_type else None,
             "horizon": horizon.value if horizon else None,
             "family_count": len(requested_families),
-            "sample_count": len(filtered_inputs),
-            "resolved_count": _status_counts(filtered_inputs)["resolved_count"],
+            "sample_count": len(eligible_inputs),
+            "resolved_count": _status_counts(eligible_inputs)["resolved_count"],
         },
     )
     tool_inputs: JsonObject = {
@@ -243,6 +253,7 @@ def write_signal_family_ablation_artifact(
         "prediction_type": prediction_type.value if prediction_type else None,
         "horizon": horizon.value if horizon else None,
         "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
+        "excluded_outcome_evaluation_ids": list(excluded_ids),
     }
 
     def write_records() -> SignalFamilyAblationArtifacts:
@@ -267,7 +278,7 @@ def write_signal_family_ablation_artifact(
             base_dir=artifact_dir,
             created_at=created,
             produced_by=PHASE6_ABLATION_TOOL_NAME,
-            tool_run_id=resolved_tool_run_id,
+            tool_run_id=resolved_tool_run_id if record_tool_run or tool_run_id else None,
             schema_version=payload.schema_version,
         ).write_json(
             artifact_id=artifact_id,
@@ -290,7 +301,7 @@ def write_signal_family_ablation_artifact(
             method_version=PHASE6_ABLATION_TOOL_VERSION,
             created_at=created,
             point_in_time_cutoff=cutoff,
-            tool_run_id=resolved_tool_run_id,
+            tool_run_id=resolved_tool_run_id if record_tool_run or tool_run_id else None,
             cohort_query={
                 "cohort_id": cohort_id,
                 "prediction_type": prediction_type.value if prediction_type else None,
@@ -303,15 +314,17 @@ def write_signal_family_ablation_artifact(
             metadata={
                 "source_target_ids": list(source_target_ids),
                 "source_artifact_ids": list(source_artifact_ids),
-                "sample_count": len(filtered_inputs),
+                "excluded_outcome_evaluation_ids": list(excluded_ids),
+                "sample_count": len(eligible_inputs),
             },
         )
         store.record_calibration_run(calibration_run)
+        store.delete_calibration_slices(resolved_calibration_id)
         slices = tuple(
             _calibration_slice_record(
                 calibration_id=resolved_calibration_id,
                 ablation=ablation,
-                inputs=filtered_inputs,
+                inputs=eligible_inputs,
             )
             for ablation in ablations
         )
@@ -565,6 +578,39 @@ def _payload_limitations(
     return tuple(dict.fromkeys(limitations))
 
 
+def _eligible_inputs(
+    inputs: tuple[SignalFamilyAblationInput, ...],
+    *,
+    point_in_time_cutoff: datetime,
+    prediction_type: PredictionType | None,
+    horizon: TimeHorizon | None,
+) -> tuple[tuple[SignalFamilyAblationInput, ...], tuple[str, ...], tuple[str, ...]]:
+    eligible: list[SignalFamilyAblationInput] = []
+    excluded_ids: list[str] = []
+    limitations: list[str] = []
+    for item in inputs:
+        outcome_evaluation = item.outcome_evaluation
+        if outcome_evaluation.evaluated_at > point_in_time_cutoff:
+            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
+            limitations.append(
+                "Excluded outcome evaluation after the point-in-time cutoff: "
+                f"{outcome_evaluation.outcome_evaluation_id}."
+            )
+            continue
+        if prediction_type is not None and item.target.prediction_type != prediction_type:
+            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
+            continue
+        if horizon is not None and item.target.horizon != horizon:
+            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
+            continue
+        eligible.append(item)
+    return (
+        tuple(eligible),
+        tuple(dict.fromkeys(excluded_ids)),
+        tuple(dict.fromkeys(limitations)),
+    )
+
+
 def _filtered_inputs(
     inputs: tuple[SignalFamilyAblationInput, ...],
     *,
@@ -577,6 +623,12 @@ def _filtered_inputs(
         if (prediction_type is None or item.target.prediction_type == prediction_type)
         and (horizon is None or item.target.horizon == horizon)
     )
+
+
+def _requested_families(
+    families: Sequence[SignalArtifactFamily] | None,
+) -> tuple[SignalArtifactFamily, ...]:
+    return tuple(dict.fromkeys(families)) if families is not None else _SIGNAL_FAMILY_ORDER
 
 
 def _single_prediction_type(
@@ -648,11 +700,26 @@ def _validate_inputs_for_run(
     inputs: tuple[SignalFamilyAblationInput, ...],
     run_id: str,
 ) -> None:
+    duplicate_ids = _duplicate_ids(
+        tuple(item.outcome_evaluation.outcome_evaluation_id for item in inputs)
+    )
+    if duplicate_ids:
+        raise ValueError("ablation inputs must be unique: " + ", ".join(duplicate_ids))
     mismatched = tuple(item.target.target_id for item in inputs if item.target.run_id != run_id)
     if mismatched:
         raise ValueError(
             "ablation inputs must belong to the persisted run_id: " + ", ".join(mismatched)
         )
+
+
+def _duplicate_ids(values: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for value in values:
+        if value in seen and value not in duplicates:
+            duplicates.append(value)
+        seen.add(value)
+    return tuple(duplicates)
 
 
 def _source_outcome_evaluation_ids(
@@ -668,7 +735,13 @@ def _source_target_ids(inputs: tuple[SignalFamilyAblationInput, ...]) -> tuple[s
 def _source_artifact_ids(inputs: tuple[SignalFamilyAblationInput, ...]) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(
-            artifact.artifact_id for item in inputs for artifact in item.target.signal_artifacts
+            artifact_id
+            for item in inputs
+            for artifact_id in (
+                *tuple(artifact.artifact_id for artifact in item.target.signal_artifacts),
+                *item.outcome_evaluation.outcome.artifact_ids,
+                *item.outcome_evaluation.artifact_ids,
+            )
         )
     )
 

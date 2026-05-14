@@ -424,6 +424,7 @@ def write_walk_forward_evaluation_artifact(
             },
         )
         store.record_calibration_run(calibration_run)
+        store.delete_calibration_slices(resolved_calibration_id)
         slices = tuple(
             _calibration_slice_record(calibration_id=resolved_calibration_id, fold=fold)
             for fold in folds

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal, cast
 
@@ -21,6 +22,7 @@ from nlp_stock_prediction.contracts.evaluation import (
     PredictionOutcomeEvaluation,
     PredictionOutcomeEvaluationArtifactPayload,
 )
+from nlp_stock_prediction.contracts.provenance import EvidenceReference
 from nlp_stock_prediction.evaluation.ablation import (
     PHASE6_ABLATION_TOOL_NAME,
     PHASE6_ABLATION_TOOL_VERSION,
@@ -34,7 +36,12 @@ from nlp_stock_prediction.evaluation.calibration import (
     CalibrationSummaryInput,
     write_calibration_summary_artifact,
 )
-from nlp_stock_prediction.evaluation.outcomes import PHASE6_OUTCOME_TOOL_NAME
+from nlp_stock_prediction.evaluation.outcomes import (
+    PHASE6_OUTCOME_TOOL_NAME,
+    PHASE6_OUTCOME_TOOL_VERSION,
+    build_prediction_evaluation_target,
+    write_point_in_time_outcome_evaluation_artifacts,
+)
 from nlp_stock_prediction.evaluation.walk_forward import (
     PHASE6_WALK_FORWARD_TOOL_NAME,
     PHASE6_WALK_FORWARD_TOOL_VERSION,
@@ -55,11 +62,13 @@ from nlp_stock_prediction.storage.sqlite import (
 PHASE6_STAGE_ORDER: tuple[str, ...] = ("prepare", "evaluate", "summarize", "inspect")
 Phase6Stage = Literal["prepare", "evaluate", "summarize", "inspect"]
 
+PHASE6_OUTCOME_EVALUATION_TOOL_ID = "phase6.point_in_time_outcome_evaluation"
 PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID = "phase6.load_persisted_outcome_evaluations"
 PHASE6_ABLATION_TOOL_ID = "phase6.signal_family_ablation"
 PHASE6_WALK_FORWARD_TOOL_ID = "phase6.walk_forward_evaluation"
 PHASE6_CALIBRATION_TOOL_ID = "phase6.calibration_summary"
 PHASE6_INSPECT_TOOL_ID = "phase6.inspect_run"
+PHASE6_OUTCOME_EVALUATION_PUBLIC_TOOL_NAME = "phase6_point_in_time_outcome_evaluation"
 PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_NAME = "phase6_load_outcome_evaluations"
 PHASE6_INSPECT_TOOL_NAME = "inspect_phase6_run"
 
@@ -232,6 +241,18 @@ def build_phase6_tool_registry() -> Phase6ToolRegistry:
     return Phase6ToolRegistry(
         (
             Phase6ToolMetadata(
+                tool_id=PHASE6_OUTCOME_EVALUATION_TOOL_ID,
+                tool_name=PHASE6_OUTCOME_EVALUATION_PUBLIC_TOOL_NAME,
+                tool_version=PHASE6_OUTCOME_TOOL_VERSION,
+                stage="evaluate",
+                description=(
+                    "Persist a point-in-time outcome evaluation for one stored prediction "
+                    "candidate using attributed post-window evidence and artifacts."
+                ),
+                artifact_kinds=("prediction_outcome", "prediction_outcome_evaluation"),
+                metadata={"source_tool_name": PHASE6_OUTCOME_TOOL_NAME},
+            ),
+            Phase6ToolMetadata(
                 tool_id=PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID,
                 tool_name=PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_NAME,
                 tool_version="phase6.persisted-outcome-evaluations.v1",
@@ -359,6 +380,105 @@ class Phase6Service:
     def list_phase6_tool_plan(self) -> JsonObject:
         return phase6_evaluation_tool_plan(self.registry)
 
+    def phase6_point_in_time_outcome_evaluation(
+        self,
+        *,
+        run_id: str,
+        candidate_id: str,
+        point_in_time_cutoff: str,
+        evaluation_window_start: str,
+        evaluation_window_end: str,
+        artifact_dir: str | None = None,
+        report_date: str | None = None,
+        status: str | None = None,
+        observed_result: str | None = None,
+        observed_at: str | None = None,
+        result_summary: str | None = None,
+        result_value: float | None = None,
+        baseline_value: float | None = None,
+        outcome_evidence_ids: Sequence[str] = (),
+        market_artifact_ids: Sequence[str] = (),
+        limitations: Sequence[str] = (),
+        created_at: str | None = None,
+        evaluated_at: str | None = None,
+    ) -> JsonObject:
+        self._require_run(run_id)
+        target = build_prediction_evaluation_target(
+            store=self.store,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            point_in_time_cutoff=_parse_aware_datetime(
+                point_in_time_cutoff,
+                "point_in_time_cutoff",
+            ),
+            evaluation_window_start=_parse_aware_datetime(
+                evaluation_window_start,
+                "evaluation_window_start",
+            ),
+            evaluation_window_end=_parse_aware_datetime(
+                evaluation_window_end,
+                "evaluation_window_end",
+            ),
+            report_date=_parse_optional_date(report_date, "report_date"),
+        )
+        evidence = tuple(
+            EvidenceReference(evidence_id=evidence_id)
+            for evidence_id in _non_empty_unique_strings(
+                outcome_evidence_ids,
+                "outcome_evidence_ids",
+            )
+        )
+        result = write_point_in_time_outcome_evaluation_artifacts(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            run_id=run_id,
+            target=target,
+            status=status,
+            observed_result=observed_result,
+            observed_at=(
+                None
+                if observed_at is None or not observed_at.strip()
+                else _parse_aware_datetime(observed_at, "observed_at")
+            ),
+            result_summary=result_summary,
+            result_value=result_value,
+            baseline_value=baseline_value,
+            outcome_evidence=evidence,
+            market_artifact_ids=_non_empty_unique_strings(
+                market_artifact_ids,
+                "market_artifact_ids",
+            ),
+            limitations=_non_empty_unique_strings(limitations, "limitations"),
+            created_at=(
+                None
+                if created_at is None or not created_at.strip()
+                else _parse_aware_datetime(created_at, "created_at")
+            ),
+            evaluated_at=(
+                None
+                if evaluated_at is None or not evaluated_at.strip()
+                else _parse_aware_datetime(evaluated_at, "evaluated_at")
+            ),
+        )
+        return {
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "target_id": result.target.target_id,
+            "tool_run_id": result.tool_run_id,
+            "outcome_id": result.outcome.outcome_id,
+            "outcome_evaluation_id": result.outcome_evaluation.outcome_evaluation_id,
+            "status": result.outcome_evaluation.status.value,
+            "quality_score": result.outcome_evaluation.quality_score,
+            "outcome_artifact_id": result.outcome_artifact.artifact_id,
+            "outcome_evaluation_artifact_id": result.outcome_evaluation_artifact.artifact_id,
+            "outcome_artifact_path": Path(result.outcome_artifact.path).as_posix(),
+            "outcome_evaluation_artifact_path": Path(
+                result.outcome_evaluation_artifact.path
+            ).as_posix(),
+            "limitations": list(result.outcome_evaluation.limitations),
+        }
+
     def phase6_load_outcome_evaluations(self, *, run_id: str) -> JsonObject:
         self._require_run(run_id)
         sources = self._outcome_sources(run_id)
@@ -388,7 +508,7 @@ class Phase6Service:
         result = write_signal_family_ablation_artifact(
             store=self.store,
             repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir(run_id=run_id, artifact_dir=artifact_dir),
+            artifact_dir=self._artifact_dir_from_sources(run_id=run_id, artifact_dir=artifact_dir),
             run_id=run_id,
             cohort_id=cohort_id,
             inputs=tuple(source.ablation_input for source in sources),
@@ -433,7 +553,7 @@ class Phase6Service:
         result = write_walk_forward_evaluation_artifact(
             store=self.store,
             repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir(run_id=run_id, artifact_dir=artifact_dir),
+            artifact_dir=self._artifact_dir_from_sources(run_id=run_id, artifact_dir=artifact_dir),
             run_id=run_id,
             cohort_id=cohort_id,
             outcome_evaluations=tuple(source.outcome_evaluation for source in sources),
@@ -484,7 +604,7 @@ class Phase6Service:
         result = write_calibration_summary_artifact(
             store=self.store,
             repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir(run_id=run_id, artifact_dir=artifact_dir),
+            artifact_dir=self._artifact_dir_from_sources(run_id=run_id, artifact_dir=artifact_dir),
             run_id=run_id,
             cohort_id=cohort_id,
             inputs=tuple(source.calibration_input for source in sources),
@@ -560,7 +680,12 @@ class Phase6Service:
             run_id=run_id,
         )
 
-    def _artifact_dir(self, *, run_id: str, artifact_dir: str | None) -> Path:
+    def _artifact_dir_for_run(self, *, run_id: str, artifact_dir: str | None) -> Path:
+        if artifact_dir is not None and artifact_dir.strip():
+            return self._resolve_write_path(Path(artifact_dir))
+        return self._resolve_write_path(Path("reports") / run_id / "audit")
+
+    def _artifact_dir_from_sources(self, *, run_id: str, artifact_dir: str | None) -> Path:
         if artifact_dir is not None and artifact_dir.strip():
             return self._resolve_write_path(Path(artifact_dir))
         return self._infer_artifact_dir(run_id)
@@ -601,6 +726,13 @@ def _source_from_record(
             "Persisted outcome-evaluation artifact file is missing: "
             f"{artifact.artifact_id} at {artifact_path.as_posix()}"
         )
+    if artifact.sha256 is not None:
+        digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        if digest != artifact.sha256:
+            raise ValueError(
+                "Persisted outcome-evaluation artifact hash does not match storage row: "
+                f"{artifact.artifact_id}"
+            )
     try:
         payload = PredictionOutcomeEvaluationArtifactPayload.model_validate(
             json.loads(artifact_path.read_text(encoding="utf-8"))
@@ -643,6 +775,31 @@ def _validate_source_payload(
             "Persisted outcome-evaluation artifact ID does not match storage row: "
             f"{artifact.artifact_id}"
         )
+    if outcome_evaluation.instrument_id != record.instrument_id:
+        raise ValueError(
+            "Persisted outcome-evaluation artifact instrument_id does not match storage row: "
+            f"{artifact.artifact_id}"
+        )
+    if outcome_evaluation.symbol.upper() != record.symbol.upper():
+        raise ValueError(
+            "Persisted outcome-evaluation artifact symbol does not match storage row: "
+            f"{artifact.artifact_id}"
+        )
+    if outcome_evaluation.evaluated_at != record.evaluated_at:
+        raise ValueError(
+            "Persisted outcome-evaluation artifact evaluated_at does not match storage row: "
+            f"{artifact.artifact_id}"
+        )
+    if outcome_evaluation.status.value != record.status:
+        raise ValueError(
+            "Persisted outcome-evaluation artifact status does not match storage row: "
+            f"{artifact.artifact_id}"
+        )
+    if outcome_evaluation.quality_score != record.quality_score:
+        raise ValueError(
+            "Persisted outcome-evaluation artifact quality_score does not match storage row: "
+            f"{artifact.artifact_id}"
+        )
     if outcome_evaluation.candidate_id != record.candidate_id:
         raise ValueError(
             "Persisted outcome-evaluation artifact candidate_id does not match storage row: "
@@ -658,6 +815,16 @@ def _validate_source_payload(
             "Persisted outcome-evaluation target candidate_id does not match storage row: "
             f"{artifact.artifact_id}"
         )
+    if target.instrument_id != record.instrument_id:
+        raise ValueError(
+            "Persisted outcome-evaluation target instrument_id does not match storage row: "
+            f"{artifact.artifact_id}"
+        )
+    if target.symbol.upper() != record.symbol.upper():
+        raise ValueError(
+            "Persisted outcome-evaluation target symbol does not match storage row: "
+            f"{artifact.artifact_id}"
+        )
 
 
 def _artifact_path(repo_root: Path, path: Path) -> Path:
@@ -669,6 +836,15 @@ def _parse_aware_datetime(value: str, field_name: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{field_name} must include a timezone offset")
     return parsed.astimezone(UTC)
+
+
+def _parse_optional_date(value: str | None, field_name: str) -> date | None:
+    if value is None or not value.strip():
+        return None
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO date") from exc
 
 
 def _prediction_type(value: str | None) -> PredictionType | None:
@@ -701,7 +877,17 @@ def _signal_families(values: Sequence[str] | None) -> tuple[SignalArtifactFamily
         except ValueError as exc:
             allowed = ", ".join(item.value for item in SignalArtifactFamily)
             raise ValueError(f"families must be one of: {allowed}") from exc
-    return tuple(families)
+    return tuple(dict.fromkeys(families))
+
+
+def _non_empty_unique_strings(values: Sequence[str], field_name: str) -> tuple[str, ...]:
+    resolved: list[str] = []
+    for value in values:
+        item = value.strip()
+        if not item:
+            raise ValueError(f"{field_name} must not include empty values")
+        resolved.append(item)
+    return tuple(dict.fromkeys(resolved))
 
 
 __all__ = [
@@ -711,6 +897,8 @@ __all__ = [
     "PHASE6_INSPECT_TOOL_NAME",
     "PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID",
     "PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_NAME",
+    "PHASE6_OUTCOME_EVALUATION_PUBLIC_TOOL_NAME",
+    "PHASE6_OUTCOME_EVALUATION_TOOL_ID",
     "PHASE6_STAGE_ORDER",
     "PHASE6_WALK_FORWARD_TOOL_ID",
     "Phase6OutcomeEvaluationSource",

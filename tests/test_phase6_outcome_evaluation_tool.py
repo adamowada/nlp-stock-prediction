@@ -147,6 +147,22 @@ def _store(tmp_path: Path) -> SQLiteStore:
     )
     store.record_artifact(
         ArtifactRecord(
+            artifact_id="artifact-technical-future-asof",
+            artifact_type="technical_package",
+            path=Path("reports/run-phase6-outcome/audit/technicals-future-asof.json"),
+            sha256="c" * 64,
+            schema_version="technical-package.v1",
+            produced_by="phase4_technical_package",
+            record_count=12,
+            created_at=NOW,
+            metadata={
+                "signal_family": "technicals",
+                "as_of": datetime(2026, 5, 14, 12, 0, tzinfo=UTC).isoformat(),
+            },
+        )
+    )
+    store.record_artifact(
+        ArtifactRecord(
             artifact_id="artifact-prediction-input",
             artifact_type="prediction_input",
             path=Path("reports/run-phase6-outcome/audit/prediction-input.json"),
@@ -179,6 +195,7 @@ def _store(tmp_path: Path) -> SQLiteStore:
             signal_artifacts=(
                 "artifact-technical-cutoff",
                 "artifact-technical-lookahead",
+                "artifact-technical-future-asof",
             ),
             uncertainty="Outcome review depends on attributed post-window evidence.",
         )
@@ -243,6 +260,7 @@ def test_build_prediction_evaluation_target_freezes_cutoff_state(tmp_path: Path)
     assert any("evidence-after-cutoff" in item for item in target.limitations)
     assert any("artifact-source-after-cutoff" in item for item in target.limitations)
     assert any("artifact-technical-lookahead" in item for item in target.limitations)
+    assert any("artifact-technical-future-asof" in item for item in target.limitations)
     assert target.candidate_snapshot["included_evidence_ids"] == [
         "evidence-support",
         "evidence-with-late-artifact",
@@ -387,3 +405,98 @@ def test_observed_outcome_requires_observation_evidence_or_artifact(tmp_path: Pa
             created_at=OBSERVED_AT,
             evaluated_at=OBSERVED_AT,
         )
+
+
+@pytest.mark.unit
+def test_observed_outcome_rejects_unavailable_or_unattributed_sources(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    target = build_prediction_evaluation_target(
+        store=store,
+        run_id=RUN_ID,
+        candidate_id="candidate-msft-swing",
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+    )
+    store.record_evidence(
+        EvidenceRecord(
+            evidence_id="evidence-other-instrument",
+            source_type=SourceKind.MARKET_DATA.value,
+            provider="verified-market-data",
+            retrieved_at=OBSERVED_AT,
+            published_at=OBSERVED_AT,
+            instruments=("instrument:equity:us:aapl",),
+            claim="This evidence belongs to a different instrument.",
+            freshness_status=FreshnessStatus.FRESH.value,
+        )
+    )
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-other-instrument",
+            artifact_type="market_data",
+            path=Path("reports/run-phase6-outcome/audit/market-other.json"),
+            sha256="f" * 64,
+            schema_version="market-data.v1",
+            created_at=OBSERVED_AT,
+            metadata={"instrument_id": "instrument:equity:us:aapl"},
+        )
+    )
+
+    with pytest.raises(ValueError, match="outcome evidence instrument does not match"):
+        write_point_in_time_outcome_evaluation_artifacts(
+            store=store,
+            repo_root=tmp_path,
+            artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+            run_id=RUN_ID,
+            target=target,
+            observed_result=PredictionOutcomeResult.SUPPORTED,
+            observed_at=OBSERVED_AT,
+            outcome_evidence=(EvidenceReference(evidence_id="evidence-other-instrument"),),
+            created_at=OBSERVED_AT,
+            evaluated_at=OBSERVED_AT,
+        )
+
+    with pytest.raises(ValueError, match="market artifact instrument does not match"):
+        write_point_in_time_outcome_evaluation_artifacts(
+            store=store,
+            repo_root=tmp_path,
+            artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+            run_id=RUN_ID,
+            target=target,
+            observed_result=PredictionOutcomeResult.SUPPORTED,
+            observed_at=OBSERVED_AT,
+            market_artifact_ids=("artifact-other-instrument",),
+            created_at=OBSERVED_AT,
+            evaluated_at=OBSERVED_AT,
+        )
+
+
+@pytest.mark.unit
+def test_insufficient_data_outcome_is_not_evaluable(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    target = build_prediction_evaluation_target(
+        store=store,
+        run_id=RUN_ID,
+        candidate_id="candidate-msft-swing",
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+    )
+
+    result = write_point_in_time_outcome_evaluation_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        target=target,
+        observed_result=PredictionOutcomeResult.INSUFFICIENT_DATA,
+        observed_at=OBSERVED_AT,
+        result_summary="The outcome could not be evaluated with attributed provider data.",
+        outcome_evidence=(EvidenceReference(evidence_id="evidence-outcome-observed"),),
+        limitations=("Insufficient attributed provider data to score the outcome.",),
+        created_at=OBSERVED_AT,
+        evaluated_at=OBSERVED_AT,
+    )
+
+    assert result.outcome_evaluation.status == PredictionOutcomeEvaluationStatus.NOT_EVALUABLE
+    assert result.outcome_evaluation.quality_score is None

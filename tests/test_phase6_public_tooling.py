@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 
 import pytest
@@ -10,32 +12,29 @@ from nlp_stock_prediction.contracts import (
     BaselineComparison,
     Direction,
     EvidenceReference,
-    PredictionOutcome,
-    PredictionOutcomeEvaluation,
-    PredictionOutcomeEvaluationStatus,
+    FreshnessStatus,
     PredictionOutcomeResult,
-    PredictionOutcomeStatus,
     PredictionType,
     SignalArtifactFamily,
     SignalArtifactReference,
+    SourceKind,
     TimeHorizon,
 )
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.evaluation import (
     PredictionEvaluationTarget,
-    PredictionOutcomeEvaluationArtifactPayload,
 )
-from nlp_stock_prediction.evaluation.outcomes import PHASE6_OUTCOME_TOOL_NAME
-from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
+from nlp_stock_prediction.evaluation.outcomes import (
+    write_point_in_time_outcome_evaluation_artifacts,
+)
 from nlp_stock_prediction.orchestration.phase6_service import (
     Phase6Service,
     build_phase6_tool_registry,
 )
 from nlp_stock_prediction.storage import (
+    EvidenceRecord,
     InstrumentRecord,
     PredictionCandidateRecord,
-    PredictionOutcomeEvaluationRecord,
-    PredictionOutcomeRecord,
     ResearchRunRecord,
     SQLiteStore,
 )
@@ -46,6 +45,8 @@ NOW = datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
 CUTOFF = datetime(2026, 5, 13, 20, 0, tzinfo=UTC)
 WINDOW_START = datetime(2026, 5, 14, 13, 30, tzinfo=UTC)
 WINDOW_END = datetime(2026, 5, 18, 20, 0, tzinfo=UTC)
+OBSERVED_AT = datetime(2026, 5, 18, 20, 5, tzinfo=UTC)
+EVALUATED_AT = datetime(2026, 5, 18, 21, 0, tzinfo=UTC)
 AS_OF = datetime(2026, 5, 22, 0, 0, tzinfo=UTC)
 
 
@@ -155,62 +156,10 @@ def _target(
     )
 
 
-def _outcome_evaluation(
-    target: PredictionEvaluationTarget,
-    *,
-    quality_score: float,
-    evaluated_at: datetime,
-) -> PredictionOutcomeEvaluation:
-    status = (
-        PredictionOutcomeEvaluationStatus.CONFIRMED
-        if quality_score >= 0.5
-        else PredictionOutcomeEvaluationStatus.MISSED
-    )
-    outcome = PredictionOutcome(
-        outcome_id=f"outcome-{target.candidate_id}",
-        candidate_id=target.candidate_id,
-        instrument_id=target.instrument_id,
-        symbol=target.symbol,
-        prediction_type=target.prediction_type,
-        horizon=target.horizon,
-        evaluation_window_start=target.evaluation_window_start,
-        evaluation_window_end=target.evaluation_window_end,
-        status=PredictionOutcomeStatus.OBSERVED,
-        observed_result=(
-            PredictionOutcomeResult.SUPPORTED
-            if quality_score >= 0.5
-            else PredictionOutcomeResult.CONTRADICTED
-        ),
-        observed_at=evaluated_at - timedelta(minutes=20),
-        result_summary="Outcome was reviewed against the frozen prediction target.",
-        outcome_evidence=(
-            EvidenceReference(evidence_id=f"evidence-{target.candidate_id}-outcome"),
-        ),
-        artifact_ids=(f"artifact-{target.candidate_id}-outcome",),
-    )
-    return PredictionOutcomeEvaluation(
-        outcome_evaluation_id=f"outcome-evaluation-{target.candidate_id}",
-        outcome_id=outcome.outcome_id,
-        candidate_id=target.candidate_id,
-        instrument_id=target.instrument_id,
-        symbol=target.symbol,
-        evaluated_at=evaluated_at,
-        status=status,
-        outcome=outcome,
-        quality_score=quality_score,
-        baseline_comparison=target.baseline_comparison,
-        evidence=(EvidenceReference(evidence_id=f"evidence-{target.candidate_id}-outcome"),),
-        artifact_ids=(f"artifact-{target.candidate_id}-outcome-review",),
-    )
-
-
-def _persist_source_payload(
+def _persist_candidate_inputs(
     *,
     store: SQLiteStore,
-    repo_root: Path,
-    audit_dir: Path,
     target: PredictionEvaluationTarget,
-    outcome_evaluation: PredictionOutcomeEvaluation,
 ) -> None:
     store.upsert_prediction_candidate(
         PredictionCandidateRecord(
@@ -234,78 +183,19 @@ def _persist_source_payload(
             ),
         )
     )
-    outcome = outcome_evaluation.outcome
-    store.upsert_prediction_outcome(
-        PredictionOutcomeRecord(
-            outcome_id=outcome.outcome_id,
-            candidate_id=outcome.candidate_id,
-            instrument_id=outcome.instrument_id,
-            symbol=outcome.symbol,
-            prediction_type=outcome.prediction_type.value,
-            horizon=outcome.horizon.value,
-            evaluation_window_start=outcome.evaluation_window_start,
-            evaluation_window_end=outcome.evaluation_window_end,
-            status=outcome.status.value,
-            observed_result=outcome.observed_result.value if outcome.observed_result else None,
-            observed_at=outcome.observed_at,
-            result_summary=outcome.result_summary,
-            limitations=outcome.limitations,
-            metadata={"target_id": target.target_id},
+    for evidence_id in target.evidence_ids:
+        store.record_evidence(
+            EvidenceRecord(
+                evidence_id=evidence_id,
+                source_type=SourceKind.NEWS_ARTICLE.value,
+                provider="verified-news",
+                retrieved_at=target.point_in_time_cutoff,
+                published_at=target.point_in_time_cutoff,
+                instruments=(target.instrument_id,),
+                claim=f"{target.symbol} support evidence existed before the cutoff.",
+                freshness_status=FreshnessStatus.FRESH.value,
+            )
         )
-    )
-    payload = PredictionOutcomeEvaluationArtifactPayload(
-        run_id=RUN_ID,
-        created_at=outcome_evaluation.evaluated_at,
-        target=target,
-        outcome_evaluation=outcome_evaluation,
-        baseline_comparison=target.baseline_comparison,
-        evidence_ids=tuple(reference.evidence_id for reference in outcome_evaluation.evidence),
-        artifact_ids=outcome_evaluation.artifact_ids,
-        limitations=outcome_evaluation.limitations,
-        metadata={"target_id": target.target_id},
-    )
-    artifact = ArtifactIndex.for_directory(
-        store=store,
-        repo_root=repo_root,
-        base_dir=audit_dir,
-        created_at=outcome_evaluation.evaluated_at,
-        produced_by=PHASE6_OUTCOME_TOOL_NAME,
-        tool_run_id=None,
-        schema_version=payload.schema_version,
-    ).write_json(
-        artifact_id=f"artifact-review-{target.candidate_id}",
-        artifact_type="prediction_outcome_evaluation",
-        filename=f"prediction-outcome-evaluations/{target.candidate_id}.json",
-        payload=cast(JsonObject, payload.model_dump(mode="json")),
-        record_count=1,
-        metadata={
-            "run_id": RUN_ID,
-            "target_id": target.target_id,
-            "outcome_evaluation_id": outcome_evaluation.outcome_evaluation_id,
-        },
-    )
-    store.upsert_prediction_outcome_evaluation(
-        PredictionOutcomeEvaluationRecord(
-            outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
-            run_id=RUN_ID,
-            outcome_id=outcome_evaluation.outcome_id,
-            candidate_id=outcome_evaluation.candidate_id,
-            instrument_id=outcome_evaluation.instrument_id,
-            symbol=outcome_evaluation.symbol,
-            evaluated_at=outcome_evaluation.evaluated_at,
-            status=outcome_evaluation.status.value,
-            quality_score=outcome_evaluation.quality_score,
-            baseline_comparison=cast(
-                JsonObject,
-                outcome_evaluation.baseline_comparison.model_dump(mode="json")
-                if outcome_evaluation.baseline_comparison
-                else {},
-            ),
-            artifact_id=artifact.artifact_id,
-            limitations=outcome_evaluation.limitations,
-            metadata={"target_id": target.target_id},
-        )
-    )
 
 
 def _persist_outcome_sources(tmp_path: Path) -> Path:
@@ -337,16 +227,38 @@ def _persist_outcome_sources(tmp_path: Path) -> Path:
     )
     for candidate_id, score, quality_score, evaluated_at, families in samples:
         target = _target(candidate_id, score=score, families=families)
-        _persist_source_payload(
+        _persist_candidate_inputs(
+            store=store,
+            target=target,
+        )
+        store.record_evidence(
+            EvidenceRecord(
+                evidence_id=f"evidence-{target.candidate_id}-outcome",
+                source_type=SourceKind.MARKET_DATA.value,
+                provider="verified-market-data",
+                retrieved_at=evaluated_at,
+                published_at=evaluated_at,
+                instruments=(target.instrument_id,),
+                claim=f"{target.symbol} outcome evidence was observed after the window.",
+                freshness_status=FreshnessStatus.FRESH.value,
+            )
+        )
+        write_point_in_time_outcome_evaluation_artifacts(
             store=store,
             repo_root=tmp_path,
-            audit_dir=audit_dir,
+            artifact_dir=audit_dir,
+            run_id=RUN_ID,
             target=target,
-            outcome_evaluation=_outcome_evaluation(
-                target,
-                quality_score=quality_score,
-                evaluated_at=evaluated_at,
+            observed_result=(
+                PredictionOutcomeResult.SUPPORTED
+                if quality_score >= 0.5
+                else PredictionOutcomeResult.CONTRADICTED
             ),
+            observed_at=evaluated_at - timedelta(minutes=20),
+            result_summary="Outcome was reviewed against the frozen prediction target.",
+            outcome_evidence=(EvidenceReference(evidence_id=f"evidence-{candidate_id}-outcome"),),
+            created_at=evaluated_at - timedelta(minutes=20),
+            evaluated_at=evaluated_at,
         )
     return audit_dir
 
@@ -359,6 +271,7 @@ def test_phase6_registry_exposes_live_evaluation_tool_suite() -> None:
 
     assert tool_names == [
         "phase6_load_outcome_evaluations",
+        "phase6_point_in_time_outcome_evaluation",
         "phase6_signal_family_ablation",
         "phase6_walk_forward_evaluation",
         "phase6_calibration_summary",
@@ -383,6 +296,71 @@ def test_phase6_mcp_registration_matches_public_tool_names(tmp_path: Path) -> No
     assert list(PHASE6_MCP_TOOL_NAMES) == server.registered
     assert "run_dummy_universe_tool" not in server.registered
     assert "run_dummy_analysis_tool" not in server.registered
+
+
+@pytest.mark.unit
+def test_codex_mcp_server_registers_phase4_and_phase6_tooling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nlp_stock_prediction.codex_mcp import build_server
+    from nlp_stock_prediction.orchestration.phase4_mcp_registration import PHASE4_MCP_TOOL_NAMES
+    from nlp_stock_prediction.orchestration.phase6_mcp_registration import PHASE6_MCP_TOOL_NAMES
+
+    fastmcp_module = ModuleType("mcp.server.fastmcp")
+
+    class _FastMCP(_FakeMcpServer):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self.name = name
+
+    fastmcp_module.FastMCP = _FastMCP  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mcp", ModuleType("mcp"))
+    monkeypatch.setitem(sys.modules, "mcp.server", ModuleType("mcp.server"))
+    monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
+
+    server = build_server(repo_root=tmp_path, database_path=Path("data/test.sqlite3"))
+
+    assert server.registered == [*PHASE4_MCP_TOOL_NAMES, *PHASE6_MCP_TOOL_NAMES]
+
+
+@pytest.mark.unit
+def test_phase6_public_outcome_tool_writes_persisted_review(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    target = _target("candidate-service-outcome", score=0.64)
+    _persist_candidate_inputs(store=store, target=target)
+    store.record_evidence(
+        EvidenceRecord(
+            evidence_id=f"evidence-{target.candidate_id}-outcome",
+            source_type=SourceKind.MARKET_DATA.value,
+            provider="verified-market-data",
+            retrieved_at=EVALUATED_AT,
+            published_at=EVALUATED_AT,
+            instruments=(target.instrument_id,),
+            claim=f"{target.symbol} outcome evidence was observed after the window.",
+            freshness_status=FreshnessStatus.FRESH.value,
+        )
+    )
+    service = Phase6Service(repo_root=tmp_path)
+
+    result = service.phase6_point_in_time_outcome_evaluation(
+        run_id=RUN_ID,
+        candidate_id=target.candidate_id,
+        point_in_time_cutoff=CUTOFF.isoformat(),
+        evaluation_window_start=WINDOW_START.isoformat(),
+        evaluation_window_end=WINDOW_END.isoformat(),
+        observed_result="supported",
+        observed_at=OBSERVED_AT.isoformat(),
+        result_summary="MSFT closed above the comparison baseline.",
+        outcome_evidence_ids=(f"evidence-{target.candidate_id}-outcome",),
+        created_at=OBSERVED_AT.isoformat(),
+        evaluated_at=EVALUATED_AT.isoformat(),
+    )
+
+    assert result["status"] == "confirmed"
+    assert result["quality_score"] == 1.0
+    assert Path(str(result["outcome_evaluation_artifact_path"])).exists()
+    assert store.get_prediction_outcome_evaluation(str(result["outcome_evaluation_id"])) is not None
 
 
 @pytest.mark.unit
@@ -420,12 +398,10 @@ def test_phase6_service_runs_live_tools_from_persisted_outcome_artifacts(
     inspection = service.inspect_phase6_run(run_id=RUN_ID)
 
     assert loaded["outcome_evaluation_count"] == 4
-    assert loaded["source_outcome_evaluation_ids"] == [
-        "outcome-evaluation-candidate-001",
-        "outcome-evaluation-candidate-002",
-        "outcome-evaluation-candidate-003",
-        "outcome-evaluation-candidate-004",
-    ]
+    assert [
+        str(item).split("-")[-2]
+        for item in cast(list[object], loaded["source_outcome_evaluation_ids"])
+    ] == ["001", "002", "003", "004"]
     assert ablation["ablation_count"] == 1
     assert ablation["calibration_slice_count"] == 1
     assert Path(str(ablation["artifact_path"])).exists()

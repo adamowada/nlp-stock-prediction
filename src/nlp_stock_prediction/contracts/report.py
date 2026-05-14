@@ -670,7 +670,7 @@ class DailyReport(ContractModel):
                     "report evidence_sources must include related instrument evidence_ids"
                 )
             raise ValueError("report evidence_sources must include every cited evidence_id")
-        if artifact_ids and referenced_artifact_ids.difference(artifact_ids):
+        if referenced_artifact_ids.difference(artifact_ids):
             raise ValueError("report audit artifacts must include every cited artifact_id")
         _validate_evidence_references_against_sources(self, evidence_by_id)
         return self

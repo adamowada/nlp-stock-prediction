@@ -719,6 +719,18 @@ class SQLiteStore:
             )
             connection.execute(
                 """
+                DELETE FROM calibration_runs
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM json_each(calibration_runs.source_outcome_evaluation_ids_json) AS source
+                    LEFT JOIN prediction_outcome_evaluations AS evaluation
+                        ON evaluation.outcome_evaluation_id = source.value
+                    WHERE evaluation.outcome_evaluation_id IS NULL
+                )
+                """
+            )
+            connection.execute(
+                """
                 DELETE FROM prediction_outcomes
                 WHERE outcome_id IN (
                     SELECT outcome_id FROM outcome_artifact_links
@@ -1055,6 +1067,18 @@ class SQLiteStore:
         now = _utc_now()
         with self.connect() as connection:
             _ensure_initialized(connection)
+            candidate = connection.execute(
+                """
+                SELECT instrument_id FROM prediction_candidates
+                WHERE candidate_id = ?
+                """,
+                (record.candidate_id,),
+            ).fetchone()
+            if (
+                candidate is not None
+                and _row_text(candidate, "instrument_id") != record.instrument_id
+            ):
+                raise ValueError("prediction outcome candidate/instrument mismatch")
             connection.execute(
                 """
                 INSERT INTO prediction_outcomes (
@@ -1225,6 +1249,38 @@ class SQLiteStore:
         now = _utc_now()
         with self.connect() as connection:
             _ensure_initialized(connection)
+            outcome = connection.execute(
+                """
+                SELECT candidate_id, instrument_id, symbol FROM prediction_outcomes
+                WHERE outcome_id = ?
+                """,
+                (record.outcome_id,),
+            ).fetchone()
+            if outcome is None:
+                raise ValueError(f"prediction outcome does not exist: {record.outcome_id}")
+            if _row_text(outcome, "candidate_id") != record.candidate_id:
+                raise ValueError("outcome evaluation candidate_id must match outcome")
+            if _row_text(outcome, "instrument_id") != record.instrument_id:
+                raise ValueError("outcome evaluation instrument_id must match outcome")
+            if _row_text(outcome, "symbol").upper() != record.symbol.upper():
+                raise ValueError("outcome evaluation symbol must match outcome")
+            candidate = connection.execute(
+                """
+                SELECT run_id, instrument_id FROM prediction_candidates
+                WHERE candidate_id = ?
+                """,
+                (record.candidate_id,),
+            ).fetchone()
+            if candidate is not None:
+                if _row_text(candidate, "instrument_id") != record.instrument_id:
+                    raise ValueError("outcome evaluation candidate/instrument mismatch")
+                candidate_run_id = candidate["run_id"]
+                if (
+                    record.run_id is not None
+                    and candidate_run_id is not None
+                    and str(candidate_run_id) != record.run_id
+                ):
+                    raise ValueError("outcome evaluation run_id must match candidate run_id")
             connection.execute(
                 """
                 INSERT INTO prediction_outcome_evaluations (
@@ -1410,6 +1466,36 @@ class SQLiteStore:
         _validate_required(record.method_version, "method_version")
         with self.connect() as connection:
             _ensure_initialized(connection)
+            if record.source_outcome_evaluation_ids:
+                placeholders = ",".join("?" for _ in record.source_outcome_evaluation_ids)
+                rows = connection.execute(
+                    f"""
+                    SELECT outcome_evaluation_id, run_id
+                    FROM prediction_outcome_evaluations
+                    WHERE outcome_evaluation_id IN ({placeholders})
+                    """,
+                    record.source_outcome_evaluation_ids,
+                ).fetchall()
+                rows_by_id = {_row_text(row, "outcome_evaluation_id"): row for row in rows}
+                missing = tuple(
+                    outcome_evaluation_id
+                    for outcome_evaluation_id in record.source_outcome_evaluation_ids
+                    if outcome_evaluation_id not in rows_by_id
+                )
+                if missing:
+                    raise ValueError(
+                        "calibration source outcome evaluations do not exist: " + ", ".join(missing)
+                    )
+                mismatched = tuple(
+                    outcome_evaluation_id
+                    for outcome_evaluation_id, row in rows_by_id.items()
+                    if row["run_id"] is not None and str(row["run_id"]) != record.run_id
+                )
+                if mismatched:
+                    raise ValueError(
+                        "calibration source outcome evaluations must match run_id: "
+                        + ", ".join(sorted(mismatched))
+                    )
             connection.execute(
                 """
                 INSERT INTO calibration_runs (
@@ -1445,6 +1531,15 @@ class SQLiteStore:
                     _dump_json_array(record.limitations),
                     _dump_json(record.metadata),
                 ),
+            )
+
+    def delete_calibration_slices(self, calibration_id: str) -> None:
+        _validate_required(calibration_id, "calibration_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                "DELETE FROM calibration_slices WHERE calibration_id = ?",
+                (calibration_id,),
             )
 
     def get_calibration_run(self, calibration_id: str) -> CalibrationRunRecord | None:

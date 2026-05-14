@@ -865,6 +865,114 @@ def test_phase6_evaluation_calibration_records_round_trip_and_extend_run_graph(
 
 
 @pytest.mark.unit
+def test_phase6_storage_rejects_incoherent_outcome_evaluation_links(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    _seed_phase6_prediction_graph(store)
+    store.upsert_prediction_outcome(
+        PredictionOutcomeRecord(
+            outcome_id="outcome-msft-5d",
+            candidate_id="candidate-msft-5d",
+            instrument_id="equity:NASDAQ:MSFT",
+            symbol="MSFT",
+            prediction_type="direction",
+            horizon="5d",
+            evaluation_window_start=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
+            evaluation_window_end=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
+            status="observed",
+            observed_result="confirmed",
+            observed_at=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
+        )
+    )
+
+    with pytest.raises(ValueError, match="candidate_id must match outcome"):
+        store.upsert_prediction_outcome_evaluation(
+            PredictionOutcomeEvaluationRecord(
+                outcome_evaluation_id="outcome-evaluation-mismatch",
+                run_id="run-phase6-eval",
+                outcome_id="outcome-msft-5d",
+                candidate_id="candidate-other",
+                instrument_id="equity:NASDAQ:MSFT",
+                symbol="MSFT",
+                evaluated_at=datetime(2026, 5, 18, 21, 0, tzinfo=UTC),
+                status="confirmed",
+                quality_score=0.74,
+            )
+        )
+
+
+@pytest.mark.unit
+def test_calibration_run_rejects_cross_run_outcome_evaluation_sources(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    _seed_phase6_prediction_graph(store)
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id="run-other",
+            run_kind="prediction_evaluation",
+            objective="other run",
+            status="completed",
+            started_at=_timestamp(),
+        )
+    )
+    store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            candidate_id="candidate-other-msft-5d",
+            run_id="run-other",
+            instrument_id="equity:NASDAQ:MSFT",
+            prediction_horizon="5d",
+            prediction_type="direction",
+            scenario="Other run candidate.",
+            status="evidence_supported",
+        )
+    )
+    store.upsert_prediction_outcome(
+        PredictionOutcomeRecord(
+            outcome_id="outcome-other-msft-5d",
+            candidate_id="candidate-other-msft-5d",
+            instrument_id="equity:NASDAQ:MSFT",
+            symbol="MSFT",
+            prediction_type="direction",
+            horizon="5d",
+            evaluation_window_start=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
+            evaluation_window_end=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
+            status="observed",
+            observed_result="confirmed",
+            observed_at=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
+        )
+    )
+    store.upsert_prediction_outcome_evaluation(
+        PredictionOutcomeEvaluationRecord(
+            outcome_evaluation_id="outcome-evaluation-other-msft-5d",
+            run_id="run-other",
+            outcome_id="outcome-other-msft-5d",
+            candidate_id="candidate-other-msft-5d",
+            instrument_id="equity:NASDAQ:MSFT",
+            symbol="MSFT",
+            evaluated_at=datetime(2026, 5, 18, 21, 0, tzinfo=UTC),
+            status="confirmed",
+            quality_score=0.74,
+        )
+    )
+
+    with pytest.raises(ValueError, match="must match run_id"):
+        store.record_calibration_run(
+            CalibrationRunRecord(
+                calibration_id="calibration-cross-run",
+                run_id="run-phase6-eval",
+                method_version="phase6-evalcal.v1",
+                created_at=datetime(2026, 5, 18, 22, 0, tzinfo=UTC),
+                point_in_time_cutoff=datetime(2026, 5, 18, 21, 0, tzinfo=UTC),
+                source_outcome_evaluation_ids=("outcome-evaluation-other-msft-5d",),
+            )
+        )
+
+
+@pytest.mark.unit
 def test_record_artifact_rejects_absolute_and_parent_traversal_paths(tmp_path: Path) -> None:
     store = _research_store(tmp_path)
     store.initialize()

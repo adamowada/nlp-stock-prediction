@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -20,13 +21,22 @@ from nlp_stock_prediction.contracts import (
     SignalArtifactReference,
     TimeHorizon,
 )
+from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.evaluation import PredictionEvaluationTarget
 from nlp_stock_prediction.evaluation import (
     CalibrationSummaryInput,
     compute_calibration_summary,
     write_calibration_summary_artifact,
 )
-from nlp_stock_prediction.storage import ResearchRunRecord, SQLiteStore
+from nlp_stock_prediction.storage import (
+    CalibrationSliceRecord,
+    InstrumentRecord,
+    PredictionCandidateRecord,
+    PredictionOutcomeEvaluationRecord,
+    PredictionOutcomeRecord,
+    ResearchRunRecord,
+    SQLiteStore,
+)
 
 RUN_ID = "run-phase6-calibration"
 INSTRUMENT_ID = "instrument:equity:us:msft"
@@ -41,6 +51,14 @@ BIN_EDGES = (0.0, 0.5, 1.0)
 def _store(tmp_path: Path) -> SQLiteStore:
     store = SQLiteStore(tmp_path / "data" / "prediction-research.sqlite3")
     store.initialize()
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id=INSTRUMENT_ID,
+            symbol="MSFT",
+            asset_class="stock",
+            name="Microsoft Corporation",
+        )
+    )
     store.upsert_research_run(
         ResearchRunRecord(
             run_id=RUN_ID,
@@ -52,6 +70,87 @@ def _store(tmp_path: Path) -> SQLiteStore:
         )
     )
     return store
+
+
+def _persist_inputs(
+    store: SQLiteStore,
+    inputs: tuple[CalibrationSummaryInput, ...],
+) -> None:
+    for item in inputs:
+        target = item.target
+        outcome_evaluation = item.outcome_evaluation
+        outcome = outcome_evaluation.outcome
+        store.upsert_prediction_candidate(
+            PredictionCandidateRecord(
+                candidate_id=target.candidate_id,
+                run_id=RUN_ID,
+                instrument_id=target.instrument_id,
+                prediction_horizon=target.horizon.value,
+                prediction_type=target.prediction_type.value,
+                scenario=str(target.candidate_snapshot["scenario"]),
+                direction=target.direction.value if target.direction else None,
+                confidence=(
+                    target.baseline_comparison.candidate_score
+                    if target.baseline_comparison
+                    else None
+                ),
+                status="evidence_supported",
+                evidence_for=target.evidence_ids,
+                signal_artifacts=tuple(
+                    signal_artifact.artifact_id for signal_artifact in target.signal_artifacts
+                ),
+                baseline=cast(
+                    JsonObject,
+                    target.baseline_comparison.model_dump(mode="json")
+                    if target.baseline_comparison
+                    else {},
+                ),
+            )
+        )
+        store.upsert_prediction_outcome(
+            PredictionOutcomeRecord(
+                outcome_id=outcome.outcome_id,
+                candidate_id=outcome.candidate_id,
+                instrument_id=outcome.instrument_id,
+                symbol=outcome.symbol,
+                prediction_type=outcome.prediction_type.value,
+                horizon=outcome.horizon.value,
+                evaluation_window_start=outcome.evaluation_window_start,
+                evaluation_window_end=outcome.evaluation_window_end,
+                status=outcome.status.value,
+                observed_result=(
+                    outcome.observed_result.value if outcome.observed_result else None
+                ),
+                observed_at=outcome.observed_at,
+                result_summary=outcome.result_summary,
+                result_value=outcome.result_value,
+                baseline_value=outcome.baseline_value,
+                limitations=outcome.limitations,
+                metadata={"target_id": target.target_id},
+            )
+        )
+        store.upsert_prediction_outcome_evaluation(
+            PredictionOutcomeEvaluationRecord(
+                outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
+                run_id=RUN_ID,
+                outcome_id=outcome_evaluation.outcome_id,
+                candidate_id=outcome_evaluation.candidate_id,
+                instrument_id=outcome_evaluation.instrument_id,
+                symbol=outcome_evaluation.symbol,
+                evaluated_at=outcome_evaluation.evaluated_at,
+                status=outcome_evaluation.status.value,
+                quality_score=outcome_evaluation.quality_score,
+                baseline_comparison=cast(
+                    JsonObject,
+                    outcome_evaluation.baseline_comparison.model_dump(mode="json")
+                    if outcome_evaluation.baseline_comparison
+                    else {},
+                ),
+                artifact_id=None,
+                limitations=outcome_evaluation.limitations,
+                metadata={"target_id": target.target_id},
+            )
+        )
 
 
 def _baseline(score: float) -> BaselineComparison:
@@ -295,6 +394,8 @@ def test_calibration_summary_writes_artifact_and_calibration_slices(tmp_path: Pa
         quality_score=1.0,
         evaluated_at=datetime(2026, 5, 22, 21, 0, tzinfo=UTC),
     )
+    inputs = (*_calibration_inputs(), future)
+    _persist_inputs(store, inputs)
 
     result = write_calibration_summary_artifact(
         store=store,
@@ -302,7 +403,7 @@ def test_calibration_summary_writes_artifact_and_calibration_slices(tmp_path: Pa
         artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
         run_id=RUN_ID,
         cohort_id="phase6-evalcal-stage6-msft-swing",
-        inputs=(*_calibration_inputs(), future),
+        inputs=inputs,
         as_of=AS_OF,
         created_at=SUMMARY_CREATED_AT,
         bin_edges=BIN_EDGES,
@@ -376,6 +477,69 @@ def test_calibration_summary_keeps_unresolved_cohort_metric_free() -> None:
     assert summary.bins[1].limitations == (
         "Calibration bin has predictions but no resolved outcomes.",
     )
+
+
+@pytest.mark.unit
+def test_calibration_summary_identity_includes_families_and_clears_stale_slices(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    inputs = _calibration_inputs()
+    _persist_inputs(store, inputs)
+
+    all_families = write_calibration_summary_artifact(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        cohort_id="phase6-evalcal-stage6-family-identity",
+        inputs=inputs,
+        as_of=AS_OF,
+        created_at=SUMMARY_CREATED_AT,
+        bin_edges=BIN_EDGES,
+        families=(SignalArtifactFamily.TECHNICALS, SignalArtifactFamily.NEWS),
+    )
+    technicals_only = write_calibration_summary_artifact(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        cohort_id="phase6-evalcal-stage6-family-identity",
+        inputs=inputs,
+        as_of=AS_OF,
+        created_at=SUMMARY_CREATED_AT,
+        bin_edges=BIN_EDGES,
+        families=(SignalArtifactFamily.TECHNICALS,),
+    )
+    stale_slice = CalibrationSliceRecord(
+        slice_id="stale-calibration-slice",
+        calibration_id=technicals_only.calibration_id,
+        cohort_label="stale",
+        sample_count=1,
+        resolved_count=1,
+        signal_family="news",
+    )
+    store.record_calibration_slice(stale_slice)
+
+    rerun = write_calibration_summary_artifact(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        cohort_id="phase6-evalcal-stage6-family-identity",
+        inputs=inputs,
+        as_of=AS_OF,
+        created_at=SUMMARY_CREATED_AT,
+        bin_edges=BIN_EDGES,
+        families=(SignalArtifactFamily.TECHNICALS,),
+    )
+
+    assert all_families.calibration_id != technicals_only.calibration_id
+    assert store.list_calibration_slices(rerun.calibration_id) == rerun.calibration_slices
+    assert "stale-calibration-slice" not in {item.slice_id for item in rerun.calibration_slices}
+    assert {item.signal_family for item in rerun.calibration_slices if item.signal_family} == {
+        "technicals"
+    }
 
 
 @pytest.mark.unit

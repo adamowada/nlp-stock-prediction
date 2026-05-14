@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
@@ -51,6 +52,9 @@ def _started_service(tmp_path: Path) -> tuple[Phase4Service, str, Path]:
     )
     run_id = str(started["run_id"])
     audit_dir = Path(str(started["audit_dir"]))
+    run = service.store.get_research_run(run_id)
+    assert run is not None
+    service.store.upsert_research_run(replace(run, started_at=NOW))
     return service, run_id, audit_dir
 
 
@@ -183,8 +187,10 @@ def test_rendered_report_surfaces_phase6_outcomes_and_calibration_artifacts(
     )
 
     rendered = service.render_prediction_report(run_id=run_id, symbol="MSFT")
+    rerendered = service.render_prediction_report(run_id=run_id, symbol="MSFT")
 
     payload = json.loads(Path(str(rendered["json_path"])).read_text(encoding="utf-8"))
+    rerendered_payload = json.loads(Path(str(rerendered["json_path"])).read_text(encoding="utf-8"))
     candidate = payload["prediction_candidates"][0]
     review = payload["prior_outcome_reviews"][0]
     source_references = cast(list[dict[str, object]], payload["source_references"])
@@ -216,6 +222,22 @@ def test_rendered_report_surfaces_phase6_outcomes_and_calibration_artifacts(
     assert "(calibration_summary)" in markdown
     assert "(prediction_outcome_evaluation)" in markdown
     assert "Stored outcome evaluation is confirmed" in markdown
+    assert [
+        artifact["artifact_id"]
+        for artifact in rerendered_payload["audit_manifest"]["artifacts"]
+        if artifact["artifact_type"] in {"markdown_report", "json_report", "audit_manifest"}
+    ] == [
+        artifact["artifact_id"]
+        for artifact in payload["audit_manifest"]["artifacts"]
+        if artifact["artifact_type"] in {"markdown_report", "json_report", "audit_manifest"}
+    ]
+    assert (
+        sum(
+            artifact["artifact_type"] in {"markdown_report", "json_report", "audit_manifest"}
+            for artifact in rerendered_payload["audit_manifest"]["artifacts"]
+        )
+        == 0
+    )
 
 
 def _references_prior_review(reference: dict[str, object], review_id: str) -> bool:

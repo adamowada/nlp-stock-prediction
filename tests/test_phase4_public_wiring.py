@@ -132,3 +132,13 @@ def test_offline_pipeline_supports_custom_output_and_symbol_isolation(tmp_path: 
     assert tsla.json_path != btc.json_path
     assert tsla.json_path.parent.name == "tsla"
     assert btc.json_path.parent.name == "btc-usd"
+
+
+@pytest.mark.integration
+def test_pipeline_rejects_live_mode_until_production_orchestration_exists(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="live providers are not wired"):
+        generate_daily_report(
+            RunConfig(run_date="2026-05-11", output_dir=tmp_path / "reports", offline=False)
+        )

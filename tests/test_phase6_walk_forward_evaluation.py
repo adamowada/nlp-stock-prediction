@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -17,11 +18,19 @@ from nlp_stock_prediction.contracts import (
     PredictionType,
     TimeHorizon,
 )
+from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.evaluation import (
     compute_walk_forward_folds,
     write_walk_forward_evaluation_artifact,
 )
-from nlp_stock_prediction.storage import ResearchRunRecord, SQLiteStore
+from nlp_stock_prediction.storage import (
+    InstrumentRecord,
+    PredictionCandidateRecord,
+    PredictionOutcomeEvaluationRecord,
+    PredictionOutcomeRecord,
+    ResearchRunRecord,
+    SQLiteStore,
+)
 
 RUN_ID = "run-phase6-walk-forward"
 INSTRUMENT_ID = "instrument:equity:us:msft"
@@ -35,6 +44,14 @@ CUTOFF = datetime(2026, 5, 21, 23, 0, tzinfo=UTC)
 def _store(tmp_path: Path) -> SQLiteStore:
     store = SQLiteStore(tmp_path / "data" / "prediction-research.sqlite3")
     store.initialize()
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id=INSTRUMENT_ID,
+            symbol="MSFT",
+            asset_class="stock",
+            name="Microsoft Corporation",
+        )
+    )
     store.upsert_research_run(
         ResearchRunRecord(
             run_id=RUN_ID,
@@ -46,6 +63,71 @@ def _store(tmp_path: Path) -> SQLiteStore:
         )
     )
     return store
+
+
+def _persist_evaluations(
+    store: SQLiteStore,
+    evaluations: tuple[PredictionOutcomeEvaluation, ...],
+) -> None:
+    for evaluation in evaluations:
+        outcome = evaluation.outcome
+        store.upsert_prediction_candidate(
+            PredictionCandidateRecord(
+                candidate_id=evaluation.candidate_id,
+                run_id=RUN_ID,
+                instrument_id=evaluation.instrument_id,
+                prediction_horizon=outcome.horizon.value,
+                prediction_type=outcome.prediction_type.value,
+                scenario="Source-backed monitored directional scenario.",
+                direction=Direction.BULLISH.value,
+                confidence=None,
+                status="evidence_supported",
+                metadata={"symbol": evaluation.symbol},
+            )
+        )
+        store.upsert_prediction_outcome(
+            PredictionOutcomeRecord(
+                outcome_id=outcome.outcome_id,
+                candidate_id=outcome.candidate_id,
+                instrument_id=outcome.instrument_id,
+                symbol=outcome.symbol,
+                prediction_type=outcome.prediction_type.value,
+                horizon=outcome.horizon.value,
+                evaluation_window_start=outcome.evaluation_window_start,
+                evaluation_window_end=outcome.evaluation_window_end,
+                status=outcome.status.value,
+                observed_result=(
+                    outcome.observed_result.value if outcome.observed_result else None
+                ),
+                observed_at=outcome.observed_at,
+                result_summary=outcome.result_summary,
+                result_value=outcome.result_value,
+                baseline_value=outcome.baseline_value,
+                limitations=outcome.limitations,
+            )
+        )
+        store.upsert_prediction_outcome_evaluation(
+            PredictionOutcomeEvaluationRecord(
+                outcome_evaluation_id=evaluation.outcome_evaluation_id,
+                run_id=RUN_ID,
+                outcome_id=evaluation.outcome_id,
+                candidate_id=evaluation.candidate_id,
+                instrument_id=evaluation.instrument_id,
+                symbol=evaluation.symbol,
+                evaluated_at=evaluation.evaluated_at,
+                status=evaluation.status.value,
+                quality_score=evaluation.quality_score,
+                baseline_comparison=cast(
+                    JsonObject,
+                    evaluation.baseline_comparison.model_dump(mode="json")
+                    if evaluation.baseline_comparison
+                    else {},
+                ),
+                artifact_id=None,
+                limitations=evaluation.limitations,
+                metadata=evaluation.metadata,
+            )
+        )
 
 
 def _resolved_evaluation(
@@ -187,6 +269,8 @@ def test_walk_forward_evaluation_writes_artifact_and_calibration_slices(
         evaluated_at=datetime(2026, 5, 22, 21, 0, tzinfo=UTC),
         quality_score=1.0,
     )
+    evaluations = (*_resolved_evaluations(), future)
+    _persist_evaluations(store, evaluations)
 
     result = write_walk_forward_evaluation_artifact(
         store=store,
@@ -194,7 +278,7 @@ def test_walk_forward_evaluation_writes_artifact_and_calibration_slices(
         artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
         run_id=RUN_ID,
         cohort_id="phase6-evalcal-stage5-msft-swing",
-        outcome_evaluations=(*_resolved_evaluations(), future),
+        outcome_evaluations=evaluations,
         point_in_time_cutoff=CUTOFF,
         minimum_train_size=2,
         test_size=1,
@@ -273,6 +357,14 @@ def test_walk_forward_evaluation_persists_limitations_without_enough_history(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
+    evaluations = (
+        _resolved_evaluation(
+            "candidate-001",
+            evaluated_at=datetime(2026, 5, 18, 21, 0, tzinfo=UTC),
+            quality_score=1.0,
+        ),
+    )
+    _persist_evaluations(store, evaluations)
 
     result = write_walk_forward_evaluation_artifact(
         store=store,
@@ -280,13 +372,7 @@ def test_walk_forward_evaluation_persists_limitations_without_enough_history(
         artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
         run_id=RUN_ID,
         cohort_id="phase6-evalcal-stage5-short-history",
-        outcome_evaluations=(
-            _resolved_evaluation(
-                "candidate-001",
-                evaluated_at=datetime(2026, 5, 18, 21, 0, tzinfo=UTC),
-                quality_score=1.0,
-            ),
-        ),
+        outcome_evaluations=evaluations,
         point_in_time_cutoff=CUTOFF,
         minimum_train_size=2,
         test_size=1,

@@ -252,6 +252,7 @@ def write_calibration_summary_artifact(
     cutoff = _aware_utc(as_of, "as_of")
     edges = tuple(bin_edges)
     _validate_bin_edges(edges)
+    requested_families = None if families is None else tuple(dict.fromkeys(families))
     requested = tuple(inputs)
     _validate_inputs_for_run(requested, run_id)
     eligible, excluded_ids, eligibility_limitations = _eligible_inputs(
@@ -266,6 +267,7 @@ def write_calibration_summary_artifact(
         cohort_id=cohort_id,
         as_of=cutoff,
         bin_edges=edges,
+        families=requested_families,
         outcome_evaluation_ids=source_ids,
     )
     summary = compute_calibration_summary(
@@ -277,10 +279,15 @@ def write_calibration_summary_artifact(
         bin_edges=edges,
         prediction_type=prediction_type,
         horizon=horizon,
-        families=families,
+        families=requested_families,
     )
     summary_limitations = tuple(dict.fromkeys((*eligibility_limitations, *summary.limitations)))
     summary = summary.model_copy(update={"limitations": summary_limitations})
+    family_identity = (
+        "auto"
+        if requested_families is None
+        else ",".join(family.value for family in requested_families)
+    )
     digest = _digest(
         "|".join(
             (
@@ -290,6 +297,7 @@ def write_calibration_summary_artifact(
                 cutoff.isoformat(),
                 ",".join(source_ids),
                 ",".join(f"{edge:.8f}" for edge in edges),
+                family_identity,
             )
         )
     )
@@ -317,6 +325,9 @@ def write_calibration_summary_artifact(
         "bin_edges": list(edges),
         "prediction_type": prediction_type.value if prediction_type else None,
         "horizon": horizon.value if horizon else None,
+        "families": None
+        if requested_families is None
+        else [family.value for family in requested_families],
         "source_outcome_evaluation_ids": list(source_ids),
         "excluded_outcome_evaluation_ids": list(excluded_ids),
     }
@@ -372,6 +383,9 @@ def write_calibration_summary_artifact(
                 "bin_edges": list(edges),
                 "prediction_type": prediction_type.value if prediction_type else None,
                 "horizon": horizon.value if horizon else None,
+                "families": None
+                if requested_families is None
+                else [family.value for family in requested_families],
             },
             source_outcome_evaluation_ids=summary.source_outcome_evaluation_ids,
             artifact_id=artifact.artifact_id,
@@ -383,6 +397,7 @@ def write_calibration_summary_artifact(
             },
         )
         store.record_calibration_run(calibration_run)
+        store.delete_calibration_slices(resolved_calibration_id)
         slices = _calibration_slice_records(
             calibration_id=resolved_calibration_id,
             summary=summary,
@@ -1014,8 +1029,10 @@ def _calibration_id(
     cohort_id: str,
     as_of: datetime,
     bin_edges: tuple[float, ...],
+    families: tuple[SignalArtifactFamily, ...] | None,
     outcome_evaluation_ids: tuple[str, ...],
 ) -> str:
+    family_identity = "auto" if families is None else ",".join(family.value for family in families)
     digest = _digest(
         "|".join(
             (
@@ -1023,6 +1040,7 @@ def _calibration_id(
                 cohort_id,
                 as_of.isoformat(),
                 ",".join(f"{edge:.8f}" for edge in bin_edges),
+                family_identity,
                 ",".join(outcome_evaluation_ids),
             )
         )

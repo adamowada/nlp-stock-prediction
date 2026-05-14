@@ -24,15 +24,15 @@ def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
             SELECT candidate_id FROM prediction_candidates
             WHERE run_id = ?
         ),
-        phase6_outcomes AS (
-            SELECT outcome_id FROM prediction_outcomes
-            WHERE candidate_id IN (SELECT candidate_id FROM run_candidates)
-        ),
         phase6_outcome_evaluations AS (
             SELECT outcome_evaluation_id FROM prediction_outcome_evaluations
             WHERE run_id = ?
-                OR candidate_id IN (SELECT candidate_id FROM run_candidates)
-                OR outcome_id IN (SELECT outcome_id FROM phase6_outcomes)
+        ),
+        phase6_outcomes AS (
+            SELECT DISTINCT outcome_id FROM prediction_outcome_evaluations
+            WHERE outcome_evaluation_id IN (
+                SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+            )
         ),
         run_evidence AS (
             SELECT DISTINCT evidence_items.evidence_id, evidence_items.artifact_id
@@ -130,15 +130,15 @@ def fetch_source_query_rows(connection: sqlite3.Connection, run_id: str) -> tupl
             SELECT candidate_id FROM prediction_candidates
             WHERE run_id = ?
         ),
-        phase6_outcomes AS (
-            SELECT outcome_id FROM prediction_outcomes
-            WHERE candidate_id IN (SELECT candidate_id FROM run_candidates)
-        ),
         phase6_outcome_evaluations AS (
             SELECT outcome_evaluation_id FROM prediction_outcome_evaluations
             WHERE run_id = ?
-                OR candidate_id IN (SELECT candidate_id FROM run_candidates)
-                OR outcome_id IN (SELECT outcome_id FROM phase6_outcomes)
+        ),
+        phase6_outcomes AS (
+            SELECT DISTINCT outcome_id FROM prediction_outcome_evaluations
+            WHERE outcome_evaluation_id IN (
+                SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+            )
         ),
         run_evidence AS (
             SELECT DISTINCT evidence_items.evidence_id, evidence_items.source_query_id
@@ -193,15 +193,15 @@ def fetch_evidence_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
             SELECT candidate_id FROM prediction_candidates
             WHERE run_id = ?
         ),
-        phase6_outcomes AS (
-            SELECT outcome_id FROM prediction_outcomes
-            WHERE candidate_id IN (SELECT candidate_id FROM run_candidates)
-        ),
         phase6_outcome_evaluations AS (
             SELECT outcome_evaluation_id FROM prediction_outcome_evaluations
             WHERE run_id = ?
-                OR candidate_id IN (SELECT candidate_id FROM run_candidates)
-                OR outcome_id IN (SELECT outcome_id FROM phase6_outcomes)
+        ),
+        phase6_outcomes AS (
+            SELECT DISTINCT outcome_id FROM prediction_outcome_evaluations
+            WHERE outcome_evaluation_id IN (
+                SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+            )
         )
         SELECT DISTINCT evidence_items.* FROM evidence_items
         LEFT JOIN tool_runs direct_tool_runs

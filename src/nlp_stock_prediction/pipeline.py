@@ -7,22 +7,21 @@ from typing import Any, cast
 
 from nlp_stock_prediction.contracts import DailyReport
 from nlp_stock_prediction.contracts.providers import RunConfig
-from nlp_stock_prediction.orchestration import (
-    DUMMY_ORCHESTRATION_DISABLED_MESSAGE,
-    ReportBundle,
-    generate_dummy_report_bundle,
-)
+from nlp_stock_prediction.orchestration import ReportBundle
 from nlp_stock_prediction.orchestration.phase2_common import stable_digest
 from nlp_stock_prediction.orchestration.phase4_service import Phase4Service
 
-LIVE_ORCHESTRATION_DISABLED_MESSAGE = DUMMY_ORCHESTRATION_DISABLED_MESSAGE
+LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
+    "live providers are not wired into the production orchestration path; "
+    "pass an offline RunConfig to run the deterministic public flow."
+)
 
 
 def generate_daily_report(config: RunConfig) -> ReportBundle:
     """Generate a deterministic Phase 4 research report bundle."""
 
     if not config.offline:
-        return generate_dummy_report_bundle(config)
+        raise ValueError(LIVE_ORCHESTRATION_DISABLED_MESSAGE)
 
     project_root = _project_root()
     repo_root = _write_root_for_output(config.output_dir, project_root)

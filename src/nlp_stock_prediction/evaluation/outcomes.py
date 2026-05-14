@@ -295,7 +295,18 @@ def write_point_in_time_outcome_evaluation_artifacts(
         raise ValueError("outcome target run_id must match run_id")
     created = _aware_utc(created_at or datetime.now(UTC), "created_at")
     evaluated = _aware_utc(evaluated_at or created, "evaluated_at")
-    observed_artifact_ids = tuple(dict.fromkeys(market_artifact_ids))
+    observed_artifact_ids = _validated_market_artifact_ids(
+        store=store,
+        target=target,
+        market_artifact_ids=tuple(dict.fromkeys(market_artifact_ids)),
+        evaluated_at=evaluated,
+    )
+    validated_outcome_evidence = _validated_outcome_evidence(
+        store=store,
+        target=target,
+        outcome_evidence=_dedupe_evidence_references(outcome_evidence),
+        evaluated_at=evaluated,
+    )
     outcome = build_prediction_outcome(
         target=target,
         status=status,
@@ -304,7 +315,7 @@ def write_point_in_time_outcome_evaluation_artifacts(
         result_summary=result_summary,
         result_value=result_value,
         baseline_value=baseline_value,
-        outcome_evidence=outcome_evidence,
+        outcome_evidence=validated_outcome_evidence,
         artifact_ids=observed_artifact_ids,
         limitations=limitations,
         metadata={
@@ -341,8 +352,8 @@ def write_point_in_time_outcome_evaluation_artifacts(
         "candidate_id": target.candidate_id,
         "outcome_status": outcome.status.value,
         "observed_result": outcome.observed_result.value if outcome.observed_result else None,
-        "market_artifact_ids": list(market_artifact_ids),
-        "outcome_evidence_ids": [reference.evidence_id for reference in outcome_evidence],
+        "market_artifact_ids": list(observed_artifact_ids),
+        "outcome_evidence_ids": [reference.evidence_id for reference in validated_outcome_evidence],
     }
 
     def write_artifacts() -> PointInTimeOutcomeEvaluationArtifacts:
@@ -530,7 +541,7 @@ def _persist_outcome(
     )
     for reference in outcome.outcome_evidence:
         if store.get_evidence(reference.evidence_id) is None:
-            continue
+            raise ValueError(f"outcome evidence does not exist: {reference.evidence_id}")
         store.link_outcome_evidence(
             OutcomeEvidenceLinkRecord(
                 outcome_id=outcome.outcome_id,
@@ -542,7 +553,7 @@ def _persist_outcome(
         )
     for artifact_id in market_artifact_ids:
         if store.get_artifact(artifact_id) is None:
-            continue
+            raise ValueError(f"outcome artifact does not exist: {artifact_id}")
         store.link_outcome_artifact(
             OutcomeArtifactLinkRecord(
                 outcome_id=outcome.outcome_id,
@@ -561,6 +572,71 @@ def _persist_outcome(
             created_at=created_at,
         )
     )
+
+
+def _validated_outcome_evidence(
+    *,
+    store: SQLiteStore,
+    target: PredictionEvaluationTarget,
+    outcome_evidence: tuple[EvidenceReference, ...],
+    evaluated_at: datetime,
+) -> tuple[EvidenceReference, ...]:
+    for reference in outcome_evidence:
+        record = store.get_evidence(reference.evidence_id)
+        if record is None:
+            raise ValueError(f"outcome evidence does not exist: {reference.evidence_id}")
+        retrieved_at = _aware_utc(record.retrieved_at, "evidence.retrieved_at")
+        published_at = (
+            None
+            if record.published_at is None
+            else _aware_utc(record.published_at, "evidence.published_at")
+        )
+        if retrieved_at > evaluated_at or (
+            published_at is not None and published_at > evaluated_at
+        ):
+            raise ValueError(
+                f"outcome evidence must be available by evaluated_at: {reference.evidence_id}"
+            )
+        if record.instruments and target.instrument_id not in record.instruments:
+            raise ValueError(
+                f"outcome evidence instrument does not match target: {reference.evidence_id}"
+            )
+    return outcome_evidence
+
+
+def _validated_market_artifact_ids(
+    *,
+    store: SQLiteStore,
+    target: PredictionEvaluationTarget,
+    market_artifact_ids: tuple[str, ...],
+    evaluated_at: datetime,
+) -> tuple[str, ...]:
+    for artifact_id in market_artifact_ids:
+        artifact = store.get_artifact(artifact_id)
+        if artifact is None:
+            raise ValueError(f"outcome market artifact does not exist: {artifact_id}")
+        if (
+            artifact.created_at is not None
+            and _aware_utc(
+                artifact.created_at,
+                "artifact.created_at",
+            )
+            > evaluated_at
+        ):
+            raise ValueError(
+                f"outcome market artifact must be available by evaluated_at: {artifact_id}"
+            )
+        instrument_id = artifact.metadata.get("instrument_id")
+        instrument_ids = artifact.metadata.get("instrument_ids")
+        if instrument_id is not None and instrument_id != target.instrument_id:
+            raise ValueError(
+                f"outcome market artifact instrument does not match target: {artifact_id}"
+            )
+        if isinstance(instrument_ids, list) and target.instrument_id not in instrument_ids:
+            raise ValueError(
+                f"outcome market artifact instruments do not include target: {artifact_id}"
+            )
+    return market_artifact_ids
 
 
 def _persist_outcome_evaluation(
@@ -600,7 +676,7 @@ def _persist_outcome_evaluation(
     )
     for reference in outcome_evaluation.evidence:
         if store.get_evidence(reference.evidence_id) is None:
-            continue
+            raise ValueError(f"outcome evaluation evidence does not exist: {reference.evidence_id}")
         store.link_outcome_evaluation_evidence(
             OutcomeEvaluationEvidenceLinkRecord(
                 outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
@@ -612,7 +688,7 @@ def _persist_outcome_evaluation(
         )
     for artifact_id in outcome_evaluation.artifact_ids:
         if store.get_artifact(artifact_id) is None:
-            continue
+            raise ValueError(f"outcome evaluation artifact does not exist: {artifact_id}")
         store.link_outcome_evaluation_artifact(
             OutcomeEvaluationArtifactLinkRecord(
                 outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
@@ -707,7 +783,11 @@ def _eligible_artifacts(
         if link.relationship in {"prediction_input", "prediction_evaluation"}:
             report_artifacts.append(link.artifact_id)
         if link.artifact_id in signal_ids or link.relationship == "signal":
-            reference = _signal_artifact_reference(artifact, cutoff=cutoff)
+            artifact_as_of, reason = _artifact_reference_as_of(artifact, cutoff)
+            if reason is not None:
+                excluded.append(f"{link.artifact_id} ({reason})")
+                continue
+            reference = _signal_artifact_reference(artifact, as_of=artifact_as_of)
             if reference is not None:
                 signals.append(reference)
     for artifact_id in signal_ids:
@@ -723,7 +803,11 @@ def _eligible_artifacts(
         ):
             excluded.append(f"{artifact_id} (after cutoff)")
             continue
-        reference = _signal_artifact_reference(artifact, cutoff=cutoff)
+        artifact_as_of, reason = _artifact_reference_as_of(artifact, cutoff)
+        if reason is not None:
+            excluded.append(f"{artifact_id} ({reason})")
+            continue
+        reference = _signal_artifact_reference(artifact, as_of=artifact_as_of)
         if reference is not None:
             signals.append(reference)
     limitations = (
@@ -737,7 +821,7 @@ def _eligible_artifacts(
 def _signal_artifact_reference(
     artifact: ArtifactRecord,
     *,
-    cutoff: datetime,
+    as_of: datetime | None,
 ) -> SignalArtifactReference | None:
     if artifact.artifact_type not in _SIGNAL_ARTIFACT_TYPES:
         return None
@@ -753,7 +837,7 @@ def _signal_artifact_reference(
         tool_run_id=artifact.tool_run_id,
         produced_by=artifact.produced_by,
         created_at=created_at,
-        as_of=_artifact_as_of(artifact, cutoff),
+        as_of=as_of,
         sha256=artifact.sha256,
         metadata={
             "record_count": artifact.record_count,
@@ -780,17 +864,23 @@ def _dedupe_evidence_references(
     return tuple(by_id.values())
 
 
-def _artifact_as_of(artifact: ArtifactRecord, cutoff: datetime) -> datetime | None:
+def _artifact_reference_as_of(
+    artifact: ArtifactRecord,
+    cutoff: datetime,
+) -> tuple[datetime | None, str | None]:
     raw = artifact.metadata.get("as_of") or artifact.metadata.get("latest_usable_bar")
     if isinstance(raw, str) and raw.strip():
         try:
             parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         except ValueError:
-            return artifact.created_at
+            return None, "invalid as_of timestamp"
         if parsed.tzinfo is None or parsed.utcoffset() is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        return min(parsed.astimezone(UTC), cutoff)
-    return artifact.created_at
+            return None, "naive as_of timestamp"
+        parsed_utc = parsed.astimezone(UTC)
+        if parsed_utc > cutoff:
+            return None, "as_of after cutoff"
+        return parsed_utc, None
+    return artifact.created_at, None
 
 
 def _signal_family(artifact: ArtifactRecord) -> SignalArtifactFamily | None:
@@ -878,6 +968,8 @@ def _outcome_evaluation_status(
     if outcome.status == PredictionOutcomeStatus.STALE:
         return PredictionOutcomeEvaluationStatus.STALE
     if outcome.status == PredictionOutcomeStatus.UNAVAILABLE:
+        return PredictionOutcomeEvaluationStatus.NOT_EVALUABLE
+    if outcome.observed_result == PredictionOutcomeResult.INSUFFICIENT_DATA:
         return PredictionOutcomeEvaluationStatus.NOT_EVALUABLE
     if outcome.observed_result == PredictionOutcomeResult.SUPPORTED:
         return PredictionOutcomeEvaluationStatus.CONFIRMED

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -20,13 +21,21 @@ from nlp_stock_prediction.contracts import (
     SignalArtifactReference,
     TimeHorizon,
 )
+from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.evaluation import PredictionEvaluationTarget
 from nlp_stock_prediction.evaluation import (
     SignalFamilyAblationInput,
     compute_signal_family_ablations,
     write_signal_family_ablation_artifact,
 )
-from nlp_stock_prediction.storage import ResearchRunRecord, SQLiteStore
+from nlp_stock_prediction.storage import (
+    InstrumentRecord,
+    PredictionCandidateRecord,
+    PredictionOutcomeEvaluationRecord,
+    PredictionOutcomeRecord,
+    ResearchRunRecord,
+    SQLiteStore,
+)
 
 RUN_ID = "run-phase6-ablation"
 INSTRUMENT_ID = "instrument:equity:us:msft"
@@ -41,6 +50,14 @@ EVALUATED_AT = datetime(2026, 5, 18, 21, 0, tzinfo=UTC)
 def _store(tmp_path: Path) -> SQLiteStore:
     store = SQLiteStore(tmp_path / "data" / "prediction-research.sqlite3")
     store.initialize()
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id=INSTRUMENT_ID,
+            symbol="MSFT",
+            asset_class="stock",
+            name="Microsoft Corporation",
+        )
+    )
     store.upsert_research_run(
         ResearchRunRecord(
             run_id=RUN_ID,
@@ -52,6 +69,87 @@ def _store(tmp_path: Path) -> SQLiteStore:
         )
     )
     return store
+
+
+def _persist_inputs(
+    store: SQLiteStore,
+    inputs: tuple[SignalFamilyAblationInput, ...],
+) -> None:
+    for item in inputs:
+        target = item.target
+        outcome_evaluation = item.outcome_evaluation
+        outcome = outcome_evaluation.outcome
+        store.upsert_prediction_candidate(
+            PredictionCandidateRecord(
+                candidate_id=target.candidate_id,
+                run_id=RUN_ID,
+                instrument_id=target.instrument_id,
+                prediction_horizon=target.horizon.value,
+                prediction_type=target.prediction_type.value,
+                scenario=str(target.candidate_snapshot["scenario"]),
+                direction=target.direction.value if target.direction else None,
+                confidence=(
+                    target.baseline_comparison.candidate_score
+                    if target.baseline_comparison
+                    else None
+                ),
+                status="evidence_supported",
+                evidence_for=target.evidence_ids,
+                signal_artifacts=tuple(
+                    signal_artifact.artifact_id for signal_artifact in target.signal_artifacts
+                ),
+                baseline=cast(
+                    JsonObject,
+                    target.baseline_comparison.model_dump(mode="json")
+                    if target.baseline_comparison
+                    else {},
+                ),
+            )
+        )
+        store.upsert_prediction_outcome(
+            PredictionOutcomeRecord(
+                outcome_id=outcome.outcome_id,
+                candidate_id=outcome.candidate_id,
+                instrument_id=outcome.instrument_id,
+                symbol=outcome.symbol,
+                prediction_type=outcome.prediction_type.value,
+                horizon=outcome.horizon.value,
+                evaluation_window_start=outcome.evaluation_window_start,
+                evaluation_window_end=outcome.evaluation_window_end,
+                status=outcome.status.value,
+                observed_result=(
+                    outcome.observed_result.value if outcome.observed_result else None
+                ),
+                observed_at=outcome.observed_at,
+                result_summary=outcome.result_summary,
+                result_value=outcome.result_value,
+                baseline_value=outcome.baseline_value,
+                limitations=outcome.limitations,
+                metadata={"target_id": target.target_id},
+            )
+        )
+        store.upsert_prediction_outcome_evaluation(
+            PredictionOutcomeEvaluationRecord(
+                outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
+                run_id=RUN_ID,
+                outcome_id=outcome_evaluation.outcome_id,
+                candidate_id=outcome_evaluation.candidate_id,
+                instrument_id=outcome_evaluation.instrument_id,
+                symbol=outcome_evaluation.symbol,
+                evaluated_at=outcome_evaluation.evaluated_at,
+                status=outcome_evaluation.status.value,
+                quality_score=outcome_evaluation.quality_score,
+                baseline_comparison=cast(
+                    JsonObject,
+                    outcome_evaluation.baseline_comparison.model_dump(mode="json")
+                    if outcome_evaluation.baseline_comparison
+                    else {},
+                ),
+                artifact_id=None,
+                limitations=outcome_evaluation.limitations,
+                metadata={"target_id": target.target_id},
+            )
+        )
 
 
 def _baseline(candidate_score: float) -> BaselineComparison:
@@ -138,6 +236,7 @@ def _resolved_outcome_evaluation(
         outcome_evidence=(
             EvidenceReference(evidence_id=f"evidence-{target.candidate_id}-outcome"),
         ),
+        artifact_ids=(f"artifact-{target.candidate_id}-outcome",),
     )
     return PredictionOutcomeEvaluation(
         outcome_evaluation_id=f"outcome-evaluation-{target.candidate_id}",
@@ -216,7 +315,7 @@ def test_signal_family_ablation_computes_included_vs_excluded_quality() -> None:
         cohort_id="phase6-evalcal-stage4-msft-swing",
         created_at=EVALUATED_AT,
         inputs=inputs,
-        families=(SignalArtifactFamily.TECHNICALS,),
+        families=(SignalArtifactFamily.TECHNICALS, SignalArtifactFamily.TECHNICALS),
     )
 
     assert ablation.family == SignalArtifactFamily.TECHNICALS
@@ -249,6 +348,7 @@ def test_signal_family_ablation_writes_artifact_and_calibration_slices(
             quality_score=0.0,
         ),
     )
+    _persist_inputs(store, inputs)
 
     result = write_signal_family_ablation_artifact(
         store=store,
@@ -257,7 +357,7 @@ def test_signal_family_ablation_writes_artifact_and_calibration_slices(
         run_id=RUN_ID,
         cohort_id="phase6-evalcal-stage4-msft-swing",
         inputs=inputs,
-        point_in_time_cutoff=CUTOFF,
+        point_in_time_cutoff=EVALUATED_AT,
         created_at=EVALUATED_AT,
         families=(SignalArtifactFamily.TECHNICALS,),
     )
@@ -285,7 +385,13 @@ def test_signal_family_ablation_writes_artifact_and_calibration_slices(
         "outcome-evaluation-candidate-with-technicals",
         "outcome-evaluation-candidate-without-technicals",
     ]
+    assert set(payload["source_artifact_ids"]) >= {
+        "artifact-candidate-with-technicals-technicals",
+        "artifact-candidate-with-technicals-outcome",
+        "artifact-candidate-with-technicals-outcome-review",
+    }
     assert payload["ablations"][0]["family"] == "technicals"
+    assert len(payload["ablations"]) == 1
 
 
 @pytest.mark.unit
@@ -303,6 +409,7 @@ def test_signal_family_ablation_keeps_unresolved_samples_metric_free(
             outcome_evaluation=_pending_outcome_evaluation(target),
         ),
     )
+    _persist_inputs(store, inputs)
 
     result = write_signal_family_ablation_artifact(
         store=store,
@@ -311,7 +418,7 @@ def test_signal_family_ablation_keeps_unresolved_samples_metric_free(
         run_id=RUN_ID,
         cohort_id="phase6-evalcal-stage4-pending",
         inputs=inputs,
-        point_in_time_cutoff=CUTOFF,
+        point_in_time_cutoff=datetime(2026, 5, 15, 20, 0, tzinfo=UTC),
         created_at=datetime(2026, 5, 15, 20, 0, tzinfo=UTC),
         families=(SignalArtifactFamily.TECHNICALS,),
     )
@@ -329,6 +436,79 @@ def test_signal_family_ablation_keeps_unresolved_samples_metric_free(
     assert calibration_slice.resolved_count == 0
     assert calibration_slice.pending_count == 1
     assert calibration_slice.metrics["included_quality_score"] is None
+
+
+@pytest.mark.unit
+def test_signal_family_ablation_excludes_outcomes_after_cutoff(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    inputs = (
+        _input("candidate-with-technicals", signal_families=(SignalArtifactFamily.TECHNICALS,)),
+        _input(
+            "candidate-without-technicals",
+            status=PredictionOutcomeEvaluationStatus.MISSED,
+            quality_score=0.0,
+        ),
+    )
+
+    result = write_signal_family_ablation_artifact(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        cohort_id="phase6-evalcal-stage4-cutoff",
+        inputs=inputs,
+        point_in_time_cutoff=CUTOFF,
+        created_at=EVALUATED_AT,
+        families=(SignalArtifactFamily.TECHNICALS,),
+    )
+
+    assert result.artifact_payload.source_outcome_evaluation_ids == ()
+    assert result.artifact_payload.excluded_outcome_evaluation_ids == (
+        "outcome-evaluation-candidate-with-technicals",
+        "outcome-evaluation-candidate-without-technicals",
+    )
+    assert result.calibration_slices[0].sample_count == 0
+    payload = json.loads(Path(result.artifact.path).read_text(encoding="utf-8"))
+    assert payload["excluded_outcome_evaluation_ids"] == [
+        "outcome-evaluation-candidate-with-technicals",
+        "outcome-evaluation-candidate-without-technicals",
+    ]
+    assert any("point-in-time cutoff" in item for item in payload["limitations"])
+
+
+@pytest.mark.unit
+def test_signal_family_ablation_without_tool_run_leaves_artifact_unlinked(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    inputs = (
+        _input("candidate-with-technicals", signal_families=(SignalArtifactFamily.TECHNICALS,)),
+        _input(
+            "candidate-without-technicals",
+            status=PredictionOutcomeEvaluationStatus.MISSED,
+            quality_score=0.0,
+        ),
+    )
+    _persist_inputs(store, inputs)
+
+    result = write_signal_family_ablation_artifact(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        cohort_id="phase6-evalcal-stage4-no-tool-run",
+        inputs=inputs,
+        point_in_time_cutoff=EVALUATED_AT,
+        created_at=EVALUATED_AT,
+        families=(SignalArtifactFamily.TECHNICALS,),
+        record_tool_run=False,
+    )
+
+    assert store.get_tool_run(result.tool_run_id) is None
+    stored_artifact = store.get_artifact(result.artifact.artifact_id)
+    assert stored_artifact is not None
+    assert stored_artifact.tool_run_id is None
+    assert result.calibration_run.tool_run_id is None
 
 
 @pytest.mark.unit
