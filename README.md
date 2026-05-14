@@ -13,7 +13,8 @@ analysis, preserves dissenting context, and explains what would change the predi
 
 The project is in active development. The current implementation includes deterministic offline and
 guarded live-provider research commands, SQLite-backed planning and research storage, Phase 3
-instrument-universe contracts/storage, Phase 4 research tools, and an opt-in Codex MCP smoke path.
+instrument-universe contracts/storage, Phase 4 research tools, Phase 5 Markdown/JSON/audit
+prediction reports, and an opt-in Codex MCP smoke path.
 
 ## Contents
 
@@ -152,6 +153,16 @@ social evidence, news/catalysts, fundamentals, sector/macro context, prediction-
 conservative candidate synthesis, and final Markdown/JSON/audit report rendering. These tools write
 typed artifacts and SQLite run-graph rows while preserving provider/source provenance. Live providers
 remain opt-in and incremental; deterministic fixtures are the default QA and offline path.
+
+## Current Phase 5 Prediction Reports
+
+The report product writes Markdown, JSON, and audit-manifest artifacts from the stored run graph.
+Reports preserve evidence for and against, dissenting evidence, uncertainty, baseline context,
+signal artifacts, prior-outcome review context, source references, material claim traces, provider
+health, and audit hashes. When the honest result is no call, reports render structured
+insufficient-evidence details instead of fabricating a scenario. Provider failures, stale data,
+malformed artifacts, ambiguous instruments, unsupported instruments, and contradictory evidence
+remain visible in the report and audit surfaces.
 
 ## Configuration
 

@@ -67,7 +67,8 @@ Candidate claims are emitted only when their required stored evidence and artifa
 valid. Missing linked evidence, missing required artifacts, hash mismatches, or malformed typed
 artifacts exclude the affected candidate and surface as structured insufficient evidence when no
 candidate remains usable. Audit manifests preserve artifact ids, paths, hashes, validation status,
-and whether an artifact was required for assembly.
+whether an artifact was required for assembly, and provider-health snapshots for visible failure
+diagnostics.
 
 Report source references are candidate-specific where the run graph supplies the relationship:
 source evidence references point to the candidates that cite them, artifact references point to the

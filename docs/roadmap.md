@@ -133,20 +133,30 @@ Acceptance:
 
 Goal: make reports the primary product.
 
-Build:
+Status: implemented and release-hardened. The Phase 4 `research` command writes Markdown, JSON, and
+audit-manifest report artifacts for explicit offline and guarded live-provider runs. Reports preserve
+evidence for and against, dissent, uncertainty, baseline context, signal artifact references,
+provider health, material claim traces, prior-outcome reviews, and source/audit references. No-call,
+low-evidence, stale, malformed, unsupported, ambiguous, provider-failure, and contradictory outcomes
+are first-class report products rather than empty reports or fabricated conclusions.
+
+Built:
 
 - Markdown report rendering;
 - JSON report rendering;
 - evidence ledger appendix;
 - uncertainty and dissenting evidence sections;
 - "what would change this prediction" sections;
-- prior-outcome review.
+- prior-outcome review;
+- structured insufficient-evidence and failure reports;
+- runtime report artifact index.
 
-Acceptance:
+Acceptance status:
 
 - reports never use buy/sell instruction language;
 - reports include evidence for and against;
-- reports preserve artifact references and source links.
+- reports preserve artifact references and source links;
+- live report assembly refuses fixture, dummy, or smoke fallback inputs.
 
 ## Phase 6: Evaluation And Calibration
 
