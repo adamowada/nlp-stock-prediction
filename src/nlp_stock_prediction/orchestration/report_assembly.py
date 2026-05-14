@@ -628,6 +628,20 @@ def _validate_json_artifact_payload(record: ArtifactRecord, path: Path) -> None:
     if record.artifact_type == "prediction_evaluation":
         PredictionEvaluationArtifactPayload.model_validate_json(path.read_text(encoding="utf-8"))
         return
+    if record.artifact_type == "artifact_freshness_review":
+        from nlp_stock_prediction.evaluation.freshness import (
+            ArtifactFreshnessReviewArtifactPayload,
+        )
+
+        ArtifactFreshnessReviewArtifactPayload.model_validate_json(path.read_text(encoding="utf-8"))
+        return
+    if record.artifact_type == "evidence_aging_summary":
+        from nlp_stock_prediction.evaluation.freshness import (
+            EvidenceAgingSummaryArtifactPayload,
+        )
+
+        EvidenceAgingSummaryArtifactPayload.model_validate_json(path.read_text(encoding="utf-8"))
+        return
     if record.artifact_type == "instrument_universe":
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):

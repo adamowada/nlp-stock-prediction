@@ -194,6 +194,7 @@ def test_evaluation_group_parser_lists_public_commands(capsys: pytest.CaptureFix
         "load-outcomes",
         "outcome-summary",
         "stale-artifacts",
+        "evidence-aging",
         "source-reliability",
         "provider-playbook",
         "calibration",
@@ -271,6 +272,11 @@ def test_phase7_public_service_writes_real_evaluation_artifacts(tmp_path: Path) 
         artifact_dir=audit_dir.as_posix(),
         reviewed_at=EVALUATED_AT.isoformat(),
     )
+    evidence_aging = service.evaluation_evidence_aging(
+        run_id=RUN_ID,
+        artifact_dir=audit_dir.as_posix(),
+        reviewed_at=EVALUATED_AT.isoformat(),
+    )
     provider_playbooks = service.evaluation_provider_playbook(
         run_id=RUN_ID,
         artifact_dir=audit_dir.as_posix(),
@@ -279,13 +285,25 @@ def test_phase7_public_service_writes_real_evaluation_artifacts(tmp_path: Path) 
 
     assert cast(int, outcome_summary["summary_count"]) == 1
     assert cast(int, stale_artifacts["review_count"]) >= 2
+    assert cast(int, evidence_aging["review_count"]) >= 1
     assert cast(int, provider_playbooks["playbook_count"]) >= 1
-    for result in (outcome_summary, stale_artifacts):
+    for result in (outcome_summary, stale_artifacts, evidence_aging):
         artifact_path = tmp_path / str(result["artifact_path"])
         assert artifact_path.exists()
     assert all(
         (tmp_path / path).exists() for path in cast(list[str], provider_playbooks["artifact_paths"])
     )
+
+
+@pytest.mark.unit
+def test_phase7_public_writer_tools_require_explicit_artifact_dir(tmp_path: Path) -> None:
+    service = _persist_outcome_evaluation(tmp_path)
+
+    with pytest.raises(ValueError, match="artifact_dir is required"):
+        service.evaluation_outcome_summary(
+            run_id=RUN_ID,
+            created_at=EVALUATED_AT.isoformat(),
+        )
 
 
 @pytest.mark.unit
@@ -325,6 +343,7 @@ def test_phase7_registry_and_mcp_expose_phase_neutral_evaluation_tools(tmp_path:
         "evaluation_walk_forward",
         "evaluation_outcome_summary",
         "evaluation_stale_artifacts",
+        "evaluation_evidence_aging",
         "evaluation_source_reliability",
         "evaluation_provider_playbook",
         "evaluation_calibration",
@@ -358,6 +377,8 @@ def test_codex_mcp_server_registers_public_evaluation_tools(
     monkeypatch.setitem(sys.modules, "mcp", ModuleType("mcp"))
     monkeypatch.setitem(sys.modules, "mcp.server", ModuleType("mcp.server"))
     monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
+    db_path = tmp_path / "data" / "test.sqlite3"
+    SQLiteStore(db_path).initialize()
 
     server = build_server(repo_root=tmp_path, database_path=Path("data/test.sqlite3"))
 

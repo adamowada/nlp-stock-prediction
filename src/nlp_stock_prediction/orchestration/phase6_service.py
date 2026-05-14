@@ -42,8 +42,10 @@ from nlp_stock_prediction.evaluation.drift import (
     write_calibration_drift_check_artifact,
 )
 from nlp_stock_prediction.evaluation.freshness import (
-    review_artifact_freshness,
+    review_artifact_file_freshness,
+    review_evidence_aging,
     write_artifact_freshness_review_artifact,
+    write_evidence_aging_summary_artifact,
 )
 from nlp_stock_prediction.evaluation.live_outcomes import (
     PHASE7_LIVE_OUTCOME_TOOL_NAME,
@@ -67,6 +69,11 @@ from nlp_stock_prediction.orchestration.phase2_common import Phase2WritePolicy
 from nlp_stock_prediction.orchestration.phase6_sources import (
     Phase6OutcomeEvaluationSource,
     load_phase6_outcome_evaluation_sources,
+)
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    LIVE_REPORT_DATA_MODE,
+    find_non_live_report_input_violations,
+    report_data_mode_from_run,
 )
 from nlp_stock_prediction.reliability import (
     build_source_reliability_notes,
@@ -103,6 +110,7 @@ EVALUATION_MATERIALIZE_OUTCOME_TOOL_ID = "evaluation.materialize_outcome"
 EVALUATION_LOAD_OUTCOMES_TOOL_ID = "evaluation.load_outcomes"
 EVALUATION_OUTCOME_SUMMARY_TOOL_ID = "evaluation.outcome_summary"
 EVALUATION_STALE_ARTIFACTS_TOOL_ID = "evaluation.stale_artifacts"
+EVALUATION_EVIDENCE_AGING_TOOL_ID = "evaluation.evidence_aging"
 EVALUATION_SOURCE_RELIABILITY_TOOL_ID = "evaluation.source_reliability"
 EVALUATION_PROVIDER_PLAYBOOK_TOOL_ID = "evaluation.provider_playbook"
 EVALUATION_ABLATION_TOOL_ID = "evaluation.ablation"
@@ -115,6 +123,7 @@ EVALUATION_MATERIALIZE_OUTCOME_TOOL_NAME = "evaluation_materialize_outcome"
 EVALUATION_LOAD_OUTCOMES_TOOL_NAME = "evaluation_load_outcomes"
 EVALUATION_OUTCOME_SUMMARY_TOOL_NAME = "evaluation_outcome_summary"
 EVALUATION_STALE_ARTIFACTS_TOOL_NAME = "evaluation_stale_artifacts"
+EVALUATION_EVIDENCE_AGING_TOOL_NAME = "evaluation_evidence_aging"
 EVALUATION_SOURCE_RELIABILITY_TOOL_NAME = "evaluation_source_reliability"
 EVALUATION_PROVIDER_PLAYBOOK_TOOL_NAME = "evaluation_provider_playbook"
 EVALUATION_ABLATION_TOOL_NAME = "evaluation_ablation"
@@ -125,6 +134,7 @@ EVALUATION_INSPECT_TOOL_NAME = "evaluation_inspect"
 
 EVALUATION_OUTCOME_SUMMARY_TOOL_VERSION = "evaluation.outcome-summary.v1"
 EVALUATION_STALE_ARTIFACTS_TOOL_VERSION = "evaluation.stale-artifacts.v1"
+EVALUATION_EVIDENCE_AGING_TOOL_VERSION = "evaluation.evidence-aging.v1"
 EVALUATION_SOURCE_RELIABILITY_TOOL_VERSION = "evaluation.source-reliability.v1"
 EVALUATION_PROVIDER_PLAYBOOK_TOOL_VERSION = "evaluation.provider-playbook.v1"
 EVALUATION_INSPECT_TOOL_VERSION = "evaluation.inspect.v1"
@@ -307,6 +317,17 @@ def build_phase6_tool_registry() -> Phase6ToolRegistry:
                 artifact_kinds=("artifact_freshness_review",),
             ),
             Phase6ToolMetadata(
+                tool_id=EVALUATION_EVIDENCE_AGING_TOOL_ID,
+                tool_name=EVALUATION_EVIDENCE_AGING_TOOL_NAME,
+                tool_version=EVALUATION_EVIDENCE_AGING_TOOL_VERSION,
+                stage="summarize",
+                description=(
+                    "Review stored evidence for aged-out, stale, missing, superseded, "
+                    "provider-replaced, or malformed provenance states."
+                ),
+                artifact_kinds=("evidence_aging_summary",),
+            ),
+            Phase6ToolMetadata(
                 tool_id=EVALUATION_SOURCE_RELIABILITY_TOOL_ID,
                 tool_name=EVALUATION_SOURCE_RELIABILITY_TOOL_NAME,
                 tool_version=EVALUATION_SOURCE_RELIABILITY_TOOL_VERSION,
@@ -450,13 +471,14 @@ class Phase6Service:
         created_at: str | None = None,
         evaluated_at: str | None = None,
     ) -> JsonObject:
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
         return self.phase7_live_outcome_materialization(
             run_id=run_id,
             candidate_id=candidate_id,
             point_in_time_cutoff=point_in_time_cutoff,
             evaluation_window_start=evaluation_window_start,
             evaluation_window_end=evaluation_window_end,
-            artifact_dir=artifact_dir,
+            artifact_dir=required_artifact_dir,
             report_date=report_date,
             market_artifact_ids=market_artifact_ids,
             created_at=created_at,
@@ -477,11 +499,12 @@ class Phase6Service:
         prediction_type: str | None = None,
         horizon: str | None = None,
     ) -> JsonObject:
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
         return self.phase6_signal_family_ablation(
             run_id=run_id,
             cohort_id=cohort_id,
             point_in_time_cutoff=point_in_time_cutoff,
-            artifact_dir=artifact_dir,
+            artifact_dir=required_artifact_dir,
             families=families,
             prediction_type=prediction_type,
             horizon=horizon,
@@ -500,12 +523,13 @@ class Phase6Service:
         prediction_type: str | None = None,
         horizon: str | None = None,
     ) -> JsonObject:
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
         return self.phase6_walk_forward_evaluation(
             run_id=run_id,
             cohort_id=cohort_id,
             point_in_time_cutoff=point_in_time_cutoff,
             minimum_train_size=minimum_train_size,
-            artifact_dir=artifact_dir,
+            artifact_dir=required_artifact_dir,
             test_size=test_size,
             step_size=step_size,
             prediction_type=prediction_type,
@@ -524,11 +548,12 @@ class Phase6Service:
         prediction_type: str | None = None,
         horizon: str | None = None,
     ) -> JsonObject:
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
         return self.phase6_calibration_summary(
             run_id=run_id,
             cohort_id=cohort_id,
             as_of=as_of,
-            artifact_dir=artifact_dir,
+            artifact_dir=required_artifact_dir,
             bin_edges=bin_edges,
             families=families,
             prediction_type=prediction_type,
@@ -549,12 +574,13 @@ class Phase6Service:
         degraded_delta: float = 0.10,
         improved_delta: float = 0.10,
     ) -> JsonObject:
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
         return self.phase7_calibration_drift_check(
             run_id=run_id,
             prior_calibration_id=prior_calibration_id,
             current_calibration_id=current_calibration_id,
             as_of=as_of,
-            artifact_dir=artifact_dir,
+            artifact_dir=required_artifact_dir,
             signal_family=signal_family,
             min_resolved_count=min_resolved_count,
             watch_delta=watch_delta,
@@ -579,7 +605,7 @@ class Phase6Service:
         created_at: str | None = None,
         evaluated_at: str | None = None,
     ) -> JsonObject:
-        self._require_run(run_id)
+        self._require_live_run(run_id)
         resolved_created_at = (
             None
             if created_at is None or not created_at.strip()
@@ -776,6 +802,7 @@ class Phase6Service:
         created_at: str | None = None,
     ) -> JsonObject:
         self._require_run(run_id)
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
         created = _parse_optional_aware_datetime(created_at, "created_at") or datetime.now(UTC)
         sources = self._outcome_sources(run_id)
         summaries = tuple(
@@ -822,7 +849,7 @@ class Phase6Service:
         artifact = ArtifactIndex.for_directory(
             store=self.store,
             repo_root=self.repo_root,
-            base_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            base_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=required_artifact_dir),
             created_at=created,
             produced_by=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
             tool_run_id=tool_run_id,
@@ -861,10 +888,15 @@ class Phase6Service:
         reviewed_at: str | None = None,
     ) -> JsonObject:
         self._require_run(run_id)
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
         reviewed = _parse_optional_aware_datetime(reviewed_at, "reviewed_at") or datetime.now(UTC)
         artifacts = self.store.list_artifacts_for_run(run_id)
         reviews = tuple(
-            review_artifact_freshness(artifact=artifact, reviewed_at=reviewed)
+            review_artifact_file_freshness(
+                artifact=artifact,
+                reviewed_at=reviewed,
+                repo_root=self.repo_root,
+            )
             for artifact in artifacts
         )
         artifact_ids = tuple(artifact.artifact_id for artifact in artifacts)
@@ -885,7 +917,9 @@ class Phase6Service:
         written = write_artifact_freshness_review_artifact(
             store=self.store,
             repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            artifact_dir=self._artifact_dir_for_run(
+                run_id=run_id, artifact_dir=required_artifact_dir
+            ),
             run_id=run_id,
             reviews=reviews,
             created_at=reviewed,
@@ -907,6 +941,61 @@ class Phase6Service:
             "reviewed_artifact_ids": list(artifact_ids),
         }
 
+    def evaluation_evidence_aging(
+        self,
+        *,
+        run_id: str,
+        artifact_dir: str | None = None,
+        reviewed_at: str | None = None,
+    ) -> JsonObject:
+        self._require_run(run_id)
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
+        reviewed = _parse_optional_aware_datetime(reviewed_at, "reviewed_at") or datetime.now(UTC)
+        evidence_records = self.store.list_evidence_for_run(run_id)
+        reviews = tuple(
+            review_evidence_aging(evidence=record, reviewed_at=reviewed)
+            for record in evidence_records
+        )
+        evidence_ids = tuple(record.evidence_id for record in evidence_records)
+        tool_run_id = _evaluation_tool_run_id(
+            tool_name=EVALUATION_EVIDENCE_AGING_TOOL_NAME,
+            run_id=run_id,
+            created_at=reviewed,
+            material=evidence_ids,
+        )
+        self._record_successful_tool_run(
+            tool_run_id=tool_run_id,
+            run_id=run_id,
+            tool_name=EVALUATION_EVIDENCE_AGING_TOOL_NAME,
+            tool_version=EVALUATION_EVIDENCE_AGING_TOOL_VERSION,
+            at=reviewed,
+            inputs={"run_id": run_id, "evidence_ids": list(evidence_ids)},
+        )
+        written = write_evidence_aging_summary_artifact(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir_for_run(
+                run_id=run_id, artifact_dir=required_artifact_dir
+            ),
+            run_id=run_id,
+            aging_records=reviews,
+            created_at=reviewed,
+            tool_run_id=tool_run_id,
+            metadata={"source_evidence_ids": list(evidence_ids)},
+        )
+        aging_counts: dict[str, int] = {}
+        for review in reviews:
+            aging_counts[review.age_status] = aging_counts.get(review.age_status, 0) + 1
+        return {
+            "run_id": run_id,
+            "tool_run_id": tool_run_id,
+            "artifact_id": written.artifact.artifact_id,
+            "artifact_path": Path(written.artifact.path).as_posix(),
+            "review_count": len(reviews),
+            "aging_counts": cast(JsonObject, aging_counts),
+            "reviewed_evidence_ids": list(evidence_ids),
+        }
+
     def evaluation_source_reliability(
         self,
         *,
@@ -914,7 +1003,8 @@ class Phase6Service:
         artifact_dir: str | None = None,
         created_at: str | None = None,
     ) -> JsonObject:
-        self._require_run(run_id)
+        self._require_live_run(run_id)
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
         created = _parse_optional_aware_datetime(created_at, "created_at") or datetime.now(UTC)
         evidence_records = self.store.list_evidence_for_run(run_id)
         if not evidence_records:
@@ -940,7 +1030,9 @@ class Phase6Service:
         artifacts = write_source_reliability_note_artifacts(
             store=self.store,
             repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            artifact_dir=self._artifact_dir_for_run(
+                run_id=run_id, artifact_dir=required_artifact_dir
+            ),
             run_id=run_id,
             tool_run_id=tool_run_id,
             notes=notes,
@@ -966,7 +1058,8 @@ class Phase6Service:
         artifact_dir: str | None = None,
         created_at: str | None = None,
     ) -> JsonObject:
-        self._require_run(run_id)
+        self._require_live_run(run_id)
+        required_artifact_dir = _required_artifact_dir(artifact_dir)
         created = _parse_optional_aware_datetime(created_at, "created_at") or datetime.now(UTC)
         playbooks = default_provider_replacement_playbooks(created_at=created)
         tool_run_id = _evaluation_tool_run_id(
@@ -986,7 +1079,9 @@ class Phase6Service:
         artifacts = write_provider_replacement_playbook_artifacts(
             store=self.store,
             repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            artifact_dir=self._artifact_dir_for_run(
+                run_id=run_id, artifact_dir=required_artifact_dir
+            ),
             run_id=run_id,
             tool_run_id=tool_run_id,
             playbooks=playbooks,
@@ -1256,6 +1351,20 @@ class Phase6Service:
             raise ValueError(f"research run does not exist: {run_id}")
         return run
 
+    def _require_live_run(self, run_id: str) -> ResearchRunRecord:
+        run = self._require_run(run_id)
+        mode = report_data_mode_from_run(run)
+        if mode != LIVE_REPORT_DATA_MODE:
+            raise ValueError(f"evaluation tool requires a live research run: {run_id}")
+        violations = find_non_live_report_input_violations(store=self.store, run=run)
+        if violations:
+            details = "; ".join(violation.as_text() for violation in violations[:8])
+            extra_count = len(violations) - 8
+            if extra_count > 0:
+                details = f"{details}; and {extra_count} more"
+            raise ValueError("live evaluation tools cannot use non-live inputs: " + details)
+        return run
+
     def _outcome_sources(self, run_id: str) -> tuple[Phase6OutcomeEvaluationSource, ...]:
         return load_phase6_outcome_evaluation_sources(
             store=self.store,
@@ -1313,6 +1422,12 @@ def _parse_aware_datetime(value: str, field_name: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{field_name} must include a timezone offset")
     return parsed.astimezone(UTC)
+
+
+def _required_artifact_dir(artifact_dir: str | None) -> str:
+    if artifact_dir is None or not artifact_dir.strip():
+        raise ValueError("artifact_dir is required for public evaluation writer tools")
+    return artifact_dir
 
 
 def _parse_optional_aware_datetime(value: str | None, field_name: str) -> datetime | None:

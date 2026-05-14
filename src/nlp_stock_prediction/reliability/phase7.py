@@ -25,6 +25,8 @@ from nlp_stock_prediction.storage.records import EvidenceRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 _TRACE_FIELDS = frozenset({"source_url", "permalink", "raw_identifier", "raw_snapshot_id"})
+_LIVE_RETRIEVAL_METHODS = frozenset({RetrievalMethod.OFFICIAL_API, RetrievalMethod.PUBLIC_SCRAPE})
+_NON_LIVE_TEXT_MARKERS = ("fixture", "dummy", "smoke")
 
 _REQUIRED_FIELDS_BY_FAMILY: dict[str, tuple[str, ...]] = {
     "market_data": (
@@ -128,6 +130,7 @@ def build_source_reliability_note(record: EvidenceRecord) -> SourceReliabilityNo
     provenance = _source_provenance(record)
     if provenance.retrieval_method == RetrievalMethod.FIXTURE:
         raise ValueError("live source reliability notes cannot use fixture retrieval")
+    _require_live_source_evidence(record, provenance)
 
     freshness_status, freshness_limitations = _freshness_status(record, provenance)
     observed_at = provenance.observed_at
@@ -210,7 +213,10 @@ def write_source_reliability_note_artifacts(
 
     artifacts: list[AuditArtifact] = []
     for note in notes:
-        artifact_id = f"artifact-source-reliability-{_stable_digest(note.note_id)}"
+        artifact_id = (
+            "artifact-source-reliability-"
+            f"{_stable_digest('|'.join((run_id, tool_run_id or '', note.note_id)))}"
+        )
         artifacts.append(
             ArtifactIndex.for_directory(
                 store=store,
@@ -378,7 +384,10 @@ def write_provider_replacement_playbook_artifacts(
 
     artifacts: list[AuditArtifact] = []
     for playbook in playbooks:
-        artifact_id = f"artifact-provider-playbook-{_stable_digest(playbook.playbook_id)}"
+        artifact_id = (
+            "artifact-provider-playbook-"
+            f"{_stable_digest('|'.join((run_id, tool_run_id or '', playbook.playbook_id)))}"
+        )
         artifacts.append(
             ArtifactIndex.for_directory(
                 store=store,
@@ -451,6 +460,29 @@ def _source_provenance(record: EvidenceRecord) -> SourceProvenance:
         ) from exc
 
 
+def _require_live_source_evidence(
+    record: EvidenceRecord,
+    provenance: SourceProvenance,
+) -> None:
+    for key in ("report_data_mode", "provider_mode", "input_data_mode"):
+        value = record.metadata.get(key)
+        if value is not None and value != "live":
+            raise ValueError(
+                f"live source reliability evidence {record.evidence_id} has non-live {key}"
+            )
+    if provenance.retrieval_method not in _LIVE_RETRIEVAL_METHODS:
+        raise ValueError(
+            "live source reliability evidence must come from an official API or public "
+            f"scraping provider: {provenance.retrieval_method.value}"
+        )
+    for value in (record.provider, provenance.provider_name, provenance.source_url or ""):
+        if _text_is_non_live(value):
+            raise ValueError(
+                f"live source reliability evidence {record.evidence_id} contains non-live "
+                f"provider provenance: {value}"
+            )
+
+
 def _freshness_status(
     record: EvidenceRecord,
     provenance: SourceProvenance,
@@ -507,6 +539,11 @@ def _source_reliability_note_id(evidence_id: str) -> str:
 
 def _stable_digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def _text_is_non_live(value: str) -> bool:
+    normalized = value.strip().lower()
+    return any(marker in normalized for marker in _NON_LIVE_TEXT_MARKERS)
 
 
 _DEFAULT_PROVIDER_REPLACEMENT_SPECS = (

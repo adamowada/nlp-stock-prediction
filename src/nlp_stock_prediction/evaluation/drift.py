@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -296,7 +296,7 @@ def write_calibration_drift_check_artifact(
     if current.calibration_run.run_id != run_id:
         raise ValueError("current calibration run_id must match drift run_id")
     cutoff = aware_utc(as_of, "as_of")
-    created = aware_utc(created_at or cutoff, "created_at")
+    created = aware_utc(created_at or max(datetime.now(UTC), cutoff), "created_at")
     drift_check = compute_calibration_drift_check(
         prior_summary=prior.summary,
         current_summary=current.summary,
@@ -520,6 +520,8 @@ def _compatibility_limitations(
         limitations.append("Prior calibration summary is after the drift as_of cutoff.")
     if current_summary.as_of > as_of:
         limitations.append("Current calibration summary is after the drift as_of cutoff.")
+    if prior_summary.as_of >= current_summary.as_of:
+        limitations.append("Calibration drift requires prior as_of to be before current as_of.")
     if prior_summary.cohort_id != current_summary.cohort_id:
         limitations.append("Calibration drift requires matching cohort_id.")
     if prior_summary.prediction_type != current_summary.prediction_type:

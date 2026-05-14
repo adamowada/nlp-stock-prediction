@@ -182,6 +182,14 @@ def _add_evaluation_parser(subparsers: argparse._SubParsersAction[argparse.Argum
     _add_artifact_root(stale_artifacts_parser)
     stale_artifacts_parser.add_argument("--reviewed-at")
 
+    evidence_aging_parser = evaluation_subparsers.add_parser(
+        "evidence-aging",
+        help="Write evidence aging reviews for one run.",
+    )
+    _add_run_id(evidence_aging_parser)
+    _add_artifact_root(evidence_aging_parser)
+    evidence_aging_parser.add_argument("--reviewed-at")
+
     source_reliability_parser = evaluation_subparsers.add_parser(
         "source-reliability",
         help="Write source reliability notes for stored live evidence.",
@@ -318,6 +326,12 @@ def run_evaluation_command(args: argparse.Namespace) -> int:
         )
     elif command == "stale-artifacts":
         result = service.evaluation_stale_artifacts(
+            run_id=args.run_id,
+            artifact_dir=args.artifact_root.as_posix(),
+            reviewed_at=args.reviewed_at,
+        )
+    elif command == "evidence-aging":
+        result = service.evaluation_evidence_aging(
             run_id=args.run_id,
             artifact_dir=args.artifact_root.as_posix(),
             reviewed_at=args.reviewed_at,

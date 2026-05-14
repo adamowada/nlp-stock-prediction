@@ -1049,8 +1049,8 @@ class CalibrationDriftCheck(ContractModel):
 
     @model_validator(mode="after")
     def validate_calibration_drift_check(self) -> CalibrationDriftCheck:
-        if self.as_of < self.created_at:
-            raise ValueError("calibration drift as_of must not be before created_at")
+        if self.created_at < self.as_of:
+            raise ValueError("calibration drift created_at must not be before as_of")
         if self.drift_status in _RESOLVED_DRIFT_STATUSES:
             if not self.prior_calibration_id or not self.current_calibration_id:
                 raise ValueError("resolved calibration drift requires prior and current summaries")

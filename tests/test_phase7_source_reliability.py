@@ -98,6 +98,17 @@ def test_missing_external_traceability_rejects_reliability_note() -> None:
         build_source_reliability_note(evidence)
 
 
+def test_non_live_source_evidence_rejects_reliability_note() -> None:
+    evidence = _evidence_record(
+        provider="fixture-market-data",
+        source_kind=SourceKind.MARKET_DATA,
+        retrieval_method=RetrievalMethod.FIXTURE,
+    )
+
+    with pytest.raises(ValueError, match="fixture retrieval"):
+        build_source_reliability_note(evidence)
+
+
 def test_source_reliability_notes_write_audit_artifacts(tmp_path: Path) -> None:
     store = initialize_database(tmp_path / "data" / "prediction-research.sqlite3")
     store.upsert_research_run(

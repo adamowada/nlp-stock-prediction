@@ -26,8 +26,17 @@ def build_server(repo_root: Path | None = None, database_path: Path | None = Non
             'python -m pip install -e ".[codex-smoke]"'
         ) from exc
 
-    resolved_repo_root = repo_root or Path.cwd()
-    resolved_database_path = database_path or Path("data/prediction-research.sqlite3")
+    resolved_repo_root = (repo_root or Path.cwd()).resolve()
+    if database_path is None:
+        raise ValueError("database_path is required for the Codex MCP server")
+    resolved_database_path = (
+        database_path if database_path.is_absolute() else resolved_repo_root / database_path
+    )
+    if not resolved_database_path.exists():
+        raise ValueError(
+            "database_path must reference an existing research SQLite database: "
+            f"{resolved_database_path}"
+        )
     phase4_service = Phase4Service(
         repo_root=resolved_repo_root,
         database_path=resolved_database_path,
@@ -49,7 +58,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--database",
         type=Path,
-        default=Path("data/prediction-research.sqlite3"),
+        required=True,
         help="Research SQLite database path, relative to --repo-root unless absolute.",
     )
     return parser.parse_args(argv)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.evaluation.freshness import (
     FreshnessPolicy,
+    review_artifact_file_freshness,
     review_artifact_freshness,
     write_artifact_freshness_review_artifact,
 )
@@ -133,3 +135,49 @@ def test_artifact_freshness_review_writes_indexed_audit_artifact(tmp_path: Path)
     payload = json.loads(Path(written.artifact.path).read_text(encoding="utf-8"))
     assert payload["schema_version"] == "artifact-freshness-review-artifact.v1"
     assert payload["artifact_freshness_reviews"][0]["artifact_id"] == artifact.artifact_id
+
+
+@pytest.mark.unit
+def test_artifact_file_freshness_reads_current_file_state(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "artifacts" / "evaluation" / "artifact-live.json"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text('{"schema_version":"market-data.v1"}\n', encoding="utf-8")
+    artifact = _artifact(
+        artifact_id="artifact-live-file-state",
+        metadata={"observed_at": REVIEWED_AT.isoformat()},
+        sha256="0" * 64,
+    )
+    artifact = ArtifactRecord(
+        **{
+            **artifact.__dict__,
+            "path": artifact_path.relative_to(tmp_path),
+        }
+    )
+
+    hash_mismatch = review_artifact_file_freshness(
+        artifact=artifact,
+        reviewed_at=REVIEWED_AT,
+        repo_root=tmp_path,
+    )
+    artifact_path.write_text("{not json", encoding="utf-8")
+    malformed = review_artifact_file_freshness(
+        artifact=ArtifactRecord(
+            **{
+                **artifact.__dict__,
+                "sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+            }
+        ),
+        reviewed_at=REVIEWED_AT,
+        repo_root=tmp_path,
+    )
+    artifact_path.unlink()
+    missing = review_artifact_file_freshness(
+        artifact=artifact,
+        reviewed_at=REVIEWED_AT,
+        repo_root=tmp_path,
+    )
+
+    assert hash_mismatch.freshness_status == "hash_mismatch"
+    assert hash_mismatch.expected_sha256 == "0" * 64
+    assert malformed.freshness_status == "malformed"
+    assert missing.freshness_status == "missing"

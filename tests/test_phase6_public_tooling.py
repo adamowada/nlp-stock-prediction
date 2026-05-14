@@ -278,6 +278,7 @@ def test_phase6_registry_exposes_live_evaluation_tool_suite() -> None:
         "evaluation_walk_forward",
         "evaluation_outcome_summary",
         "evaluation_stale_artifacts",
+        "evaluation_evidence_aging",
         "evaluation_source_reliability",
         "evaluation_provider_playbook",
         "evaluation_calibration",
@@ -293,6 +294,7 @@ def test_phase6_registry_exposes_live_evaluation_tool_suite() -> None:
         "evaluation_walk_forward": False,
         "evaluation_outcome_summary": False,
         "evaluation_stale_artifacts": False,
+        "evaluation_evidence_aging": False,
         "evaluation_source_reliability": False,
         "evaluation_provider_playbook": False,
         "evaluation_calibration": False,
@@ -351,6 +353,8 @@ def test_codex_mcp_server_registers_phase4_and_phase6_tooling(
     monkeypatch.setitem(sys.modules, "mcp", ModuleType("mcp"))
     monkeypatch.setitem(sys.modules, "mcp.server", ModuleType("mcp.server"))
     monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
+    db_path = tmp_path / "data" / "test.sqlite3"
+    SQLiteStore(db_path).initialize()
 
     server = build_server(repo_root=tmp_path, database_path=Path("data/test.sqlite3"))
 

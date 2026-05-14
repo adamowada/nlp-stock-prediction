@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Protocol, cast
@@ -35,6 +36,7 @@ from nlp_stock_prediction.evaluation.outcomes import (
 )
 from nlp_stock_prediction.ml.ohlcv import calendar_date
 from nlp_stock_prediction.orchestration.phase4_market_data import (
+    PHASE4_MARKET_DATA_TOOL_NAME,
     MarketDataToolResult,
     Phase4MarketDataArtifact,
     Phase4MarketDataTool,
@@ -53,6 +55,7 @@ from nlp_stock_prediction.providers.market import (
 )
 from nlp_stock_prediction.providers.scraping import HtmlCache
 from nlp_stock_prediction.storage.records import (
+    ArtifactRecord,
     EvaluationAttemptRecord,
     EvidenceRecord,
     InstrumentRecord,
@@ -69,6 +72,8 @@ _ALPHA_VANTAGE_API_KEY_ENVS = (
     "ALPHA_VANTAGE_API_KEY",
     "MARKET_DATA_ALPHA_VANTAGE_API_KEY",
 )
+_LIVE_RETRIEVAL_METHODS = frozenset({RetrievalMethod.OFFICIAL_API, RetrievalMethod.PUBLIC_SCRAPE})
+_NON_LIVE_TEXT_MARKERS = ("fixture", "dummy", "smoke")
 
 
 @dataclass(frozen=True)
@@ -257,11 +262,21 @@ def materialize_live_prediction_outcome_artifacts(
     instrument = store.get_instrument(target.instrument_id)
     if instrument is None:
         raise ValueError(f"instrument does not exist: {target.instrument_id}")
+    provided_market_artifact_ids = tuple(dict.fromkeys(market_artifact_ids))
+    preloaded_market_artifacts = tuple(
+        _load_live_market_artifact(
+            store=store,
+            repo_root=repo_root,
+            target=target,
+            artifact_id=artifact_id,
+        )
+        for artifact_id in provided_market_artifact_ids
+    )
 
     run_identity = _attempt_identity(
         target=target,
         evaluated_at=evaluated,
-        market_artifact_ids=tuple(market_artifact_ids),
+        market_artifact_ids=provided_market_artifact_ids,
     )
     attempt_id = (
         "attempt-phase7-live-outcome-"
@@ -307,7 +322,7 @@ def materialize_live_prediction_outcome_artifacts(
         source_run_id=candidate.run_id,
         tool_run_id=tool_run_id,
         target=target,
-        outcome_id=outcome_id,
+        outcome_id=None,
         status="running",
         started_at=created,
         completed_at=None,
@@ -325,13 +340,12 @@ def materialize_live_prediction_outcome_artifacts(
             f"Live outcome materialization is unavailable for asset class "
             f"{instrument.asset_class!r}; class-specific live adapters are not implemented."
         )
-    elif market_artifact_ids:
-        for artifact_id in tuple(dict.fromkeys(market_artifact_ids)):
-            payload = _load_market_artifact(
-                store=store,
-                repo_root=repo_root,
-                artifact_id=artifact_id,
-            )
+    elif preloaded_market_artifacts:
+        for artifact_id, payload in zip(
+            provided_market_artifact_ids,
+            preloaded_market_artifacts,
+            strict=True,
+        ):
             observed_market_artifact_ids.append(artifact_id)
             inspection = _inspect_market_payload(
                 target=target,
@@ -548,6 +562,11 @@ def _fetch_market_artifact(
 ) -> MarketDataToolResult:
     request_id = f"phase7-live-outcome-market-data-{attempt_digest[:12]}-{index}"
     provider_slug = slug(_provider_name(selection.provider), fallback="provider")
+    source_url = _source_url_for_selection(
+        selection=selection,
+        target=target,
+        evaluated_at=evaluated_at,
+    )
     tool = Phase4MarketDataTool(
         store=store,
         repo_root=repo_root,
@@ -556,13 +575,13 @@ def _fetch_market_artifact(
         now=lambda: evaluated_at,
         retrieval_method=selection.retrieval_method,
     )
-    return tool.run(
+    result = tool.run(
         run_id=run_id,
         run_date=evaluated_at.date(),
         symbol=target.symbol,
         instrument_id=target.instrument_id,
         request_id=request_id,
-        source_url=selection.source_url,
+        source_url=source_url,
         options={"phase7_live_outcome_role": selection.role, **selection.options},
         tool_run_id=f"tool-phase7-market-data-{provider_slug}-{attempt_digest[:10]}-{index}",
         artifact_id=f"artifact-phase7-market-data-{provider_slug}-{attempt_digest[:10]}-{index}",
@@ -573,6 +592,13 @@ def _fetch_market_artifact(
         ),
         source_query_id=f"query-phase7-market-data-{provider_slug}-{attempt_digest[:10]}-{index}",
     )
+    _validate_live_market_payload(
+        store=store,
+        artifact=store.get_artifact(result.artifact.artifact_id),
+        payload=result.artifact_payload,
+        target=target,
+    )
+    return result
 
 
 def _inspect_market_payload(
@@ -733,7 +759,7 @@ def _record_attempt(
     source_run_id: str | None,
     tool_run_id: str,
     target: PredictionEvaluationTarget,
-    outcome_id: str,
+    outcome_id: str | None,
     status: str,
     started_at: datetime,
     completed_at: datetime | None,
@@ -748,7 +774,7 @@ def _record_attempt(
             attempt_kind="outcome_evaluation",
             subject_id=target.candidate_id,
             candidate_id=target.candidate_id,
-            outcome_id=None,
+            outcome_id=outcome_id,
             instrument_id=target.instrument_id,
             symbol=target.symbol,
             status=status,
@@ -759,10 +785,11 @@ def _record_attempt(
     )
 
 
-def _load_market_artifact(
+def _load_live_market_artifact(
     *,
     store: SQLiteStore,
     repo_root: Path,
+    target: PredictionEvaluationTarget,
     artifact_id: str,
 ) -> Phase4MarketDataArtifact:
     artifact = store.get_artifact(artifact_id)
@@ -770,8 +797,111 @@ def _load_market_artifact(
         raise ValueError(f"market artifact does not exist: {artifact_id}")
     if artifact.artifact_type != "market_data":
         raise ValueError(f"market artifact must be market_data: {artifact_id}")
+    if artifact.produced_by != PHASE4_MARKET_DATA_TOOL_NAME:
+        raise ValueError(
+            f"live market artifact must be produced by the Phase 4 market-data tool: {artifact_id}"
+        )
+    if artifact.tool_run_id is None:
+        raise ValueError(f"live market artifact is missing tool_run_id: {artifact_id}")
+    tool_run = store.get_tool_run(artifact.tool_run_id)
+    if tool_run is None:
+        raise ValueError(
+            f"live market artifact references a missing tool run: {artifact.tool_run_id}"
+        )
+    if tool_run.run_id != target.run_id:
+        raise ValueError(
+            "live market artifact tool run_id must match the evaluation target run_id: "
+            f"{tool_run.run_id} != {target.run_id}"
+        )
+    _require_live_metadata("market artifact", artifact.artifact_id, artifact.metadata)
+    _require_live_metadata("market tool run", tool_run.tool_run_id, tool_run.inputs)
     path = artifact.path if artifact.path.is_absolute() else repo_root / artifact.path
-    return load_phase4_market_data_artifact(path)
+    if not path.exists():
+        raise ValueError(f"live market artifact file is missing: {path.as_posix()}")
+    actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_sha256 != artifact.sha256:
+        raise ValueError(f"live market artifact hash does not match storage row: {artifact_id}")
+    payload = load_phase4_market_data_artifact(path)
+    _validate_live_market_payload(
+        store=store,
+        artifact=artifact,
+        payload=payload,
+        target=target,
+    )
+    return payload
+
+
+def _validate_live_market_payload(
+    *,
+    store: SQLiteStore,
+    artifact: ArtifactRecord | None,
+    payload: Phase4MarketDataArtifact,
+    target: PredictionEvaluationTarget,
+) -> None:
+    if artifact is None:
+        raise ValueError(f"live market artifact was not indexed: {payload.artifact_id}")
+    if payload.run_id != target.run_id:
+        raise ValueError(
+            "live market artifact payload run_id must match the evaluation target run_id: "
+            f"{payload.run_id} != {target.run_id}"
+        )
+    if payload.tool_run_id != artifact.tool_run_id:
+        raise ValueError(
+            "live market artifact payload tool_run_id must match the indexed artifact row."
+        )
+    if payload.artifact_id != artifact.artifact_id:
+        raise ValueError(
+            "live market artifact payload artifact_id must match the indexed artifact row."
+        )
+    if payload.provenance.retrieval_method not in _LIVE_RETRIEVAL_METHODS:
+        raise ValueError(
+            "live market artifact must come from an official API or public scraping provider: "
+            f"{payload.provenance.retrieval_method.value}"
+        )
+    if not payload.provenance.source_query_id:
+        raise ValueError(f"live market artifact is missing source_query_id: {artifact.artifact_id}")
+    if not payload.provenance.url or not payload.provenance.url.startswith(("http://", "https://")):
+        raise ValueError(
+            f"live market artifact is missing a reproducible source URL: {artifact.artifact_id}"
+        )
+    if not payload.provenance.raw_identifier or not payload.provenance.raw_snapshot_id:
+        raise ValueError(
+            f"live market artifact is missing raw provider identifiers: {artifact.artifact_id}"
+        )
+    if _text_is_non_live(payload.provenance.provider_name):
+        raise ValueError(
+            f"live market artifact provider is not allowed: {payload.provenance.provider_name}"
+        )
+    source_query = store.get_source_query(payload.provenance.source_query_id)
+    if source_query is None:
+        raise ValueError(
+            "live market artifact references a missing source query: "
+            f"{payload.provenance.source_query_id}"
+        )
+    if source_query.url != payload.provenance.url:
+        raise ValueError("live market artifact source query URL does not match payload URL")
+    if source_query.provider != payload.provenance.provider_name:
+        raise ValueError("live market artifact source query provider does not match payload")
+    _require_live_metadata(
+        "market source query", source_query.source_query_id, source_query.metadata
+    )
+
+
+def _source_url_for_selection(
+    *,
+    selection: LiveOutcomeMarketDataSelection,
+    target: PredictionEvaluationTarget,
+    evaluated_at: datetime,
+) -> str | Path | None:
+    provider_name = _provider_name(selection.provider)
+    if provider_name == YahooFinanceChartMarketDataProvider.provider_name:
+        end_date = evaluated_at.date()
+        return yahoo_finance_chart_source_url(
+            target.symbol,
+            start_date=end_date - timedelta(days=370),
+            end_date=end_date,
+        )
+    return selection.source_url
 
 
 def _provider_attempt_summary(
@@ -811,6 +941,29 @@ def _attempt_identity(
             )
         )
     )
+
+
+def _require_live_metadata(record_type: str, record_id: str, metadata: JsonObject) -> None:
+    for key in ("report_data_mode", "provider_mode", "input_data_mode"):
+        value = metadata.get(key)
+        if value is not None and value != "live":
+            raise ValueError(f"{record_type} {record_id} has non-live {key}: {value!r}")
+    for key, value in metadata.items():
+        if isinstance(value, str) and _text_is_non_live(value):
+            raise ValueError(f"{record_type} {record_id} contains non-live metadata: {key}")
+        if isinstance(value, dict):
+            _require_live_metadata(record_type, record_id, value)
+        elif isinstance(value, list | tuple):
+            for item in value:
+                if isinstance(item, dict):
+                    _require_live_metadata(record_type, record_id, item)
+                elif isinstance(item, str) and _text_is_non_live(item):
+                    raise ValueError(f"{record_type} {record_id} contains non-live metadata: {key}")
+
+
+def _text_is_non_live(value: str) -> bool:
+    normalized = value.strip().lower()
+    return any(marker in normalized for marker in _NON_LIVE_TEXT_MARKERS)
 
 
 def _observed_result_for_direction(

@@ -31,7 +31,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         point_in_time_cutoff: str,
         evaluation_window_start: str,
         evaluation_window_end: str,
-        artifact_dir: str | None = None,
+        artifact_dir: str,
         report_date: str | None = None,
         market_artifact_ids: list[str] | None = None,
         created_at: str | None = None,
@@ -61,7 +61,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
 
     def evaluation_outcome_summary(
         run_id: str,
-        artifact_dir: str | None = None,
+        artifact_dir: str,
         created_at: str | None = None,
     ) -> dict[str, object]:
         """Persist cross-run outcome review summaries from stored outcomes."""
@@ -76,7 +76,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
 
     def evaluation_stale_artifacts(
         run_id: str,
-        artifact_dir: str | None = None,
+        artifact_dir: str,
         reviewed_at: str | None = None,
     ) -> dict[str, object]:
         """Persist artifact freshness reviews for a research run."""
@@ -89,9 +89,24 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
             )
         )
 
+    def evaluation_evidence_aging(
+        run_id: str,
+        artifact_dir: str,
+        reviewed_at: str | None = None,
+    ) -> dict[str, object]:
+        """Persist evidence aging reviews for a research run."""
+
+        return dict(
+            service.evaluation_evidence_aging(
+                run_id=run_id,
+                artifact_dir=artifact_dir,
+                reviewed_at=reviewed_at,
+            )
+        )
+
     def evaluation_source_reliability(
         run_id: str,
-        artifact_dir: str | None = None,
+        artifact_dir: str,
         created_at: str | None = None,
     ) -> dict[str, object]:
         """Persist source reliability notes from stored live evidence."""
@@ -106,7 +121,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
 
     def evaluation_provider_playbook(
         run_id: str,
-        artifact_dir: str | None = None,
+        artifact_dir: str,
         created_at: str | None = None,
     ) -> dict[str, object]:
         """Persist provider replacement playbooks."""
@@ -123,7 +138,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         run_id: str,
         cohort_id: str,
         point_in_time_cutoff: str,
-        artifact_dir: str | None = None,
+        artifact_dir: str,
         families: list[str] | None = None,
         prediction_type: str | None = None,
         horizon: str | None = None,
@@ -147,7 +162,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         cohort_id: str,
         point_in_time_cutoff: str,
         minimum_train_size: int,
-        artifact_dir: str | None = None,
+        artifact_dir: str,
         test_size: int = 1,
         step_size: int = 1,
         prediction_type: str | None = None,
@@ -173,7 +188,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         run_id: str,
         cohort_id: str,
         as_of: str,
-        artifact_dir: str | None = None,
+        artifact_dir: str,
         bin_edges: list[float] | None = None,
         families: list[str] | None = None,
         prediction_type: str | None = None,
@@ -201,7 +216,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         prior_calibration_id: str,
         current_calibration_id: str,
         as_of: str,
-        artifact_dir: str | None = None,
+        artifact_dir: str,
         signal_family: str | None = None,
         min_resolved_count: int = 10,
         watch_delta: float = 0.05,
@@ -236,6 +251,7 @@ def register_phase6_mcp_tools(server: Any, service: Phase6Service) -> None:
         "evaluation_load_outcomes": evaluation_load_outcomes,
         "evaluation_outcome_summary": evaluation_outcome_summary,
         "evaluation_stale_artifacts": evaluation_stale_artifacts,
+        "evaluation_evidence_aging": evaluation_evidence_aging,
         "evaluation_source_reliability": evaluation_source_reliability,
         "evaluation_provider_playbook": evaluation_provider_playbook,
         "evaluation_ablation": evaluation_ablation,

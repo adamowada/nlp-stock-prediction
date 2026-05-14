@@ -185,10 +185,10 @@ python -m nlp_stock_prediction evaluation --database data/prediction-research.sq
 ```
 
 `evaluation` subcommands cover `inspect`, `materialize-outcome`, `load-outcomes`,
-`outcome-summary`, `stale-artifacts`, `source-reliability`, `provider-playbook`, `calibration`,
-`walk-forward`, `ablation`, and `calibration-drift`. The commands require an explicit database and
-run ID, and write commands require `--artifact-root` so audit writes stay under the repository write
-policy.
+`outcome-summary`, `stale-artifacts`, `evidence-aging`, `source-reliability`,
+`provider-playbook`, `calibration`, `walk-forward`, `ablation`, and `calibration-drift`. The
+commands require an explicit database and run ID, and write commands require `--artifact-root` so
+audit writes stay under the repository write policy.
 
 ## Current Phase 5 Prediction Reports
 

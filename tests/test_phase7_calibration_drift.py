@@ -211,6 +211,44 @@ def test_calibration_drift_rejects_incompatible_cohort_shape() -> None:
     assert any("horizon" in limitation for limitation in drift.limitations)
 
 
+def test_calibration_drift_rejects_reversed_summary_order() -> None:
+    drift = compute_calibration_drift_check(
+        prior_summary=_summary("calibration-prior-reversed", as_of=CURRENT_AS_OF),
+        current_summary=_summary("calibration-current-reversed", as_of=PRIOR_AS_OF),
+        created_at=DRIFT_AS_OF,
+        as_of=DRIFT_AS_OF,
+        source_calibration_artifact_ids=(
+            "artifact-calibration-prior-reversed",
+            "artifact-calibration-current-reversed",
+        ),
+        thresholds=THRESHOLDS,
+    )
+
+    assert drift.drift_status == "not_evaluable"
+    assert drift.metric_deltas == {}
+    assert any("prior as_of" in limitation for limitation in drift.limitations)
+
+
+def test_calibration_drift_allows_real_creation_after_historical_cutoff() -> None:
+    created_at = datetime(2026, 5, 30, 12, 0, tzinfo=UTC)
+
+    drift = compute_calibration_drift_check(
+        prior_summary=_summary("calibration-prior-historical", as_of=PRIOR_AS_OF),
+        current_summary=_summary("calibration-current-historical", as_of=CURRENT_AS_OF),
+        created_at=created_at,
+        as_of=DRIFT_AS_OF,
+        source_calibration_artifact_ids=(
+            "artifact-calibration-prior-historical",
+            "artifact-calibration-current-historical",
+        ),
+        thresholds=THRESHOLDS,
+    )
+
+    assert drift.created_at == created_at
+    assert drift.as_of == DRIFT_AS_OF
+    assert drift.drift_status == "stable"
+
+
 def test_calibration_drift_preserves_provider_replacement_and_aging_context() -> None:
     drift = compute_calibration_drift_check(
         prior_summary=_summary("calibration-prior-provenance", as_of=PRIOR_AS_OF),

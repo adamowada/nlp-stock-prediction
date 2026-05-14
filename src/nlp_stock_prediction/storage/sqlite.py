@@ -2173,8 +2173,8 @@ class SQLiteStore:
         _validate_required(record.run_id, "run_id")
         _validate_required(record.drift_status, "drift_status")
         _validate_live_data_modes(record.data_mode, record.provider_mode)
-        if record.as_of < record.created_at:
-            raise ValueError("calibration drift as_of must not be before created_at")
+        if record.created_at < record.as_of:
+            raise ValueError("calibration drift created_at must not be before as_of")
         with self.connect() as connection:
             _ensure_initialized(connection)
             _validate_evaluation_attempt_alignment(
@@ -3446,11 +3446,14 @@ def _validate_evaluation_attempt_identity_update(
         "data_mode": record.data_mode,
         "provider_mode": record.provider_mode,
     }
-    changed = [
-        column
-        for column, expected in identity_values.items()
-        if cast(str | None, existing[column]) != expected
-    ]
+    changed = []
+    for column, expected in identity_values.items():
+        existing_value = cast(str | None, existing[column])
+        if existing_value == expected:
+            continue
+        if column == "outcome_id" and existing_value is None and expected is not None:
+            continue
+        changed.append(column)
     if changed:
         raise ValueError("evaluation attempt identity fields are immutable: " + ", ".join(changed))
 

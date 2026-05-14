@@ -224,13 +224,13 @@ def test_live_reddit_public_page_shape_smoke() -> None:
         )
     )
 
-    assert result.status in {
-        ProviderStatus.OK,
-        ProviderStatus.PARTIAL,
-        ProviderStatus.STALE,
-        ProviderStatus.FAILED,
-        ProviderStatus.UNAUTHORIZED,
-    }
+    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL}:
+        pytest.fail(
+            "Reddit public-page live scraping smoke did not return usable ticker output: "
+            + "; ".join(warning.message for warning in result.warnings)
+        )
+    assert result.data is not None
+    assert result.data.candidates
 
 
 @pytest.mark.live_scraping
@@ -247,13 +247,13 @@ def test_live_apnews_public_hub_shape_smoke() -> None:
         )
     )
 
-    assert result.status in {
-        ProviderStatus.OK,
-        ProviderStatus.EMPTY,
-        ProviderStatus.PARTIAL,
-        ProviderStatus.STALE,
-        ProviderStatus.MALFORMED,
-    }
+    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL}:
+        pytest.fail(
+            "AP News public hub live scraping smoke did not return usable evidence: "
+            + "; ".join(warning.message for warning in result.warnings)
+        )
+    assert result.data is not None
+    assert result.data
 
 
 @pytest.mark.live_scraping
@@ -269,12 +269,13 @@ def test_live_candlecharts_feasibility_shape_smoke() -> None:
         )
     )
 
-    assert result.status in {
-        ProviderStatus.OK,
-        ProviderStatus.EMPTY,
-        ProviderStatus.STALE,
-        ProviderStatus.MALFORMED,
-    }
+    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL}:
+        pytest.fail(
+            "Candlecharts public-page live scraping smoke did not return usable candles: "
+            + "; ".join(warning.message for warning in result.warnings)
+        )
+    assert result.data is not None
+    assert result.data.bars
 
 
 @pytest.mark.unit

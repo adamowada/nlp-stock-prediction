@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -19,6 +21,7 @@ from nlp_stock_prediction.contracts.base import (
 from nlp_stock_prediction.contracts.enums import FreshnessStatus, SourceKind
 from nlp_stock_prediction.contracts.evaluation import (
     ArtifactFreshnessReview,
+    ArtifactFreshnessReviewStatus,
     EvidenceAgingRecord,
 )
 from nlp_stock_prediction.contracts.report import AuditArtifact
@@ -191,6 +194,94 @@ def review_artifact_freshness(
     )
 
 
+def review_artifact_file_freshness(
+    *,
+    artifact: ArtifactRecord | None,
+    reviewed_at: datetime,
+    repo_root: Path,
+    artifact_id: str | None = None,
+    policy: FreshnessPolicy = DEFAULT_FRESHNESS_POLICY,
+    source_evidence_ids: tuple[str, ...] = (),
+    source_artifact_ids: tuple[str, ...] = (),
+) -> ArtifactFreshnessReview:
+    """Classify an artifact row after checking the current file on disk."""
+
+    if artifact is None:
+        return review_artifact_freshness(
+            artifact=None,
+            artifact_id=artifact_id,
+            reviewed_at=reviewed_at,
+            policy=policy,
+            source_evidence_ids=source_evidence_ids,
+            source_artifact_ids=source_artifact_ids,
+        )
+    reviewed = aware_utc(reviewed_at, "reviewed_at")
+    path = artifact.path if artifact.path.is_absolute() else repo_root / artifact.path
+    if not path.exists():
+        return _file_state_freshness_review(
+            artifact=artifact,
+            reviewed_at=reviewed,
+            status="missing",
+            limitations=(f"Artifact file is missing: {path.as_posix()}.",),
+            metadata={"review_reason": "missing_file", "artifact_path": path.as_posix()},
+            source_evidence_ids=source_evidence_ids,
+            source_artifact_ids=source_artifact_ids,
+        )
+    actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_sha256 != artifact.sha256:
+        return _file_state_freshness_review(
+            artifact=artifact,
+            reviewed_at=reviewed,
+            status="hash_mismatch",
+            limitations=(
+                f"Artifact hash mismatch: expected {artifact.sha256}, observed {actual_sha256}.",
+            ),
+            metadata={"review_reason": "hash_mismatch", "artifact_path": path.as_posix()},
+            sha256=actual_sha256,
+            expected_sha256=artifact.sha256,
+            source_evidence_ids=source_evidence_ids,
+            source_artifact_ids=source_artifact_ids,
+        )
+    if path.suffix.lower() == ".json":
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return _file_state_freshness_review(
+                artifact=artifact,
+                reviewed_at=reviewed,
+                status="malformed",
+                limitations=(f"Artifact JSON payload is malformed: {exc}.",),
+                metadata={
+                    "review_reason": "malformed_file",
+                    "artifact_path": path.as_posix(),
+                    "schema_version": artifact.schema_version,
+                },
+                source_evidence_ids=source_evidence_ids,
+                source_artifact_ids=source_artifact_ids,
+            )
+        if not isinstance(payload, dict):
+            return _file_state_freshness_review(
+                artifact=artifact,
+                reviewed_at=reviewed,
+                status="malformed",
+                limitations=("Artifact JSON payload must be an object.",),
+                metadata={
+                    "review_reason": "malformed_file",
+                    "artifact_path": path.as_posix(),
+                    "schema_version": artifact.schema_version,
+                },
+                source_evidence_ids=source_evidence_ids,
+                source_artifact_ids=source_artifact_ids,
+            )
+    return review_artifact_freshness(
+        artifact=artifact,
+        reviewed_at=reviewed,
+        policy=policy,
+        source_evidence_ids=source_evidence_ids,
+        source_artifact_ids=source_artifact_ids,
+    )
+
+
 def review_evidence_aging(
     *,
     evidence: EvidenceRecord | None,
@@ -333,11 +424,20 @@ def review_candidate_artifact_freshness(
     policy: FreshnessPolicy = DEFAULT_FRESHNESS_POLICY,
 ) -> tuple[ArtifactFreshnessReview, ...]:
     linked_artifacts = store.list_candidate_artifact_links(candidate.candidate_id)
+    evidence_ids = tuple(dict.fromkeys((*candidate.evidence_for, *candidate.evidence_against)))
+    evidence_artifact_ids_by_artifact: dict[str, list[str]] = {}
+    for evidence_id in evidence_ids:
+        evidence = store.get_evidence(evidence_id)
+        if evidence is not None and evidence.artifact_id:
+            evidence_artifact_ids_by_artifact.setdefault(evidence.artifact_id, []).append(
+                evidence_id
+            )
     artifact_ids = tuple(
         dict.fromkeys(
             (
                 *candidate.signal_artifacts,
                 *(link.artifact_id for link in linked_artifacts),
+                *evidence_artifact_ids_by_artifact,
             )
         )
     )
@@ -347,6 +447,7 @@ def review_candidate_artifact_freshness(
             artifact_id=artifact_id,
             reviewed_at=reviewed_at,
             policy=policy,
+            source_evidence_ids=tuple(evidence_artifact_ids_by_artifact.get(artifact_id, ())),
         )
         for artifact_id in artifact_ids
     )
@@ -616,6 +717,46 @@ def _json_optional_text(data: JsonObject, key: str) -> str | None:
     return None
 
 
+def _file_state_freshness_review(
+    *,
+    artifact: ArtifactRecord,
+    reviewed_at: datetime,
+    status: str,
+    limitations: tuple[str, ...],
+    metadata: JsonObject,
+    source_evidence_ids: tuple[str, ...],
+    source_artifact_ids: tuple[str, ...],
+    sha256: str | None = None,
+    expected_sha256: str | None = None,
+) -> ArtifactFreshnessReview:
+    created_at = (
+        None
+        if artifact.created_at is None
+        else aware_utc(artifact.created_at, "artifact.created_at")
+    )
+    return ArtifactFreshnessReview(
+        freshness_review_id=_freshness_review_id(artifact.artifact_id, reviewed_at),
+        artifact_id=artifact.artifact_id,
+        artifact_type=artifact.artifact_type,
+        provider=_json_optional_text(artifact.metadata, "provider")
+        or _json_optional_text(artifact.metadata, "provider_name"),
+        produced_by=artifact.produced_by,
+        reviewed_at=reviewed_at,
+        created_at=created_at if created_at is None or created_at <= reviewed_at else None,
+        freshness_status=cast(ArtifactFreshnessReviewStatus, status),
+        sha256=artifact.sha256 if sha256 is None else sha256,
+        expected_sha256=expected_sha256,
+        source_evidence_ids=tuple(dict.fromkeys(source_evidence_ids)),
+        source_artifact_ids=tuple(dict.fromkeys(source_artifact_ids)),
+        limitations=limitations,
+        metadata={
+            **metadata,
+            "record_count": artifact.record_count,
+            "instrument_id": _json_optional_text(artifact.metadata, "instrument_id"),
+        },
+    )
+
+
 def _freshness_review_id(artifact_id: str, reviewed_at: datetime) -> str:
     return (
         f"freshness-{slug(artifact_id, allow_file_safe_punctuation=True)}-"
@@ -653,6 +794,7 @@ __all__ = [
     "freshness_limitations",
     "normalize_artifact_timestamps",
     "phase7_freshness_metadata",
+    "review_artifact_file_freshness",
     "review_artifact_freshness",
     "review_candidate_artifact_freshness",
     "review_candidate_evidence_aging",

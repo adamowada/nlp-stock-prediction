@@ -287,11 +287,13 @@ names. CLI subcommands under `python -m nlp_stock_prediction evaluation` map to 
 writers and readers: `materialize-outcome` writes live `prediction_outcome` and
 `prediction_outcome_evaluation` artifacts; `load-outcomes` validates persisted outcome-evaluation
 payloads; `outcome-summary` writes `outcome_review_summary`; `stale-artifacts` writes
-`artifact_freshness_review`; `source-reliability` writes `source_reliability_note`;
-`provider-playbook` writes `provider_replacement_playbook`; `ablation`, `walk-forward`,
-`calibration`, and `calibration-drift` write their matching evaluation artifact types; and
-`inspect` returns stored run counts. Each command requires an explicit research database and run ID,
-and every writer requires an artifact root that passes repository write-policy checks.
+`artifact_freshness_review`; `evidence-aging` writes `evidence_aging_summary`;
+`source-reliability` writes `source_reliability_note`; `provider-playbook` writes
+`provider_replacement_playbook`; `ablation`, `walk-forward`, `calibration`, and
+`calibration-drift` write their matching evaluation artifact types; and `inspect` returns stored run
+counts. Each command requires an explicit research database and run ID, and every writer requires an
+artifact root that passes repository write-policy checks. The local Codex MCP surface follows the
+same existing-database and explicit-artifact-root boundary.
 
 Rendered Markdown/JSON reports now integrate persisted Phase 6 outputs without recomputing them.
 Stored `prediction_outcome_evaluations` for rendered candidates become `PriorOutcomeReview`

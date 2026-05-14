@@ -264,8 +264,9 @@ python -m nlp_stock_prediction evaluation --database data/prediction-research.sq
 Every evaluation command requires `--database` and `--run-id`. The database path must already exist;
 missing paths are rejected instead of silently creating a new run database. Commands that write audit
 artifacts require `--artifact-root`, which is resolved through the same repository write policy used
-by report generation. Available subcommands are `inspect`, `materialize-outcome`, `load-outcomes`,
-`outcome-summary`, `stale-artifacts`, `source-reliability`, `provider-playbook`, `calibration`,
+by report generation. The local Codex MCP server uses the same explicit existing database boundary.
+Available subcommands are `inspect`, `materialize-outcome`, `load-outcomes`, `outcome-summary`,
+`stale-artifacts`, `evidence-aging`, `source-reliability`, `provider-playbook`, `calibration`,
 `walk-forward`, `ablation`, and `calibration-drift`.
 
 ## Instrument Universe

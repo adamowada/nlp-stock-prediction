@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from nlp_stock_prediction.contracts import AuditArtifact
 from nlp_stock_prediction.reliability import (
     ProviderReplacementSpec,
     build_provider_compatibility_note,
@@ -132,3 +133,34 @@ def test_provider_replacement_playbooks_write_audit_artifacts(tmp_path: Path) ->
     ledger_record = store.get_artifact(artifact.artifact_id)
     assert ledger_record is not None
     assert ledger_record.artifact_type == "provider_replacement_playbook"
+
+
+def test_provider_replacement_playbook_artifact_ids_are_run_scoped(tmp_path: Path) -> None:
+    store = initialize_database(tmp_path / "data" / "prediction-research.sqlite3")
+    playbook = default_provider_replacement_playbooks(created_at=NOW)[0]
+    artifacts: list[AuditArtifact] = []
+    for run_id in ("run-live-msft-a", "run-live-msft-b"):
+        store.upsert_research_run(
+            ResearchRunRecord(
+                run_id=run_id,
+                run_kind="phase7_stage6_test",
+                objective="Write provider replacement playbook artifacts for a live report.",
+                status="completed",
+                started_at=NOW,
+                completed_at=NOW,
+                metadata={"report_data_mode": "live", "provider_mode": "live"},
+            )
+        )
+        artifacts.extend(
+            write_provider_replacement_playbook_artifacts(
+                store=store,
+                repo_root=tmp_path,
+                artifact_dir=tmp_path / "reports" / run_id / "audit",
+                run_id=run_id,
+                tool_run_id=None,
+                playbooks=(playbook,),
+                created_at=NOW,
+            )
+        )
+
+    assert len({artifact.artifact_id for artifact in artifacts}) == 2

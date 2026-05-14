@@ -20,6 +20,7 @@ from nlp_stock_prediction.contracts import (
     ProviderResult,
     ProviderStatus,
     ProviderWarning,
+    RetrievalMethod,
     WarningCode,
     WarningSeverity,
 )
@@ -31,6 +32,7 @@ from nlp_stock_prediction.evaluation.live_outcomes import (
 from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
 from nlp_stock_prediction.providers._base import provider_health, provider_result, provider_warning
 from nlp_stock_prediction.storage import (
+    ArtifactRecord,
     InstrumentRecord,
     PredictionCandidateRecord,
     ResearchRunRecord,
@@ -117,6 +119,7 @@ class _StaticMarketDataProvider:
             credential_state=CredentialState.NOT_REQUIRED,
             data=snapshot,
             warnings=warnings,
+            raw_snapshot_id="verified-live-market-data-msft-2026-05-19",
         )
 
     def health(self) -> ProviderHealth:
@@ -204,7 +207,7 @@ def _store(tmp_path: Path, *, asset_class: str = "stock") -> SQLiteStore:
 
 
 @pytest.mark.unit
-def test_live_outcome_materialization_fetches_real_provider_artifact_and_scores_window(
+def test_live_outcome_materialization_fetches_provider_artifact_and_scores_window(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -218,8 +221,9 @@ def test_live_outcome_materialization_fetches_real_provider_artifact_and_scores_
     factory = _StaticSelectionFactory(
         LiveOutcomeMarketDataSelection(
             provider=provider,
-            source_url="https://example.test/msft/daily",
+            source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
             role="primary",
+            retrieval_method=RetrievalMethod.OFFICIAL_API,
         )
     )
 
@@ -277,7 +281,12 @@ def test_live_outcome_materialization_can_reuse_existing_market_artifact(
         evaluation_window_end=WINDOW_END,
         evaluated_at=EVALUATED_AT,
         provider_factory=_StaticSelectionFactory(
-            LiveOutcomeMarketDataSelection(provider=provider, role="primary")
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
         ),
     )
 
@@ -301,6 +310,64 @@ def test_live_outcome_materialization_can_reuse_existing_market_artifact(
 
 
 @pytest.mark.unit
+def test_live_outcome_materialization_rejects_non_live_reused_market_artifact(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(
+        bars=((date(2026, 5, 13), Decimal("100")), (date(2026, 5, 18), Decimal("103")))
+    )
+    artifact_dir = tmp_path / "reports" / RUN_ID / "audit"
+    first = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=artifact_dir,
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=_StaticSelectionFactory(
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
+        ),
+    )
+    artifact = store.get_artifact(first.market_artifact_ids[0])
+    assert artifact is not None
+    store.record_artifact(
+        ArtifactRecord(
+            **{
+                **artifact.__dict__,
+                "metadata": {
+                    **artifact.metadata,
+                    "report_data_mode": "offline_fixture",
+                },
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="non-live report_data_mode"):
+        materialize_live_prediction_outcome_artifacts(
+            store=store,
+            repo_root=tmp_path,
+            artifact_dir=artifact_dir,
+            run_id=RUN_ID,
+            candidate_id=CANDIDATE_ID,
+            point_in_time_cutoff=CUTOFF,
+            evaluation_window_start=WINDOW_START,
+            evaluation_window_end=WINDOW_END,
+            evaluated_at=EVALUATED_AT,
+            provider_factory=_NoProviderFactory(),
+            market_artifact_ids=first.market_artifact_ids,
+        )
+
+
+@pytest.mark.unit
 def test_live_outcome_materialization_records_unavailable_provider_without_shortcuts(
     tmp_path: Path,
 ) -> None:
@@ -318,7 +385,12 @@ def test_live_outcome_materialization_records_unavailable_provider_without_short
         evaluation_window_end=WINDOW_END,
         evaluated_at=EVALUATED_AT,
         provider_factory=_StaticSelectionFactory(
-            LiveOutcomeMarketDataSelection(provider=provider, role="primary")
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
         ),
     )
 
@@ -350,7 +422,12 @@ def test_live_outcome_materialization_rejects_pre_window_payloads(tmp_path: Path
         evaluation_window_end=WINDOW_END,
         evaluated_at=EVALUATED_AT,
         provider_factory=_StaticSelectionFactory(
-            LiveOutcomeMarketDataSelection(provider=provider, role="primary")
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
         ),
     )
 
@@ -399,7 +476,9 @@ def test_phase6_service_exposes_live_materialization_without_observed_result_sho
                         (date(2026, 5, 18), Decimal("103")),
                     )
                 ),
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
                 role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
             )
         ),
     )

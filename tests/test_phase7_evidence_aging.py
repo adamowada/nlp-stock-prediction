@@ -261,8 +261,15 @@ def test_cohort_selection_carries_structured_phase7_records(tmp_path: Path) -> N
         "evidence-msft-provider-replaced",
     }
     assert {review.artifact_id for review in cohort.phase7_artifact_freshness_reviews} == {
-        "artifact-msft-technical-date-only"
+        "artifact-msft-old-news",
+        "artifact-msft-technical-date-only",
     }
+    evidence_artifact_review = next(
+        review
+        for review in cohort.phase7_artifact_freshness_reviews
+        if review.artifact_id == "artifact-msft-old-news"
+    )
+    assert evidence_artifact_review.source_evidence_ids == ("evidence-msft-old-news",)
 
 
 @pytest.mark.unit
