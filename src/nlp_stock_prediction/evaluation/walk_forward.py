@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,13 +17,23 @@ from nlp_stock_prediction.contracts.base import (
     NonEmptyStr,
 )
 from nlp_stock_prediction.contracts.enums import (
-    PredictionOutcomeEvaluationStatus,
-    PredictionOutcomeStatus,
     PredictionType,
     TimeHorizon,
 )
 from nlp_stock_prediction.contracts.evaluation import PredictionOutcomeEvaluation
 from nlp_stock_prediction.contracts.report import AuditArtifact
+from nlp_stock_prediction.evaluation.common import (
+    aware_utc,
+    digest,
+    filter_outcome_evaluations,
+    is_resolved_outcome_evaluation,
+    outcome_status_counts,
+    slug,
+    source_artifact_ids_from_outcome_evaluations,
+    source_outcome_evaluation_ids,
+    validate_unique,
+    write_calibration_slices,
+)
 from nlp_stock_prediction.evaluation.outcomes import PointInTimeOutcomeEvaluationArtifacts
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
@@ -38,15 +46,6 @@ from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 PHASE6_WALK_FORWARD_TOOL_NAME = "phase6_walk_forward_evaluation"
 PHASE6_WALK_FORWARD_TOOL_VERSION = "phase6.walk-forward-evaluation.v1"
-
-_RESOLVED_STATUSES = frozenset(
-    {
-        PredictionOutcomeEvaluationStatus.CONFIRMED,
-        PredictionOutcomeEvaluationStatus.MISSED,
-        PredictionOutcomeEvaluationStatus.MIXED,
-        PredictionOutcomeEvaluationStatus.INCONCLUSIVE,
-    }
-)
 
 
 class WalkForwardFold(ContractModel):
@@ -156,13 +155,13 @@ class WalkForwardEvaluationArtifactPayload(ContractModel):
             raise ValueError("walk-forward sample_count must equal status counts")
         if len(self.source_outcome_evaluation_ids) != self.sample_count:
             raise ValueError("walk-forward source IDs must match sample_count")
-        _validate_unique("walk-forward fold ids", tuple(fold.fold_id for fold in self.folds))
-        _validate_unique(
+        validate_unique("walk-forward fold ids", tuple(fold.fold_id for fold in self.folds))
+        validate_unique(
             "walk-forward source outcome evaluation ids",
             self.source_outcome_evaluation_ids,
         )
-        _validate_unique("walk-forward source artifact ids", self.source_artifact_ids)
-        _validate_unique(
+        validate_unique("walk-forward source artifact ids", self.source_artifact_ids)
+        validate_unique(
             "walk-forward excluded outcome evaluation ids",
             self.excluded_outcome_evaluation_ids,
         )
@@ -210,7 +209,7 @@ def compute_walk_forward_folds(
         test_size=test_size,
         step_size=step_size,
     )
-    created = _aware_utc(created_at, "created_at")
+    created = aware_utc(created_at, "created_at")
     eligible = _sorted_outcome_evaluations(
         _filtered_outcome_evaluations(
             tuple(outcome_evaluations),
@@ -268,8 +267,8 @@ def write_walk_forward_evaluation_artifact(
         test_size=test_size,
         step_size=step_size,
     )
-    created = _aware_utc(created_at or datetime.now(UTC), "created_at")
-    cutoff = _aware_utc(point_in_time_cutoff, "point_in_time_cutoff")
+    created = aware_utc(created_at or datetime.now(UTC), "created_at")
+    cutoff = aware_utc(point_in_time_cutoff, "point_in_time_cutoff")
     requested = tuple(outcome_evaluations)
     eligible, excluded_ids, filter_limitations = _eligible_outcome_evaluations(
         requested,
@@ -285,9 +284,9 @@ def write_walk_forward_evaluation_artifact(
         test_size=test_size,
         step_size=step_size,
     )
-    source_outcome_evaluation_ids = _source_outcome_evaluation_ids(eligible)
-    source_artifact_ids = _source_artifact_ids(eligible)
-    status_counts = _status_counts(eligible)
+    source_outcome_ids = source_outcome_evaluation_ids(eligible)
+    source_artifacts = source_artifact_ids_from_outcome_evaluations(eligible)
+    status_counts = outcome_status_counts(eligible)
     limitations = _payload_limitations(
         folds=folds,
         eligible=eligible,
@@ -303,22 +302,22 @@ def write_walk_forward_evaluation_artifact(
         minimum_train_size=minimum_train_size,
         test_size=test_size,
         step_size=step_size,
-        outcome_evaluation_ids=source_outcome_evaluation_ids,
+        outcome_evaluation_ids=source_outcome_ids,
     )
-    digest = _digest(
+    artifact_digest = digest(
         "|".join(
             (
                 run_id,
                 cohort_id,
                 resolved_calibration_id,
-                ",".join(source_outcome_evaluation_ids),
+                ",".join(source_outcome_ids),
                 str(minimum_train_size),
                 str(test_size),
                 str(step_size),
             )
         )
     )
-    resolved_tool_run_id = tool_run_id or f"tool-walk-forward-evaluation-{digest[:12]}"
+    resolved_tool_run_id = tool_run_id or f"tool-walk-forward-evaluation-{artifact_digest[:12]}"
     payload = WalkForwardEvaluationArtifactPayload(
         run_id=run_id,
         calibration_id=resolved_calibration_id,
@@ -337,8 +336,8 @@ def write_walk_forward_evaluation_artifact(
         unavailable_count=status_counts["unavailable_count"],
         not_evaluable_count=status_counts["not_evaluable_count"],
         folds=folds,
-        source_outcome_evaluation_ids=source_outcome_evaluation_ids,
-        source_artifact_ids=source_artifact_ids,
+        source_outcome_evaluation_ids=source_outcome_ids,
+        source_artifact_ids=source_artifacts,
         excluded_outcome_evaluation_ids=excluded_ids,
         limitations=limitations,
         metadata={
@@ -356,7 +355,7 @@ def write_walk_forward_evaluation_artifact(
         "step_size": step_size,
         "prediction_type": prediction_type.value if prediction_type else None,
         "horizon": horizon.value if horizon else None,
-        "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
+        "source_outcome_evaluation_ids": list(source_outcome_ids),
         "excluded_outcome_evaluation_ids": list(excluded_ids),
     }
 
@@ -375,7 +374,7 @@ def write_walk_forward_evaluation_artifact(
                     warnings=limitations,
                 )
             )
-        artifact_id = f"artifact-walk-forward-evaluation-{_slug(cohort_id)}-{digest[:12]}"
+        artifact_id = f"artifact-walk-forward-evaluation-{slug(cohort_id)}-{artifact_digest[:12]}"
         artifact = ArtifactIndex.for_directory(
             store=store,
             repo_root=repo_root,
@@ -388,7 +387,7 @@ def write_walk_forward_evaluation_artifact(
             artifact_id=artifact_id,
             artifact_type="walk_forward_evaluation",
             filename=artifact_filename
-            or f"calibration/walk-forward-evaluations/{_slug(cohort_id)}.json",
+            or f"calibration/walk-forward-evaluations/{slug(cohort_id)}.json",
             payload=cast(JsonObject, payload.model_dump(mode="json")),
             record_count=len(folds),
             metadata={
@@ -414,23 +413,24 @@ def write_walk_forward_evaluation_artifact(
                 "prediction_type": prediction_type.value if prediction_type else None,
                 "horizon": horizon.value if horizon else None,
             },
-            source_outcome_evaluation_ids=source_outcome_evaluation_ids,
+            source_outcome_evaluation_ids=source_outcome_ids,
             artifact_id=artifact.artifact_id,
             limitations=limitations,
             metadata={
                 "excluded_outcome_evaluation_ids": list(excluded_ids),
-                "source_artifact_ids": list(source_artifact_ids),
+                "source_artifact_ids": list(source_artifacts),
                 "fold_count": len(folds),
             },
         )
         store.record_calibration_run(calibration_run)
-        store.delete_calibration_slices(resolved_calibration_id)
-        slices = tuple(
-            _calibration_slice_record(calibration_id=resolved_calibration_id, fold=fold)
-            for fold in folds
+        slices = write_calibration_slices(
+            store,
+            calibration_id=resolved_calibration_id,
+            slices=(
+                _calibration_slice_record(calibration_id=resolved_calibration_id, fold=fold)
+                for fold in folds
+            ),
         )
-        for calibration_slice in slices:
-            store.record_calibration_slice(calibration_slice)
         return WalkForwardEvaluationArtifacts(
             calibration_id=resolved_calibration_id,
             calibration_run=calibration_run,
@@ -465,8 +465,8 @@ def _fold_from_partitions(
     train: tuple[PredictionOutcomeEvaluation, ...],
     test: tuple[PredictionOutcomeEvaluation, ...],
 ) -> WalkForwardFold:
-    train_status_counts = _status_counts(train)
-    test_status_counts = _status_counts(test)
+    train_status_counts = outcome_status_counts(train)
+    test_status_counts = outcome_status_counts(test)
     train_score = _quality_average(train)
     test_score = _quality_average(test)
     delta = (
@@ -481,7 +481,7 @@ def _fold_from_partitions(
         test_score=test_score,
     )
     return WalkForwardFold(
-        fold_id=f"walk-forward-{_slug(cohort_id)}-fold-{fold_index:03d}",
+        fold_id=f"walk-forward-{slug(cohort_id)}-fold-{fold_index:03d}",
         cohort_id=cohort_id,
         created_at=created_at,
         train_window_start=train[0].evaluated_at,
@@ -499,8 +499,8 @@ def _fold_from_partitions(
         train_quality_score=train_score,
         test_quality_score=test_score,
         generalization_delta=delta,
-        source_train_outcome_evaluation_ids=_source_outcome_evaluation_ids(train),
-        source_test_outcome_evaluation_ids=_source_outcome_evaluation_ids(test),
+        source_train_outcome_evaluation_ids=source_outcome_evaluation_ids(train),
+        source_test_outcome_evaluation_ids=source_outcome_evaluation_ids(test),
         limitations=limitations,
         metadata={
             "train_status_counts": dict(train_status_counts),
@@ -558,31 +558,17 @@ def _eligible_outcome_evaluations(
     prediction_type: PredictionType | None,
     horizon: TimeHorizon | None,
 ) -> tuple[tuple[PredictionOutcomeEvaluation, ...], tuple[str, ...], tuple[str, ...]]:
-    filtered: list[PredictionOutcomeEvaluation] = []
-    excluded_ids: list[str] = []
-    limitations: list[str] = []
-    for outcome_evaluation in outcome_evaluations:
-        if outcome_evaluation.evaluated_at > point_in_time_cutoff:
-            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
-            limitations.append(
-                "Excluded outcome evaluation after the point-in-time cutoff: "
-                f"{outcome_evaluation.outcome_evaluation_id}."
-            )
-            continue
-        if (
-            prediction_type is not None
-            and outcome_evaluation.outcome.prediction_type != prediction_type
-        ):
-            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
-            continue
-        if horizon is not None and outcome_evaluation.outcome.horizon != horizon:
-            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
-            continue
-        filtered.append(outcome_evaluation)
+    cohort = filter_outcome_evaluations(
+        outcome_evaluations,
+        as_of=point_in_time_cutoff,
+        prediction_type=prediction_type,
+        horizon=horizon,
+        cutoff_reason="Excluded outcome evaluation after the point-in-time cutoff",
+    )
     return (
-        _sorted_outcome_evaluations(tuple(filtered)),
-        tuple(dict.fromkeys(excluded_ids)),
-        tuple(dict.fromkeys(limitations)),
+        _sorted_outcome_evaluations(cohort.eligible),
+        cohort.excluded_outcome_evaluation_ids,
+        cohort.limitations,
     )
 
 
@@ -662,55 +648,11 @@ def _quality_average(outcome_evaluations: tuple[PredictionOutcomeEvaluation, ...
     scores = [
         item.quality_score
         for item in outcome_evaluations
-        if item.status in _RESOLVED_STATUSES and item.quality_score is not None
+        if is_resolved_outcome_evaluation(item) and item.quality_score is not None
     ]
     if not scores:
         return None
     return round(sum(scores) / len(scores), 6)
-
-
-def _status_counts(
-    outcome_evaluations: tuple[PredictionOutcomeEvaluation, ...],
-) -> dict[str, int]:
-    counts = {
-        "resolved_count": 0,
-        "pending_count": 0,
-        "stale_count": 0,
-        "unavailable_count": 0,
-        "not_evaluable_count": 0,
-    }
-    for outcome_evaluation in outcome_evaluations:
-        status = outcome_evaluation.status
-        outcome_status = outcome_evaluation.outcome.status
-        if status in _RESOLVED_STATUSES:
-            counts["resolved_count"] += 1
-        elif status == PredictionOutcomeEvaluationStatus.PENDING:
-            counts["pending_count"] += 1
-        elif status == PredictionOutcomeEvaluationStatus.STALE:
-            counts["stale_count"] += 1
-        elif outcome_status == PredictionOutcomeStatus.UNAVAILABLE:
-            counts["unavailable_count"] += 1
-        else:
-            counts["not_evaluable_count"] += 1
-    return counts
-
-
-def _source_outcome_evaluation_ids(
-    outcome_evaluations: tuple[PredictionOutcomeEvaluation, ...],
-) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(item.outcome_evaluation_id for item in outcome_evaluations))
-
-
-def _source_artifact_ids(
-    outcome_evaluations: tuple[PredictionOutcomeEvaluation, ...],
-) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            artifact_id
-            for item in outcome_evaluations
-            for artifact_id in (*item.outcome.artifact_ids, *item.artifact_ids)
-        )
-    )
 
 
 def _validate_window_parameters(
@@ -727,11 +669,6 @@ def _validate_window_parameters(
         raise ValueError("step_size must be at least 1")
 
 
-def _validate_unique(label: str, values: tuple[str, ...]) -> None:
-    if len(set(values)) != len(values):
-        raise ValueError(f"{label} must be unique")
-
-
 def _calibration_id(
     *,
     run_id: str,
@@ -742,7 +679,7 @@ def _calibration_id(
     step_size: int,
     outcome_evaluation_ids: tuple[str, ...],
 ) -> str:
-    digest = _digest(
+    calibration_digest = digest(
         "|".join(
             (
                 run_id,
@@ -755,22 +692,7 @@ def _calibration_id(
             )
         )
     )
-    return f"calibration-walk-forward-{_slug(cohort_id)}-{digest[:12]}"
-
-
-def _aware_utc(value: datetime, field_name: str) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field_name} must be timezone-aware")
-    return value.astimezone(UTC)
-
-
-def _slug(value: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
-    return normalized or "cohort"
-
-
-def _digest(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return f"calibration-walk-forward-{slug(cohort_id)}-{calibration_digest[:12]}"
 
 
 __all__ = [

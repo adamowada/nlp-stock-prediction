@@ -5,16 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from nlp_stock_prediction.evaluation.calibration import DEFAULT_CALIBRATION_BIN_EDGES
-from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
+from nlp_stock_prediction.orchestration.phase6_service import (
+    Phase6Service,
+    build_phase6_tool_registry,
+)
 
 PHASE6_MCP_TOOL_NAMES: tuple[str, ...] = (
     "list_phase6_tool_plan",
-    "phase6_point_in_time_outcome_evaluation",
-    "phase6_load_outcome_evaluations",
-    "phase6_signal_family_ablation",
-    "phase6_walk_forward_evaluation",
-    "phase6_calibration_summary",
-    "inspect_phase6_run",
+    *(tool.tool_name for tool in build_phase6_tool_registry().specs()),
 )
 
 

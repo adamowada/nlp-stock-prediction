@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -30,17 +28,13 @@ from nlp_stock_prediction.contracts.evaluation import (
 )
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
 from nlp_stock_prediction.contracts.report import AuditArtifact
+from nlp_stock_prediction.evaluation.common import aware_utc, digest, slug
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
+from nlp_stock_prediction.storage.outcome_repository import persist_prediction_outcome_records
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
-    OutcomeArtifactLinkRecord,
-    OutcomeEvaluationArtifactLinkRecord,
-    OutcomeEvaluationEvidenceLinkRecord,
-    OutcomeEvidenceLinkRecord,
     PredictionCandidateRecord,
-    PredictionOutcomeEvaluationRecord,
-    PredictionOutcomeRecord,
     ToolRunRecord,
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
@@ -96,10 +90,10 @@ def build_prediction_evaluation_target(
     if instrument is None:
         raise ValueError(f"instrument does not exist: {candidate.instrument_id}")
 
-    cutoff = _aware_utc(point_in_time_cutoff, "point_in_time_cutoff")
-    window_start = _aware_utc(evaluation_window_start, "evaluation_window_start")
-    window_end = _aware_utc(evaluation_window_end, "evaluation_window_end")
-    prediction_created_at = _aware_utc(run.started_at, "run.started_at")
+    cutoff = aware_utc(point_in_time_cutoff, "point_in_time_cutoff")
+    window_start = aware_utc(evaluation_window_start, "evaluation_window_start")
+    window_end = aware_utc(evaluation_window_end, "evaluation_window_end")
+    prediction_created_at = aware_utc(run.started_at, "run.started_at")
     eligible_evidence_ids, source_artifact_ids, evidence_limitations = _eligible_evidence_ids(
         store=store,
         candidate=candidate,
@@ -179,7 +173,7 @@ def build_prediction_outcome(
 
     resolved_result = _prediction_outcome_result(observed_result)
     resolved_status = _prediction_outcome_status(status, resolved_result)
-    resolved_observed_at = None if observed_at is None else _aware_utc(observed_at, "observed_at")
+    resolved_observed_at = None if observed_at is None else aware_utc(observed_at, "observed_at")
     resolved_limitations = limitations
     if resolved_status != PredictionOutcomeStatus.OBSERVED and not resolved_limitations:
         resolved_limitations = ("Outcome was not observed at evaluation time.",)
@@ -225,7 +219,7 @@ def evaluate_prediction_outcome(
 ) -> PredictionOutcomeEvaluation:
     """Evaluate an outcome against the frozen prediction target."""
 
-    resolved_evaluated_at = _aware_utc(evaluated_at, "evaluated_at")
+    resolved_evaluated_at = aware_utc(evaluated_at, "evaluated_at")
     status = _outcome_evaluation_status(target=target, outcome=outcome)
     quality_score = _quality_score(status)
     resolved_limitations = limitations
@@ -293,8 +287,8 @@ def write_point_in_time_outcome_evaluation_artifacts(
 
     if target.run_id != run_id:
         raise ValueError("outcome target run_id must match run_id")
-    created = _aware_utc(created_at or datetime.now(UTC), "created_at")
-    evaluated = _aware_utc(evaluated_at or created, "evaluated_at")
+    created = aware_utc(created_at or datetime.now(UTC), "created_at")
+    evaluated = aware_utc(evaluated_at or created, "evaluated_at")
     observed_artifact_ids = _validated_market_artifact_ids(
         store=store,
         target=target,
@@ -334,7 +328,7 @@ def write_point_in_time_outcome_evaluation_artifacts(
             "source": PHASE6_OUTCOME_TOOL_NAME,
         },
     )
-    digest = _digest(
+    artifact_digest = digest(
         "|".join(
             (
                 run_id,
@@ -345,7 +339,9 @@ def write_point_in_time_outcome_evaluation_artifacts(
         )
     )
     resolved_tool_run_id = (
-        tool_run_id or f"tool-phase6-outcome-{_slug(target.candidate_id)}-{digest[:12]}"
+        tool_run_id
+        or "tool-phase6-outcome-"
+        f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}-{artifact_digest[:12]}"
     )
     inputs: JsonObject = {
         "target_id": target.target_id,
@@ -387,7 +383,8 @@ def write_point_in_time_outcome_evaluation_artifacts(
             },
         )
         outcome_artifact_id = (
-            f"artifact-prediction-outcome-{_slug(target.candidate_id)}-{digest[:8]}"
+            "artifact-prediction-outcome-"
+            f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}-{artifact_digest[:8]}"
         )
         outcome_artifact = ArtifactIndex.for_directory(
             store=store,
@@ -401,7 +398,10 @@ def write_point_in_time_outcome_evaluation_artifacts(
             artifact_id=outcome_artifact_id,
             artifact_type="prediction_outcome",
             filename=outcome_artifact_filename
-            or f"prediction-outcomes/{_slug(target.candidate_id)}.json",
+            or (
+                "prediction-outcomes/"
+                f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}.json"
+            ),
             payload=cast(JsonObject, outcome_payload.model_dump(mode="json")),
             record_count=1,
             metadata={
@@ -439,7 +439,8 @@ def write_point_in_time_outcome_evaluation_artifacts(
             },
         )
         review_artifact_id = (
-            f"artifact-prediction-outcome-evaluation-{_slug(target.candidate_id)}-{digest[:8]}"
+            "artifact-prediction-outcome-evaluation-"
+            f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}-{artifact_digest[:8]}"
         )
         review_artifact = ArtifactIndex.for_directory(
             store=store,
@@ -453,7 +454,10 @@ def write_point_in_time_outcome_evaluation_artifacts(
             artifact_id=review_artifact_id,
             artifact_type="prediction_outcome_evaluation",
             filename=outcome_evaluation_artifact_filename
-            or f"prediction-outcome-evaluations/{_slug(target.candidate_id)}.json",
+            or (
+                "prediction-outcome-evaluations/"
+                f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}.json"
+            ),
             payload=cast(JsonObject, review_payload.model_dump(mode="json")),
             record_count=1,
             metadata={
@@ -466,20 +470,16 @@ def write_point_in_time_outcome_evaluation_artifacts(
                 "quality_score": outcome_evaluation.quality_score,
             },
         )
-        _persist_outcome(
+        persist_prediction_outcome_records(
             store=store,
             target=target,
             outcome=outcome,
-            outcome_artifact=outcome_artifact,
-            market_artifact_ids=observed_artifact_ids,
-            created_at=created,
-        )
-        _persist_outcome_evaluation(
-            store=store,
-            target=target,
             outcome_evaluation=outcome_evaluation_with_artifact,
+            outcome_artifact=outcome_artifact,
             review_artifact=review_artifact,
-            created_at=evaluated,
+            market_artifact_ids=observed_artifact_ids,
+            outcome_created_at=created,
+            review_created_at=evaluated,
         )
         return PointInTimeOutcomeEvaluationArtifacts(
             target=target,
@@ -506,74 +506,6 @@ def write_point_in_time_outcome_evaluation_artifacts(
         return write_artifacts()
 
 
-def _persist_outcome(
-    *,
-    store: SQLiteStore,
-    target: PredictionEvaluationTarget,
-    outcome: PredictionOutcome,
-    outcome_artifact: AuditArtifact,
-    market_artifact_ids: tuple[str, ...],
-    created_at: datetime,
-) -> None:
-    store.upsert_prediction_outcome(
-        PredictionOutcomeRecord(
-            outcome_id=outcome.outcome_id,
-            candidate_id=outcome.candidate_id,
-            instrument_id=outcome.instrument_id,
-            symbol=outcome.symbol,
-            prediction_type=outcome.prediction_type.value,
-            horizon=outcome.horizon.value,
-            evaluation_window_start=outcome.evaluation_window_start,
-            evaluation_window_end=outcome.evaluation_window_end,
-            status=outcome.status.value,
-            observed_result=outcome.observed_result.value if outcome.observed_result else None,
-            observed_at=outcome.observed_at,
-            result_summary=outcome.result_summary,
-            result_value=outcome.result_value,
-            baseline_value=outcome.baseline_value,
-            limitations=outcome.limitations,
-            metadata={
-                "target_id": target.target_id,
-                "outcome_artifact_id": outcome_artifact.artifact_id,
-                **dict(outcome.metadata),
-            },
-        )
-    )
-    for reference in outcome.outcome_evidence:
-        if store.get_evidence(reference.evidence_id) is None:
-            raise ValueError(f"outcome evidence does not exist: {reference.evidence_id}")
-        store.link_outcome_evidence(
-            OutcomeEvidenceLinkRecord(
-                outcome_id=outcome.outcome_id,
-                evidence_id=reference.evidence_id,
-                relationship="observes_outcome",
-                metadata={"target_id": target.target_id},
-                created_at=created_at,
-            )
-        )
-    for artifact_id in market_artifact_ids:
-        if store.get_artifact(artifact_id) is None:
-            raise ValueError(f"outcome artifact does not exist: {artifact_id}")
-        store.link_outcome_artifact(
-            OutcomeArtifactLinkRecord(
-                outcome_id=outcome.outcome_id,
-                artifact_id=artifact_id,
-                relationship="outcome_source",
-                metadata={"target_id": target.target_id},
-                created_at=created_at,
-            )
-        )
-    store.link_outcome_artifact(
-        OutcomeArtifactLinkRecord(
-            outcome_id=outcome.outcome_id,
-            artifact_id=outcome_artifact.artifact_id,
-            relationship="outcome_payload",
-            metadata={"target_id": target.target_id},
-            created_at=created_at,
-        )
-    )
-
-
 def _validated_outcome_evidence(
     *,
     store: SQLiteStore,
@@ -585,11 +517,11 @@ def _validated_outcome_evidence(
         record = store.get_evidence(reference.evidence_id)
         if record is None:
             raise ValueError(f"outcome evidence does not exist: {reference.evidence_id}")
-        retrieved_at = _aware_utc(record.retrieved_at, "evidence.retrieved_at")
+        retrieved_at = aware_utc(record.retrieved_at, "evidence.retrieved_at")
         published_at = (
             None
             if record.published_at is None
-            else _aware_utc(record.published_at, "evidence.published_at")
+            else aware_utc(record.published_at, "evidence.published_at")
         )
         if retrieved_at > evaluated_at or (
             published_at is not None and published_at > evaluated_at
@@ -617,7 +549,7 @@ def _validated_market_artifact_ids(
             raise ValueError(f"outcome market artifact does not exist: {artifact_id}")
         if (
             artifact.created_at is not None
-            and _aware_utc(
+            and aware_utc(
                 artifact.created_at,
                 "artifact.created_at",
             )
@@ -639,76 +571,6 @@ def _validated_market_artifact_ids(
     return market_artifact_ids
 
 
-def _persist_outcome_evaluation(
-    *,
-    store: SQLiteStore,
-    target: PredictionEvaluationTarget,
-    outcome_evaluation: PredictionOutcomeEvaluation,
-    review_artifact: AuditArtifact,
-    created_at: datetime,
-) -> None:
-    store.upsert_prediction_outcome_evaluation(
-        PredictionOutcomeEvaluationRecord(
-            outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
-            run_id=target.run_id,
-            outcome_id=outcome_evaluation.outcome_id,
-            candidate_id=outcome_evaluation.candidate_id,
-            instrument_id=outcome_evaluation.instrument_id,
-            symbol=outcome_evaluation.symbol,
-            evaluated_at=outcome_evaluation.evaluated_at,
-            status=outcome_evaluation.status.value,
-            quality_score=outcome_evaluation.quality_score,
-            baseline_comparison=(
-                {}
-                if outcome_evaluation.baseline_comparison is None
-                else cast(
-                    JsonObject,
-                    outcome_evaluation.baseline_comparison.model_dump(mode="json"),
-                )
-            ),
-            artifact_id=review_artifact.artifact_id,
-            limitations=outcome_evaluation.limitations,
-            metadata={
-                "target_id": target.target_id,
-                "outcome_id": outcome_evaluation.outcome_id,
-            },
-        )
-    )
-    for reference in outcome_evaluation.evidence:
-        if store.get_evidence(reference.evidence_id) is None:
-            raise ValueError(f"outcome evaluation evidence does not exist: {reference.evidence_id}")
-        store.link_outcome_evaluation_evidence(
-            OutcomeEvaluationEvidenceLinkRecord(
-                outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
-                evidence_id=reference.evidence_id,
-                relationship="supports_outcome_review",
-                metadata={"target_id": target.target_id},
-                created_at=created_at,
-            )
-        )
-    for artifact_id in outcome_evaluation.artifact_ids:
-        if store.get_artifact(artifact_id) is None:
-            raise ValueError(f"outcome evaluation artifact does not exist: {artifact_id}")
-        store.link_outcome_evaluation_artifact(
-            OutcomeEvaluationArtifactLinkRecord(
-                outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
-                artifact_id=artifact_id,
-                relationship="supports_outcome_review",
-                metadata={"target_id": target.target_id},
-                created_at=created_at,
-            )
-        )
-    store.link_outcome_evaluation_artifact(
-        OutcomeEvaluationArtifactLinkRecord(
-            outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
-            artifact_id=review_artifact.artifact_id,
-            relationship="outcome_evaluation_payload",
-            metadata={"target_id": target.target_id},
-            created_at=created_at,
-        )
-    )
-
-
 def _eligible_evidence_ids(
     *,
     store: SQLiteStore,
@@ -724,11 +586,11 @@ def _eligible_evidence_ids(
         if evidence is None:
             excluded.append(f"{evidence_id} (missing)")
             continue
-        retrieved_at = _aware_utc(evidence.retrieved_at, "evidence.retrieved_at")
+        retrieved_at = aware_utc(evidence.retrieved_at, "evidence.retrieved_at")
         published_at = (
             None
             if evidence.published_at is None
-            else _aware_utc(evidence.published_at, "evidence.published_at")
+            else aware_utc(evidence.published_at, "evidence.published_at")
         )
         if retrieved_at > cutoff or (published_at is not None and published_at > cutoff):
             excluded.append(f"{evidence_id} (after cutoff)")
@@ -740,7 +602,7 @@ def _eligible_evidence_ids(
                 excluded_artifacts.append(f"{evidence.artifact_id} (missing)")
             elif (
                 artifact.created_at is not None
-                and _aware_utc(
+                and aware_utc(
                     artifact.created_at,
                     "artifact.created_at",
                 )
@@ -776,7 +638,7 @@ def _eligible_artifacts(
             continue
         if (
             artifact.created_at is not None
-            and _aware_utc(artifact.created_at, "artifact.created_at") > cutoff
+            and aware_utc(artifact.created_at, "artifact.created_at") > cutoff
         ):
             excluded.append(f"{link.artifact_id} (after cutoff)")
             continue
@@ -799,7 +661,7 @@ def _eligible_artifacts(
             continue
         if (
             artifact.created_at is not None
-            and _aware_utc(artifact.created_at, "artifact.created_at") > cutoff
+            and aware_utc(artifact.created_at, "artifact.created_at") > cutoff
         ):
             excluded.append(f"{artifact_id} (after cutoff)")
             continue
@@ -1089,12 +951,6 @@ def _baseline_verdict(data: JsonObject, delta: float) -> str:
     return "near_baseline"
 
 
-def _aware_utc(value: datetime, field_name: str) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field_name} must be timezone-aware")
-    return value.astimezone(UTC)
-
-
 def _target_id(
     *,
     run_id: str,
@@ -1103,7 +959,7 @@ def _target_id(
     evaluation_window_start: datetime,
     evaluation_window_end: datetime,
 ) -> str:
-    digest = _digest(
+    target_digest = digest(
         "|".join(
             (
                 run_id,
@@ -1114,7 +970,10 @@ def _target_id(
             )
         )
     )
-    return f"target-{_slug(candidate_id)}-{digest[:8]}"
+    return (
+        f"target-{slug(candidate_id, fallback='prediction', allow_file_safe_punctuation=True)}-"
+        f"{target_digest[:8]}"
+    )
 
 
 def _outcome_id(
@@ -1124,7 +983,7 @@ def _outcome_id(
     observed_at: datetime | None,
     status: PredictionOutcomeStatus,
 ) -> str:
-    digest = _digest(
+    outcome_digest = digest(
         "|".join(
             (
                 target.target_id,
@@ -1134,7 +993,11 @@ def _outcome_id(
             )
         )
     )
-    return f"outcome-{_slug(target.candidate_id)}-{digest[:8]}"
+    return (
+        "outcome-"
+        f"{slug(target.candidate_id, fallback='prediction', allow_file_safe_punctuation=True)}-"
+        f"{outcome_digest[:8]}"
+    )
 
 
 def _outcome_evaluation_id(
@@ -1143,18 +1006,14 @@ def _outcome_evaluation_id(
     outcome: PredictionOutcome,
     evaluated_at: datetime,
 ) -> str:
-    digest = _digest("|".join((target.target_id, outcome.outcome_id, evaluated_at.isoformat())))
-    return f"outcome-evaluation-{_slug(target.candidate_id)}-{digest[:8]}"
-
-
-def _digest(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _slug(value: str) -> str:
-    slug = re.sub(r"[^a-z0-9._-]+", "-", value.strip().lower())
-    slug = re.sub(r"-+", "-", slug).strip("-._")
-    return slug or "prediction"
+    evaluation_digest = digest(
+        "|".join((target.target_id, outcome.outcome_id, evaluated_at.isoformat()))
+    )
+    return (
+        f"outcome-evaluation-"
+        f"{slug(target.candidate_id, fallback='prediction', allow_file_safe_punctuation=True)}-"
+        f"{evaluation_digest[:8]}"
+    )
 
 
 def _json_ready(value: object) -> JsonValue:

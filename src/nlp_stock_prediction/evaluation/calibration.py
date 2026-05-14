@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
-import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,8 +19,6 @@ from nlp_stock_prediction.contracts.base import (
     NonEmptyStr,
 )
 from nlp_stock_prediction.contracts.enums import (
-    PredictionOutcomeEvaluationStatus,
-    PredictionOutcomeStatus,
     PredictionType,
     SignalArtifactFamily,
     TimeHorizon,
@@ -37,6 +33,22 @@ from nlp_stock_prediction.contracts.evaluation import (
     SignalFamilyCalibrationSummary,
 )
 from nlp_stock_prediction.contracts.report import AuditArtifact
+from nlp_stock_prediction.evaluation.common import (
+    aware_utc,
+    dedupe,
+    digest,
+    duplicate_ids,
+    filter_targeted_outcome_inputs,
+    is_resolved_outcome_evaluation,
+    outcome_status_counts,
+    single_horizon,
+    single_prediction_type,
+    slug,
+    source_artifact_ids_from_targeted_inputs,
+    source_outcome_evaluation_ids,
+    validate_unique,
+    write_calibration_slices,
+)
 from nlp_stock_prediction.evaluation.outcomes import PointInTimeOutcomeEvaluationArtifacts
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
@@ -50,15 +62,6 @@ from nlp_stock_prediction.storage.sqlite import SQLiteStore
 PHASE6_CALIBRATION_TOOL_NAME = "phase6_calibration_summary"
 PHASE6_CALIBRATION_TOOL_VERSION = "phase6.calibration-summary.v1"
 DEFAULT_CALIBRATION_BIN_EDGES = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
-
-_RESOLVED_STATUSES = frozenset(
-    {
-        PredictionOutcomeEvaluationStatus.CONFIRMED,
-        PredictionOutcomeEvaluationStatus.MISSED,
-        PredictionOutcomeEvaluationStatus.MIXED,
-        PredictionOutcomeEvaluationStatus.INCONCLUSIVE,
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -104,7 +107,7 @@ class CalibrationSummaryArtifactPayload(ContractModel):
     @model_validator(mode="after")
     def validate_payload(self) -> CalibrationSummaryArtifactPayload:
         _validate_bin_edges(self.bin_edges)
-        _validate_unique(
+        validate_unique(
             "calibration payload excluded outcome evaluation ids",
             self.excluded_outcome_evaluation_ids,
         )
@@ -162,8 +165,8 @@ def compute_calibration_summary(
 ) -> CalibrationSummary:
     """Compute reliability bins and cohort-level quality calibration metrics."""
 
-    created = _aware_utc(created_at, "created_at")
-    cutoff = _aware_utc(as_of, "as_of")
+    created = aware_utc(created_at, "created_at")
+    cutoff = aware_utc(as_of, "as_of")
     edges = tuple(bin_edges)
     _validate_bin_edges(edges)
     filtered = _filtered_inputs(
@@ -173,8 +176,15 @@ def compute_calibration_summary(
         horizon=horizon,
     )
     items = _scoreable_items(filtered)
-    status_counts = _status_counts(items)
-    resolved_items = tuple(item for item in items if _is_resolved(item.source.outcome_evaluation))
+    status_counts = outcome_status_counts(item.source.outcome_evaluation for item in items)
+    resolved_items = tuple(
+        item
+        for item in items
+        if is_resolved_outcome_evaluation(
+            item.source.outcome_evaluation,
+            require_quality_score=True,
+        )
+    )
     resolved_count = len(resolved_items)
     requested_families = _requested_families(items, families)
     brier_score = _brier_score(resolved_items)
@@ -190,8 +200,10 @@ def compute_calibration_summary(
         items=items,
         resolved_count=resolved_count,
     )
-    inferred_prediction_type = prediction_type or _single_prediction_type(items)
-    inferred_horizon = horizon or _single_horizon(items)
+    inferred_prediction_type = prediction_type or single_prediction_type(
+        item.source for item in items
+    )
+    inferred_horizon = horizon or single_horizon(item.source for item in items)
     return CalibrationSummary(
         calibration_id=calibration_id,
         cohort_id=cohort_id,
@@ -216,8 +228,10 @@ def compute_calibration_summary(
             families=requested_families,
             cohort_observed_frequency=_observed_frequency(resolved_items),
         ),
-        source_outcome_evaluation_ids=_source_outcome_evaluation_ids(items),
-        source_artifact_ids=_source_artifact_ids(items),
+        source_outcome_evaluation_ids=source_outcome_evaluation_ids(
+            item.source.outcome_evaluation for item in items
+        ),
+        source_artifact_ids=source_artifact_ids_from_targeted_inputs(item.source for item in items),
         limitations=limitations,
         metadata={
             "bin_edges": list(edges),
@@ -248,8 +262,8 @@ def write_calibration_summary_artifact(
 ) -> CalibrationSummaryArtifacts:
     """Persist a calibration summary artifact and its calibration slice records."""
 
-    created = _aware_utc(created_at or datetime.now(UTC), "created_at")
-    cutoff = _aware_utc(as_of, "as_of")
+    created = aware_utc(created_at or datetime.now(UTC), "created_at")
+    cutoff = aware_utc(as_of, "as_of")
     edges = tuple(bin_edges)
     _validate_bin_edges(edges)
     requested_families = None if families is None else tuple(dict.fromkeys(families))
@@ -261,7 +275,9 @@ def write_calibration_summary_artifact(
         prediction_type=prediction_type,
         horizon=horizon,
     )
-    source_ids = _source_outcome_evaluation_ids(_scoreable_items(eligible))
+    source_ids = source_outcome_evaluation_ids(
+        item.source.outcome_evaluation for item in _scoreable_items(eligible)
+    )
     resolved_calibration_id = calibration_id or _calibration_id(
         run_id=run_id,
         cohort_id=cohort_id,
@@ -288,7 +304,7 @@ def write_calibration_summary_artifact(
         if requested_families is None
         else ",".join(family.value for family in requested_families)
     )
-    digest = _digest(
+    artifact_digest = digest(
         "|".join(
             (
                 run_id,
@@ -301,7 +317,7 @@ def write_calibration_summary_artifact(
             )
         )
     )
-    resolved_tool_run_id = tool_run_id or f"tool-calibration-summary-{digest[:12]}"
+    resolved_tool_run_id = tool_run_id or f"tool-calibration-summary-{artifact_digest[:12]}"
     payload = CalibrationSummaryArtifactPayload(
         run_id=run_id,
         calibration_id=resolved_calibration_id,
@@ -347,7 +363,7 @@ def write_calibration_summary_artifact(
                     warnings=summary.limitations,
                 )
             )
-        artifact_id = f"artifact-calibration-summary-{_slug(cohort_id)}-{digest[:12]}"
+        artifact_id = f"artifact-calibration-summary-{slug(cohort_id)}-{artifact_digest[:12]}"
         artifact = ArtifactIndex.for_directory(
             store=store,
             repo_root=repo_root,
@@ -359,7 +375,7 @@ def write_calibration_summary_artifact(
         ).write_json(
             artifact_id=artifact_id,
             artifact_type="calibration_summary",
-            filename=artifact_filename or f"calibration/summaries/{_slug(cohort_id)}.json",
+            filename=artifact_filename or f"calibration/summaries/{slug(cohort_id)}.json",
             payload=cast(JsonObject, payload.model_dump(mode="json")),
             record_count=1,
             metadata={
@@ -397,15 +413,16 @@ def write_calibration_summary_artifact(
             },
         )
         store.record_calibration_run(calibration_run)
-        store.delete_calibration_slices(resolved_calibration_id)
-        slices = _calibration_slice_records(
+        slices = write_calibration_slices(
+            store,
             calibration_id=resolved_calibration_id,
-            summary=summary,
-            items=_scoreable_items(eligible),
-            bin_edges=edges,
+            slices=_calibration_slice_records(
+                calibration_id=resolved_calibration_id,
+                summary=summary,
+                items=_scoreable_items(eligible),
+                bin_edges=edges,
+            ),
         )
-        for calibration_slice in slices:
-            store.record_calibration_slice(calibration_slice)
         return CalibrationSummaryArtifacts(
             calibration_id=resolved_calibration_id,
             calibration_run=calibration_run,
@@ -444,7 +461,12 @@ def _calibration_bins(
             item for item in items if _score_in_bin(item.prediction_score, lower, upper)
         )
         resolved_items = tuple(
-            item for item in bin_items if _is_resolved(item.source.outcome_evaluation)
+            item
+            for item in bin_items
+            if is_resolved_outcome_evaluation(
+                item.source.outcome_evaluation,
+                require_quality_score=True,
+            )
         )
         resolved_count = len(resolved_items)
         limitations: list[str] = []
@@ -481,7 +503,12 @@ def _signal_family_summaries(
             len(_family_artifacts(item.source.target, family)) for item in family_items
         )
         resolved_items = tuple(
-            item for item in family_items if _is_resolved(item.source.outcome_evaluation)
+            item
+            for item in family_items
+            if is_resolved_outcome_evaluation(
+                item.source.outcome_evaluation,
+                require_quality_score=True,
+            )
         )
         observed_frequency = _observed_frequency(resolved_items)
         limitations: list[str] = []
@@ -508,9 +535,11 @@ def _signal_family_summaries(
                 limitations=tuple(limitations),
                 metadata={
                     "source_outcome_evaluation_ids": list(
-                        _source_outcome_evaluation_ids(family_items)
+                        source_outcome_evaluation_ids(
+                            item.source.outcome_evaluation for item in family_items
+                        )
                     ),
-                    "source_signal_artifact_ids": _dedupe(
+                    "source_signal_artifact_ids": dedupe(
                         artifact.artifact_id
                         for item in family_items
                         for artifact in _family_artifacts(item.source.target, family)
@@ -605,7 +634,7 @@ def _bin_slice_record(
     bin_items: tuple[_CalibrationItem, ...],
     bin_edges: tuple[float, ...],
 ) -> CalibrationSliceRecord:
-    status_counts = _status_counts(bin_items)
+    status_counts = outcome_status_counts(item.source.outcome_evaluation for item in bin_items)
     return CalibrationSliceRecord(
         slice_id=f"slice-{calibration_id}-{bin_model.bin_id}",
         calibration_id=calibration_id,
@@ -627,7 +656,11 @@ def _bin_slice_record(
             JsonObject,
             {
                 "bin_edges": list(bin_edges),
-                "source_outcome_evaluation_ids": list(_source_outcome_evaluation_ids(bin_items)),
+                "source_outcome_evaluation_ids": list(
+                    source_outcome_evaluation_ids(
+                        item.source.outcome_evaluation for item in bin_items
+                    )
+                ),
             },
         ),
         metadata=cast(JsonObject, {"limitations": list(bin_model.limitations)}),
@@ -640,7 +673,7 @@ def _family_slice_record(
     family_summary: SignalFamilyCalibrationSummary,
     family_items: tuple[_CalibrationItem, ...],
 ) -> CalibrationSliceRecord:
-    status_counts = _status_counts(family_items)
+    status_counts = outcome_status_counts(item.source.outcome_evaluation for item in family_items)
     return CalibrationSliceRecord(
         slice_id=f"slice-{calibration_id}-family-{family_summary.family.value}",
         calibration_id=calibration_id,
@@ -662,7 +695,11 @@ def _family_slice_record(
         provenance=cast(
             JsonObject,
             {
-                "source_outcome_evaluation_ids": list(_source_outcome_evaluation_ids(family_items)),
+                "source_outcome_evaluation_ids": list(
+                    source_outcome_evaluation_ids(
+                        item.source.outcome_evaluation for item in family_items
+                    )
+                ),
                 "source_signal_artifact_ids": family_summary.metadata.get(
                     "source_signal_artifact_ids",
                     [],
@@ -689,36 +726,19 @@ def _eligible_inputs(
     prediction_type: PredictionType | None,
     horizon: TimeHorizon | None,
 ) -> tuple[tuple[CalibrationSummaryInput, ...], tuple[str, ...], tuple[str, ...]]:
-    eligible: list[CalibrationSummaryInput] = []
-    excluded_ids: list[str] = []
-    limitations: list[str] = []
-    for item in inputs:
-        outcome_evaluation = item.outcome_evaluation
-        if outcome_evaluation.evaluated_at > as_of:
-            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
-            limitations.append(
-                "Excluded outcome evaluation after the calibration as_of cutoff: "
-                f"{outcome_evaluation.outcome_evaluation_id}."
-            )
-            continue
-        if prediction_type is not None and item.target.prediction_type != prediction_type:
-            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
-            continue
-        if horizon is not None and item.target.horizon != horizon:
-            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
-            continue
-        if _prediction_score(item) is None:
-            excluded_ids.append(outcome_evaluation.outcome_evaluation_id)
-            limitations.append(
-                "Excluded outcome evaluation without a prediction score: "
-                f"{outcome_evaluation.outcome_evaluation_id}."
-            )
-            continue
-        eligible.append(item)
+    cohort = filter_targeted_outcome_inputs(
+        inputs,
+        as_of=as_of,
+        prediction_type=prediction_type,
+        horizon=horizon,
+        cutoff_reason="Excluded outcome evaluation after the calibration as_of cutoff",
+        score_available=lambda item: _prediction_score(item) is not None,
+        scoreless_reason="Excluded outcome evaluation without a prediction score",
+    )
     return (
-        tuple(eligible),
-        tuple(dict.fromkeys(excluded_ids)),
-        tuple(dict.fromkeys(limitations)),
+        cohort.eligible,
+        cohort.excluded_outcome_evaluation_ids,
+        cohort.limitations,
     )
 
 
@@ -795,38 +815,6 @@ def _requested_families(
         )
     )
     return observed
-
-
-def _status_counts(items: tuple[_CalibrationItem, ...]) -> dict[str, int]:
-    counts = {
-        "resolved_count": 0,
-        "pending_count": 0,
-        "stale_count": 0,
-        "unavailable_count": 0,
-        "not_evaluable_count": 0,
-    }
-    for item in items:
-        outcome_evaluation = item.source.outcome_evaluation
-        status = outcome_evaluation.status
-        outcome_status = outcome_evaluation.outcome.status
-        if status in _RESOLVED_STATUSES:
-            counts["resolved_count"] += 1
-        elif status == PredictionOutcomeEvaluationStatus.PENDING:
-            counts["pending_count"] += 1
-        elif status == PredictionOutcomeEvaluationStatus.STALE:
-            counts["stale_count"] += 1
-        elif outcome_status == PredictionOutcomeStatus.UNAVAILABLE:
-            counts["unavailable_count"] += 1
-        else:
-            counts["not_evaluable_count"] += 1
-    return counts
-
-
-def _is_resolved(outcome_evaluation: PredictionOutcomeEvaluation) -> bool:
-    return (
-        outcome_evaluation.status in _RESOLVED_STATUSES
-        and outcome_evaluation.quality_score is not None
-    )
 
 
 def _outcome_quality(item: _CalibrationItem) -> float:
@@ -937,57 +925,17 @@ def _family_artifacts(
     return tuple(artifact for artifact in target.signal_artifacts if artifact.family == family)
 
 
-def _source_outcome_evaluation_ids(items: tuple[_CalibrationItem, ...]) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(item.source.outcome_evaluation.outcome_evaluation_id for item in items)
-    )
-
-
-def _source_artifact_ids(items: tuple[_CalibrationItem, ...]) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            artifact_id
-            for item in items
-            for artifact_id in (
-                *tuple(artifact.artifact_id for artifact in item.source.target.signal_artifacts),
-                *item.source.outcome_evaluation.outcome.artifact_ids,
-                *item.source.outcome_evaluation.artifact_ids,
-            )
-        )
-    )
-
-
-def _single_prediction_type(items: tuple[_CalibrationItem, ...]) -> PredictionType | None:
-    values = {item.source.target.prediction_type for item in items}
-    return next(iter(values)) if len(values) == 1 else None
-
-
-def _single_horizon(items: tuple[_CalibrationItem, ...]) -> TimeHorizon | None:
-    values = {item.source.target.horizon for item in items}
-    return next(iter(values)) if len(values) == 1 else None
-
-
 def _validate_inputs_for_run(inputs: tuple[CalibrationSummaryInput, ...], run_id: str) -> None:
-    duplicate_ids = _duplicate_ids(
+    duplicate_values = duplicate_ids(
         tuple(item.outcome_evaluation.outcome_evaluation_id for item in inputs)
     )
-    if duplicate_ids:
-        raise ValueError("calibration inputs must be unique: " + ", ".join(duplicate_ids))
+    if duplicate_values:
+        raise ValueError("calibration inputs must be unique: " + ", ".join(duplicate_values))
     mismatched = tuple(item.target.target_id for item in inputs if item.target.run_id != run_id)
     if mismatched:
         raise ValueError(
             "calibration inputs must belong to the persisted run_id: " + ", ".join(mismatched)
         )
-
-
-def _duplicate_ids(values: tuple[str, ...]) -> tuple[str, ...]:
-    seen: set[str] = set()
-    duplicates: list[str] = []
-    for value in values:
-        if value in seen and value not in duplicates:
-            duplicates.append(value)
-        seen.add(value)
-    return tuple(duplicates)
 
 
 def _validate_bin_edges(edges: Sequence[float]) -> None:
@@ -1004,11 +952,6 @@ def _validate_bin_edges(edges: Sequence[float]) -> None:
         previous = edge
 
 
-def _validate_unique(label: str, values: tuple[object, ...]) -> None:
-    if len(set(values)) != len(values):
-        raise ValueError(f"{label} must be unique")
-
-
 def _score_in_bin(score: float, lower: float, upper: float) -> bool:
     if upper == 1.0:
         return lower <= score <= upper
@@ -1017,10 +960,6 @@ def _score_in_bin(score: float, lower: float, upper: float) -> bool:
 
 def _bounded_score(value: float) -> float:
     return round(max(0.0, min(1.0, value)), 6)
-
-
-def _dedupe(values: Iterable[str]) -> list[str]:
-    return list(dict.fromkeys(values))
 
 
 def _calibration_id(
@@ -1033,7 +972,7 @@ def _calibration_id(
     outcome_evaluation_ids: tuple[str, ...],
 ) -> str:
     family_identity = "auto" if families is None else ",".join(family.value for family in families)
-    digest = _digest(
+    calibration_digest = digest(
         "|".join(
             (
                 run_id,
@@ -1045,26 +984,11 @@ def _calibration_id(
             )
         )
     )
-    return f"calibration-summary-{_slug(cohort_id)}-{digest[:12]}"
-
-
-def _aware_utc(value: datetime, field_name: str) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field_name} must be timezone-aware")
-    return value.astimezone(UTC)
+    return f"calibration-summary-{slug(cohort_id)}-{calibration_digest[:12]}"
 
 
 def _edge_label(value: float) -> str:
     return f"{value:.2f}".replace(".", "p")
-
-
-def _slug(value: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
-    return normalized or "cohort"
-
-
-def _digest(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 __all__ = [
