@@ -7,22 +7,24 @@ from typing import Any, cast
 
 from nlp_stock_prediction.contracts import DailyReport
 from nlp_stock_prediction.contracts.providers import RunConfig
-from nlp_stock_prediction.orchestration import (
-    DUMMY_ORCHESTRATION_DISABLED_MESSAGE,
-    ReportBundle,
-    generate_dummy_report_bundle,
-)
 from nlp_stock_prediction.orchestration.phase2_common import stable_digest
 from nlp_stock_prediction.orchestration.phase4_service import Phase4Service
+from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
 
-LIVE_ORCHESTRATION_DISABLED_MESSAGE = DUMMY_ORCHESTRATION_DISABLED_MESSAGE
+LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
+    "Live report generation requires source_mode='live' or live_providers=True; "
+    "refusing to use fixture or dummy fallback data."
+)
 
 
 def generate_daily_report(config: RunConfig) -> ReportBundle:
-    """Generate a deterministic Phase 4 research report bundle."""
+    """Generate a Phase 4 research report bundle."""
 
-    if not config.offline:
-        return generate_dummy_report_bundle(config)
+    live_requested = config.source_mode == "live" or config.live_providers
+    if not config.offline and not live_requested:
+        raise ValueError(LIVE_ORCHESTRATION_DISABLED_MESSAGE)
+    if config.offline and live_requested:
+        raise ValueError("RunConfig cannot request both offline fixtures and live providers.")
 
     project_root = _project_root()
     repo_root = _write_root_for_output(config.output_dir, project_root)
@@ -37,14 +39,26 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
     service = Phase4Service(
         repo_root=repo_root,
         fixture_root=fixture_root,
+        provider_cache_root=config.cache_dir,
         extra_write_roots=extra_write_roots,
         database_path=Path("data")
-        / (f"phase4-runtime-{config.run_date.isoformat()}-{symbol_digest}-{output_digest}.sqlite3"),
+        / (
+            f"phase4-{'offline' if config.offline else 'live'}-runtime-"
+            f"{config.run_date.isoformat()}-{symbol_digest}-{output_digest}.sqlite3"
+        ),
     )
-    result = service.run_offline_phase4_flow(
-        run_date=config.run_date.isoformat(),
-        output_dir=output_arg,
-        symbol=normalized_symbol,
+    result = (
+        service.run_offline_phase4_flow(
+            run_date=config.run_date.isoformat(),
+            output_dir=output_arg,
+            symbol=normalized_symbol,
+        )
+        if config.offline
+        else service.run_live_phase4_flow(
+            run_date=config.run_date.isoformat(),
+            output_dir=output_arg,
+            symbol=normalized_symbol,
+        )
     )
     report_payload = cast(dict[str, object], result["report"])
     markdown_path = Path(str(report_payload["markdown_path"]))
@@ -68,13 +82,19 @@ def _project_root() -> Path:
 
 def _fixture_project_root(fixture_dir: Path | None, default: Path) -> Path:
     if fixture_dir is None:
+        if not (default / "tests" / "fixtures").exists():
+            raise ValueError(
+                "offline fixture runs require --fixture-dir when repository fixtures are absent"
+            )
         return default
     resolved = fixture_dir.resolve()
     if (resolved / "tests" / "fixtures").exists():
         return resolved
     if resolved.name == "fixtures" and resolved.parent.name == "tests":
         return resolved.parent.parent
-    return default
+    raise ValueError(
+        "--fixture-dir must point to the repository root or to its tests/fixtures directory"
+    )
 
 
 def _write_root_for_output(output_dir: Path, project_root: Path) -> Path:

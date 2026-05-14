@@ -139,6 +139,8 @@ class SecEdgarFundamentalsProvider:
             query=normalized_cik,
             url=submissions_url,
         )
+        facts: JsonFetch | None = None
+        submissions: JsonFetch | None = None
         try:
             facts = fetch_json(
                 transport=self._transport,
@@ -174,13 +176,24 @@ class SecEdgarFundamentalsProvider:
                 credential_state=CredentialState.NOT_REQUIRED,
             )
         except MalformedProviderResponse as exc:
+            raw_snapshot_id = raw_snapshot_id_for_payload(
+                "sec-edgar-combined",
+                {
+                    "facts": facts.raw_snapshot_id if facts is not None else None,
+                    "submissions": submissions.raw_snapshot_id if submissions is not None else None,
+                },
+            )
             return malformed_result(
                 provider_name=self.provider_name,
                 request=request,
                 fetched_at=fetched_at,
                 message=str(exc),
                 credential_state=CredentialState.NOT_REQUIRED,
+                raw_snapshot_id=raw_snapshot_id,
+                cache_key=facts.cache_key if facts is not None else facts_cache_key,
             )
+        assert facts is not None
+        assert submissions is not None
         raw_snapshot_id = raw_snapshot_id_for_payload(
             "sec-edgar-combined",
             {"facts": facts.raw_snapshot_id, "submissions": submissions.raw_snapshot_id},

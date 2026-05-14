@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -192,6 +194,38 @@ def test_fixture_manifest_json_serialization_round_trips_nested_fixtures() -> No
     assert '"recorded_at": "2026-05-11T16:30:00Z"' in serialized
     assert '"redactions": [' in serialized
     assert round_tripped == manifest
+
+
+@pytest.mark.schema
+def test_raw_fixture_manifest_covers_real_raw_fixture_files() -> None:
+    fixture_root = Path(__file__).parent / "fixtures"
+    manifest_path = fixture_root / "raw" / "manifest.json"
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    covered_paths: set[str] = set()
+
+    for provider_name, scenario, response_path, content_type in manifest_payload["fixtures"]:
+        request = _provider_request(request_id=f"{provider_name}-{scenario}")
+        raw_fixture = RawProviderFixture(
+            provider_name=provider_name,
+            scenario=scenario,
+            recorded_at=datetime.fromisoformat(
+                manifest_payload["recorded_at"].replace("Z", "+00:00")
+            ),
+            request=request,
+            response_path=response_path,
+            content_type=content_type,
+            provider_metadata=manifest_payload["provider_metadata"],
+            redactions=tuple(manifest_payload["redactions"]),
+        )
+        covered_paths.add(raw_fixture.response_path)
+        assert (fixture_root / raw_fixture.response_path).exists()
+
+    actual_paths = {
+        path.relative_to(fixture_root).as_posix()
+        for path in (fixture_root / "raw").rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    }
+    assert covered_paths == actual_paths
 
 
 @pytest.mark.schema

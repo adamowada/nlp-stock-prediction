@@ -11,9 +11,10 @@ This is not a trading application. It does not place trades, size positions, or 
 buy or sell. Its output is a Markdown and JSON research report that separates source evidence from
 analysis, preserves dissenting context, and explains what would change the prediction.
 
-The project is in active development. The current implementation includes a deterministic offline
-research command, SQLite-backed planning and research storage, Phase 3 instrument-universe
-contracts/storage, fixture-backed Phase 4 research tools, and an opt-in Codex MCP smoke path.
+The project is in active development. The current implementation includes deterministic offline and
+guarded live-provider research commands, SQLite-backed planning and research storage, Phase 3
+instrument-universe contracts/storage, Phase 4 research tools, Phase 5 Markdown/JSON/audit
+prediction reports, and an opt-in Codex MCP smoke path.
 
 ## Contents
 
@@ -75,6 +76,16 @@ python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output
 The offline command writes local report artifacts under
 `reports/<YYYY-MM-DD>/<symbol-slug>/` without using network providers or live credentials.
 
+Generate a guarded live-provider report:
+
+```sh
+python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --live
+```
+
+The live command uses live providers and public-source adapters only. Missing credentials, upstream
+failures, stale data, or empty providers are recorded in the report instead of falling back to
+fixtures or dummy data.
+
 ## Usage Examples
 
 Show available CLI commands:
@@ -92,6 +103,16 @@ python -m nlp_stock_prediction research \
   --symbol TSLA \
   --output reports/ \
   --offline
+```
+
+Generate a live-provider report for a specific date:
+
+```sh
+python -m nlp_stock_prediction research \
+  --date 2026-05-12 \
+  --symbol TSLA \
+  --output reports/ \
+  --live
 ```
 
 Run the optional Phase 4 Codex smoke workflow:
@@ -121,9 +142,9 @@ ambiguous symbols such as `AI` must keep multiple matches instead of silently ch
 Watchlists are represented as named collections of instrument queries in contracts and as
 instrument-linked lists in SQLite.
 
-This layer is fixture-backed today. The default offline report, optional Phase 4 Codex smoke path,
-and first-class Phase 4 universe discovery tool can write instrument artifacts and registry rows
-without live universe providers. Broader live universe-discovery adapters remain future hardening.
+The offline report path remains fixture-backed. The live report path materializes requested symbols
+as live-mode instrument identities and then relies on live provider artifacts to establish data
+availability. Broader live universe-discovery adapters remain future hardening.
 
 ## Current Phase 4 Tool Suite
 
@@ -132,6 +153,28 @@ social evidence, news/catalysts, fundamentals, sector/macro context, prediction-
 conservative candidate synthesis, and final Markdown/JSON/audit report rendering. These tools write
 typed artifacts and SQLite run-graph rows while preserving provider/source provenance. Live providers
 remain opt-in and incremental; deterministic fixtures are the default QA and offline path.
+
+## Current Phase 6 Evaluation And Calibration
+
+Phase 6 can evaluate stored prediction candidates against later outcome evidence, then persist
+signal-family ablations, walk-forward folds, and calibration summaries from those point-in-time
+outcome evaluations. These tools read from the research SQLite run graph and write audit artifacts
+plus `calibration_runs`/`calibration_slices`; they do not use fixture or dummy fallbacks.
+
+Rendered reports now preserve Phase 6 outputs when they exist for the same run. Stored outcome
+evaluations become prior-outcome review entries in Markdown/JSON, and calibration artifacts remain
+separate audit artifacts referenced by the report rather than being collapsed into trading-style
+performance claims.
+
+## Current Phase 5 Prediction Reports
+
+The report product writes Markdown, JSON, and audit-manifest artifacts from the stored run graph.
+Reports preserve evidence for and against, dissenting evidence, uncertainty, baseline context,
+signal artifacts, prior-outcome review context, source references, material claim traces, provider
+health, and audit hashes. When the honest result is no call, reports render structured
+insufficient-evidence details instead of fabricating a scenario. Provider failures, stale data,
+malformed artifacts, ambiguous instruments, unsupported instruments, and contradictory evidence
+remain visible in the report and audit surfaces.
 
 ## Configuration
 
@@ -144,9 +187,12 @@ variables or ignored `.env` files.
 | --- | --- | --- |
 | `OPENAI_API_KEY` | No | Required only for workflows that call OpenAI-backed tooling. |
 | `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE` | No | Set to `1` to opt in to the real Codex smoke path. |
+| `NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY` | No | Optional Alpha Vantage key for live market data and fundamentals. |
+| `NLP_STOCK_PREDICTION_FRED_API_KEY` | No | Optional FRED key for live macro context. |
 | `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | No | Token for X/Twitter-backed provider experiments. |
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | No | Contact User-Agent for opt-in live provider smoke tests. |
 | `NLP_STOCK_PREDICTION_SEC_USER_AGENT` | No | Contact User-Agent for SEC EDGAR requests. |
+| `NLP_STOCK_PREDICTION_SEC_CIK_MAP` | No | Optional comma-separated `SYMBOL=CIK` map for SEC EDGAR lookup expansion. |
 | `NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` | No | User agent for public HTML scraping providers. |
 | `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS` | No | Enables opt-in live test groups when combined with marked tests. |
 | `NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL` | No | URL used by the opt-in live scraping smoke test. |
@@ -156,8 +202,12 @@ The project uses two SQLite databases:
 
 - `plans/planning.sqlite3`: tracked planning state for plans, decisions, progress, and related
   metadata.
-- `data/prediction-research.sqlite3`: ignored runtime research state for tool runs, artifacts,
-  evidence, and prediction candidates.
+- `data/prediction-research.sqlite3`: ignored default research state for service/tool runs that do
+  not choose a per-run database.
+- `data/phase4-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3`: ignored CLI
+  research databases created by `python -m nlp_stock_prediction research ...`. These isolate report
+  runs by date, symbol, output path, and live/offline mode so one invocation cannot silently reuse
+  another invocation's stored evidence.
 
 Generated reports, provider cache files, research databases, and raw artifacts are local working
 state by default and are ignored unless explicitly promoted as small test fixtures.

@@ -372,7 +372,6 @@ def fetch_html(
             max_bytes=max_bytes,
         ),
         should_retry=lambda exc: isinstance(exc, ProviderTransportError) and exc.retryable,
-        sleep=lambda _delay: None,
     )
     if not response.html.strip():
         raise MalformedProviderResponse("provider returned empty HTML")

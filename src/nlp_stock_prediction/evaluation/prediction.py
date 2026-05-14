@@ -10,18 +10,29 @@ from typing import cast
 
 from nlp_stock_prediction.contracts.analysis import AnalysisBundle
 from nlp_stock_prediction.contracts.base import JsonObject
-from nlp_stock_prediction.contracts.enums import FreshnessStatus, PredictionStatus
+from nlp_stock_prediction.contracts.enums import (
+    FreshnessStatus,
+    PredictionStatus,
+)
 from nlp_stock_prediction.contracts.evaluation import (
     BaselineComparison,
     EvaluationEvidenceCounts,
     PredictionEvaluation,
     PredictionEvaluationArtifactPayload,
+    SignalArtifactCounts,
+    SignalArtifactReference,
 )
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
 from nlp_stock_prediction.contracts.report import AuditArtifact, PredictionCandidate
+from nlp_stock_prediction.contracts.signal_artifact_references import (
+    legacy_signal_artifact_reference,
+)
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    report_data_mode_metadata_for_run_id,
+)
 from nlp_stock_prediction.storage.records import (
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
@@ -64,12 +75,16 @@ def evaluate_prediction_candidate(
         reason for _reference, reason in (*missing_supporting, *missing_contradicting)
     )
     ml_signal_count = _ml_signal_count(analysis_bundle)
+    signal_artifacts = _candidate_signal_artifacts(candidate)
+    signal_artifact_ids = tuple(reference.artifact_id for reference in signal_artifacts)
+    signal_artifact_counts = SignalArtifactCounts.from_references(signal_artifacts)
     counts = EvaluationEvidenceCounts(
         supporting_source_evidence=len(supporting_refs),
         contradicting_source_evidence=len(contradicting_refs),
         missing_source_references=len(missing_refs),
-        technical_signal_artifacts=len(candidate.signal_artifact_ids),
+        technical_signal_artifacts=signal_artifact_counts.technicals,
         ml_signal_count=ml_signal_count,
+        signal_artifacts_by_family=signal_artifact_counts,
         supporting_reference_ids=tuple(reference.evidence_id for reference in supporting_refs),
         contradicting_reference_ids=tuple(
             reference.evidence_id for reference in contradicting_refs
@@ -92,6 +107,7 @@ def evaluate_prediction_candidate(
         instrument_id=candidate.instrument_id,
         symbol=candidate.symbol,
         created_at=evaluated_at,
+        prediction_type=candidate.prediction_type,
         horizon=candidate.horizon,
         direction=candidate.direction,
         status=status,
@@ -101,7 +117,8 @@ def evaluate_prediction_candidate(
         evidence_counts=counts,
         evidence_for=supporting_refs,
         evidence_against=contradicting_refs,
-        signal_artifact_ids=candidate.signal_artifact_ids,
+        signal_artifact_ids=signal_artifact_ids,
+        signal_artifacts=signal_artifacts,
         metadata={
             "candidate_declared_status": candidate.status.value,
             "analysis_bundle_id": analysis_bundle.analysis_id if analysis_bundle else None,
@@ -150,10 +167,12 @@ def write_prediction_evaluation_artifact(
         evaluation_id=f"evaluation-{_slug(candidate.candidate_id)}-{digest[:8]}",
     )
     resolved_tool_run_id = tool_run_id or f"tool-prediction-evaluation-{digest[:12]}"
+    mode_metadata = report_data_mode_metadata_for_run_id(store, run_id)
     inputs: JsonObject = {
         "candidate_id": candidate.candidate_id,
         "source_evidence_count": len(evidence_sources),
         "analysis_bundle_id": analysis_bundle.analysis_id if analysis_bundle else None,
+        **mode_metadata,
     }
     payload = PredictionEvaluationArtifactPayload(
         run_id=run_id,
@@ -191,6 +210,7 @@ def write_prediction_evaluation_artifact(
             produced_by=_TOOL_NAME,
             tool_run_id=resolved_tool_run_id,
             schema_version=payload.schema_version,
+            default_metadata=mode_metadata,
         ).write_json(
             artifact_id=artifact_id,
             artifact_type="prediction_evaluation",
@@ -203,6 +223,7 @@ def write_prediction_evaluation_artifact(
                 "evaluation_id": evaluation.evaluation_id,
                 "status": evaluation.status.value,
                 "quality_language": evaluation.quality_language.model_dump(mode="json"),
+                **mode_metadata,
             },
         )
         store.link_candidate_artifact(
@@ -503,7 +524,7 @@ def _validate_candidate_matches_stored(
     _append_mismatch(
         mismatches,
         "signal_artifacts",
-        candidate.signal_artifact_ids,
+        tuple(reference.artifact_id for reference in _candidate_signal_artifacts(candidate)),
         stored_candidate.signal_artifacts,
     )
     if mismatches:
@@ -550,6 +571,18 @@ def _ml_signal_count(analysis_bundle: AnalysisBundle | None) -> int:
     return 1 if analysis_bundle.technical.ml_signal is not None else 0
 
 
+def _candidate_signal_artifacts(
+    candidate: PredictionCandidate,
+) -> tuple[SignalArtifactReference, ...]:
+    references = list(candidate.signal_artifacts)
+    typed_ids = {reference.artifact_id for reference in references}
+    for artifact_id in candidate.signal_artifact_ids:
+        if artifact_id in typed_ids:
+            continue
+        references.append(legacy_signal_artifact_reference(artifact_id))
+    return tuple(references)
+
+
 def _link_available_evidence(
     *,
     store: SQLiteStore,
@@ -593,6 +626,7 @@ def _evaluation_metadata(
         "status": evaluation.status.value,
         "instrument_id": evaluation.instrument_id,
         "symbol": evaluation.symbol,
+        "prediction_type": evaluation.prediction_type.value,
         "score": evaluation.score,
         "baseline_verdict": evaluation.baseline_comparison.verdict,
         "quality_label": evaluation.quality_language.report_label,
@@ -603,6 +637,10 @@ def _evaluation_metadata(
             reference.evidence_id for reference in evaluation.evidence_against
         ],
         "missing_reference_ids": list(evaluation.evidence_counts.missing_reference_ids),
+        "signal_artifact_ids": list(evaluation.signal_artifact_ids),
+        "signal_artifact_counts": evaluation.evidence_counts.signal_artifacts_by_family.model_dump(
+            mode="json"
+        ),
     }
     if artifact is not None:
         metadata["artifact_id"] = artifact.artifact_id

@@ -153,6 +153,18 @@ def verify_smoke_outputs(config: CodexSmokeConfig, *, require_sqlite: bool = Tru
         raise RuntimeError("Codex smoke final message reported MCP fallback or failure.")
 
     report_payload = json.loads(json_path.read_text(encoding="utf-8"))
+    report_text = json.dumps(report_payload, sort_keys=True).lower()
+    data_failure_markers = (
+        "phase2mcpservice",
+        "record_codex_search_evidence",
+        "run_dummy_universe_tool",
+        "run_dummy_analysis_tool",
+        "synthesize_prediction_candidates",
+        '"provider": "dummy',
+        '"tool_name": "dummy',
+    )
+    if any(marker in report_text for marker in data_failure_markers):
+        raise RuntimeError("Codex smoke report JSON contains fallback or dummy provenance.")
     evidence = report_payload.get("evidence_sources")
     if not isinstance(evidence, list) or not evidence:
         raise RuntimeError("Codex smoke report did not include evidence_sources.")
@@ -229,6 +241,14 @@ def verify_sqlite_run(config: CodexSmokeConfig) -> None:
     tool_runs = store.list_tool_runs_for_run(run_id)
     if not tool_runs:
         raise RuntimeError("Codex smoke did not persist tool_runs.")
+    fallback_tool_names = {
+        "run_dummy_universe_tool",
+        "run_dummy_analysis_tool",
+        "synthesize_prediction_candidates",
+        "record_codex_search_evidence",
+    }
+    if any(record.tool_name in fallback_tool_names for record in tool_runs):
+        raise RuntimeError("Codex smoke persisted fallback tool runs.")
 
     artifacts = store.list_artifacts_for_run(run_id)
     if not artifacts:
@@ -237,6 +257,8 @@ def verify_sqlite_run(config: CodexSmokeConfig) -> None:
     evidence = store.list_evidence_for_run(run_id)
     if not evidence:
         raise RuntimeError("Codex smoke did not persist source evidence.")
+    if any("dummy" in record.provider.lower() for record in evidence):
+        raise RuntimeError("Codex smoke persisted dummy evidence provenance.")
     candidates = store.list_prediction_candidates_for_run(run_id)
     if not candidates:
         raise RuntimeError("Codex smoke did not persist prediction candidates.")

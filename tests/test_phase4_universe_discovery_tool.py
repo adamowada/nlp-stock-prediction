@@ -23,6 +23,10 @@ from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
     PHASE4_UNIVERSE_SCHEMA_VERSION,
     Phase4UniverseDiscoveryTool,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    OFFLINE_FIXTURE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.storage import ResearchRunRecord, SQLiteStore
 
 pytestmark = pytest.mark.unit
@@ -49,6 +53,7 @@ def _context(repo_root: Path) -> RunContext:
             base_dir=audit_dir,
             created_at=_now(),
             produced_by="phase4-test",
+            default_metadata=report_data_mode_metadata(OFFLINE_FIXTURE_REPORT_DATA_MODE),
         ),
     )
 
@@ -66,6 +71,7 @@ def _seed_run(store: SQLiteStore, context: RunContext) -> None:
             objective="Fixture-backed Phase 4 universe discovery test",
             status="running",
             started_at=context.generated_at,
+            metadata=report_data_mode_metadata(OFFLINE_FIXTURE_REPORT_DATA_MODE),
         )
     )
 

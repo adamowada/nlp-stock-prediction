@@ -111,6 +111,8 @@ Integration tests should cover:
 - audit manifests that include rendered report artifacts;
 - deterministic run IDs, duplicate-run rejection, and cleanup after failed transactional tool steps;
 - neutral-only evidence staying insufficient instead of becoming supporting evidence.
+- report failure products for stale, missing, malformed, unsupported, ambiguous, contradictory, and
+  failed-provider inputs.
 
 ### Live API And Live Scraping
 
@@ -168,6 +170,41 @@ The gate must stay offline and should verify mixed-asset universe discovery, typ
 SQLite tool-run/evidence/candidate indexing, rendered Markdown/JSON reports, audit manifest
 coverage, prediction-quality evaluation artifacts, Phase 4 artifact type alignment, and visible
 recovery from partial tool failure.
+
+### Phase 5 Report Gates
+
+Run these when report contracts, report data modes, prior-outcome review, report artifact indexing,
+or candidate/evidence/artifact link behavior changes:
+
+```sh
+python -m pytest tests/test_phase5_report_assembly.py tests/test_phase5_report_data_modes.py
+python -m pytest tests/test_phase5_prior_outcomes.py tests/test_phase5_json_report_index.py
+python -m pytest tests/test_reporting_markdown.py tests/test_phase1_schema_contracts.py -k "report or provenance"
+```
+
+These gates must stay offline. They should verify Markdown/JSON parity, report artifact ledger/index
+consistency, typed signal artifact references, explicit live/offline data-mode boundaries,
+candidate-evidence and candidate-artifact link tables, prior report hash validation, and explicit
+insufficient-evidence or contradicted outcomes when sources are missing, stale, unknown, malformed,
+or conflicting.
+
+### Phase 6 QA Gates
+
+The Phase 6 gate is deterministic and uses persisted point-in-time outcome evaluations rather than
+fixtures or dummy fallback paths. It exercises outcome evaluation, persisted outcome loading,
+signal-family ablation, walk-forward folds, calibration summaries, public MCP/service wiring, and
+report integration from SQLite run-graph records and audit artifacts.
+
+```sh
+python -m pytest tests/test_phase6_evaluation_contracts.py tests/test_phase6_outcome_evaluation_tool.py
+python -m pytest tests/test_phase6_public_tooling.py tests/test_phase6_report_integration.py
+python -m pytest tests/test_phase6_calibration_summary.py tests/test_phase6_signal_family_ablation.py tests/test_phase6_walk_forward_evaluation.py
+```
+
+The gate must stay offline and should verify point-in-time outcome evidence, no lookahead market
+artifacts, canonical prediction type/horizon handling, idempotent SQLite persistence, cohort-source
+attribution, artifact write-policy enforcement, and report references that preserve Phase 6 outputs
+without turning calibration into trading-performance claims.
 
 ### Cross-Cutting Integrity Gates
 

@@ -32,6 +32,10 @@ from nlp_stock_prediction.orchestration.phase4_sector_macro import (
     run_phase4_sector_macro_tool,
 )
 from nlp_stock_prediction.orchestration.phase4_social import run_phase4_social_evidence_tool
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    OFFLINE_FIXTURE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.providers._base import JsonResponse
 from nlp_stock_prediction.providers.apnews import APNewsProvider
 from nlp_stock_prediction.providers.fred import FredMacroProvider
@@ -128,6 +132,7 @@ def _store(tmp_path: Path) -> SQLiteStore:
             objective="fixture-backed phase4 evidence tool tests",
             status="running",
             started_at=FETCHED_AT,
+            metadata=report_data_mode_metadata(OFFLINE_FIXTURE_REPORT_DATA_MODE),
         )
     )
     return store
@@ -470,7 +475,7 @@ def test_phase4_news_tool_writes_warning_artifact_for_provider_failures(
 
     payload = _artifact_payload(result.artifact_path)
 
-    assert result.status == "partial"
+    assert result.status == "failed"
     assert result.evidence_ids == ()
     assert store.get_artifact(result.artifact_id) is not None
     assert len(store.list_source_queries_for_run(RUN_ID)) == 2

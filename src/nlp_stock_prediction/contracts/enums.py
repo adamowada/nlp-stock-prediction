@@ -154,6 +154,51 @@ class PredictionStatus(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class PredictionType(StrEnum):
+    DIRECTIONAL = "directional"
+    VOLATILITY = "volatility"
+    EVENT = "event"
+    RELATIVE_VALUE = "relative_value"
+    NEUTRAL = "neutral"
+    UNCERTAIN = "uncertain"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+
+
+class SignalArtifactFamily(StrEnum):
+    TECHNICALS = "technicals"
+    TIMESFM = "timesfm"
+    SOCIAL = "social"
+    NEWS = "news"
+    FUNDAMENTALS = "fundamentals"
+    SECTOR_MACRO = "sector_macro"
+
+
+class PredictionOutcomeStatus(StrEnum):
+    OBSERVED = "observed"
+    PENDING = "pending"
+    UNAVAILABLE = "unavailable"
+    STALE = "stale"
+
+
+class PredictionOutcomeResult(StrEnum):
+    SUPPORTED = "supported"
+    NOT_SUPPORTED = "not_supported"
+    CONTRADICTED = "contradicted"
+    MIXED = "mixed"
+    NEUTRAL = "neutral"
+    INSUFFICIENT_DATA = "insufficient_data"
+
+
+class PredictionOutcomeEvaluationStatus(StrEnum):
+    CONFIRMED = "confirmed"
+    MISSED = "missed"
+    MIXED = "mixed"
+    INCONCLUSIVE = "inconclusive"
+    PENDING = "pending"
+    STALE = "stale"
+    NOT_EVALUABLE = "not_evaluable"
+
+
 class AnalysisSignal(StrEnum):
     SUPPORTS = "supports"
     CONFLICTS = "conflicts"
@@ -171,9 +216,14 @@ __all__ = [
     "InstrumentResolutionStatus",
     "InstrumentType",
     "PositionType",
+    "PredictionOutcomeEvaluationStatus",
+    "PredictionOutcomeResult",
+    "PredictionOutcomeStatus",
     "PredictionStatus",
+    "PredictionType",
     "ProviderStatus",
     "RetrievalMethod",
+    "SignalArtifactFamily",
     "SourceKind",
     "TickerDiscoveryStatus",
     "TimeHorizon",

@@ -45,6 +45,9 @@ from nlp_stock_prediction.orchestration.phase4_execution import (
     standardize_phase4_tool_run_status,
     write_phase4_json_artifact,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    report_data_mode_metadata_for_run_id,
+)
 from nlp_stock_prediction.storage.records import (
     EvidenceRecord,
     SourceQueryRecord,
@@ -93,6 +96,7 @@ def record_source_query_for_result(
     result: ProviderResult[object],
     source_url: str | None = None,
 ) -> SourceQueryRecord:
+    mode_metadata = _mode_metadata_for_tool_run(store, tool_run_id)
     query = provider_request_query(result.request)
     query_urls = source_query_urls_from_result(result)
     url = (
@@ -122,11 +126,19 @@ def record_source_query_for_result(
                 "warnings": warning_payloads(result.warnings),
                 "source_query_urls": query_urls,
                 "evidence_source_urls": evidence_source_urls_from_result(result),
+                **mode_metadata,
             },
         ),
     )
     store.record_source_query(record)
     return record
+
+
+def _mode_metadata_for_tool_run(store: SQLiteStore, tool_run_id: str) -> JsonObject:
+    tool_run = store.get_tool_run(tool_run_id)
+    if tool_run is None or tool_run.run_id is None:
+        return {}
+    return report_data_mode_metadata_for_run_id(store, tool_run.run_id)
 
 
 def provider_request_query(request: ProviderRequest) -> str:
@@ -607,7 +619,7 @@ def tool_status(*, record_count: int, warnings: Sequence[str]) -> str:
     if record_count:
         return "successful"
     if warnings:
-        return "partial"
+        return "failed"
     return "empty"
 
 

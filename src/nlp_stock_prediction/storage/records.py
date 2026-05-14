@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from nlp_stock_prediction.contracts.base import JsonObject
@@ -94,6 +94,26 @@ class ArtifactRecord:
 
 
 @dataclass(frozen=True)
+class ReportArtifactRecord:
+    artifact_id: str
+    run_id: str
+    artifact_type: str
+    path: Path
+    sha256: str
+    schema_version: str
+    report_schema_version: str
+    report_date: date
+    report_data_mode: str
+    source_run_started_at: datetime
+    source_run_completed_at: datetime | None = None
+    tool_run_id: str | None = None
+    instrument_id: str | None = None
+    symbol: str | None = None
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class SourceQueryRecord:
     source_query_id: str
     provider: str
@@ -142,6 +162,134 @@ class PredictionCandidateRecord:
     signal_artifacts: tuple[str, ...] = ()
     baseline: JsonObject = field(default_factory=dict)
     uncertainty: str | None = None
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PredictionEvaluationRecord:
+    evaluation_id: str
+    candidate_id: str
+    instrument_id: str
+    symbol: str
+    created_at: datetime
+    prediction_type: str
+    horizon: str
+    status: str
+    score: float
+    run_id: str | None = None
+    direction: str | None = None
+    baseline_comparison: JsonObject = field(default_factory=dict)
+    evidence_counts: JsonObject = field(default_factory=dict)
+    signal_counts: JsonObject = field(default_factory=dict)
+    artifact_id: str | None = None
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PredictionOutcomeRecord:
+    outcome_id: str
+    candidate_id: str
+    instrument_id: str
+    symbol: str
+    prediction_type: str
+    evaluation_window_start: datetime
+    evaluation_window_end: datetime
+    status: str
+    horizon: str = "unknown"
+    observed_result: str | None = None
+    observed_at: datetime | None = None
+    result_summary: str | None = None
+    result_value: float | None = None
+    baseline_value: float | None = None
+    limitations: tuple[str, ...] = ()
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PredictionOutcomeEvaluationRecord:
+    outcome_evaluation_id: str
+    outcome_id: str
+    candidate_id: str
+    instrument_id: str
+    symbol: str
+    evaluated_at: datetime
+    status: str
+    run_id: str | None = None
+    quality_score: float | None = None
+    baseline_comparison: JsonObject = field(default_factory=dict)
+    artifact_id: str | None = None
+    limitations: tuple[str, ...] = ()
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class OutcomeEvidenceLinkRecord:
+    outcome_id: str
+    evidence_id: str
+    relationship: str
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OutcomeArtifactLinkRecord:
+    outcome_id: str
+    artifact_id: str
+    relationship: str
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OutcomeEvaluationEvidenceLinkRecord:
+    outcome_evaluation_id: str
+    evidence_id: str
+    relationship: str
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OutcomeEvaluationArtifactLinkRecord:
+    outcome_evaluation_id: str
+    artifact_id: str
+    relationship: str
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class CalibrationRunRecord:
+    calibration_id: str
+    run_id: str
+    method_version: str
+    created_at: datetime
+    point_in_time_cutoff: datetime
+    tool_run_id: str | None = None
+    cohort_query: JsonObject = field(default_factory=dict)
+    source_outcome_evaluation_ids: tuple[str, ...] = ()
+    artifact_id: str | None = None
+    limitations: tuple[str, ...] = ()
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CalibrationSliceRecord:
+    slice_id: str
+    calibration_id: str
+    cohort_label: str
+    sample_count: int
+    resolved_count: int
+    pending_count: int = 0
+    stale_count: int = 0
+    unavailable_count: int = 0
+    not_evaluable_count: int = 0
+    signal_family: str | None = None
+    prediction_type: str | None = None
+    horizon: str | None = None
+    metrics: JsonObject = field(default_factory=dict)
+    baseline_comparison: JsonObject = field(default_factory=dict)
+    provenance: JsonObject = field(default_factory=dict)
     metadata: JsonObject = field(default_factory=dict)
 
 
@@ -234,11 +382,17 @@ class PlanCommitLinkRecord:
 
 __all__ = [
     "ArtifactRecord",
+    "CalibrationRunRecord",
+    "CalibrationSliceRecord",
     "CandidateArtifactLinkRecord",
     "CandidateEvidenceLinkRecord",
     "EvidenceRecord",
     "InstrumentRecord",
     "InstrumentTradabilityEvidenceRecord",
+    "OutcomeArtifactLinkRecord",
+    "OutcomeEvaluationArtifactLinkRecord",
+    "OutcomeEvaluationEvidenceLinkRecord",
+    "OutcomeEvidenceLinkRecord",
     "PlanAcceptanceCriterionRecord",
     "PlanArtifactLinkRecord",
     "PlanCommitLinkRecord",
@@ -247,6 +401,10 @@ __all__ = [
     "PlanProgressRecord",
     "PlanRecord",
     "PredictionCandidateRecord",
+    "PredictionEvaluationRecord",
+    "PredictionOutcomeEvaluationRecord",
+    "PredictionOutcomeRecord",
+    "ReportArtifactRecord",
     "ResearchRunRecord",
     "SourceQueryRecord",
     "ToolRunRecord",

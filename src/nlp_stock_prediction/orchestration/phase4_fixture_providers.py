@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -14,12 +15,13 @@ from nlp_stock_prediction.contracts.providers import (
     NewsProvider,
     RedditProvider,
 )
-from nlp_stock_prediction.orchestration.phase2_common import utc_now
 from nlp_stock_prediction.providers._base import JsonResponse, ProviderTransportError
 from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
 from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
 from nlp_stock_prediction.providers.social import XRecentSearchProvider
 from nlp_stock_prediction.reddit.provider import FixtureRedditProvider
+
+OFFLINE_FIXTURE_FETCHED_AT = datetime(2026, 5, 14, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class Phase4FixtureProviderFactory:
     """Build offline providers from the repository fixture tree."""
 
     repo_root: Path
+    fetched_at: datetime = OFFLINE_FIXTURE_FETCHED_AT
 
     def market_html_path(self, symbol: str) -> Path | None:
         return self.fixture_path(
@@ -45,7 +48,7 @@ class Phase4FixtureProviderFactory:
             FixtureRedditProvider(
                 ticker_card_html=card_path.read_text(encoding="utf-8"),
                 discussion_records=cast(list[dict[str, object]], records),
-                fetched_at=utc_now(),
+                fetched_at=self.fetched_at,
                 raw_ticker_snapshot_id="raw-reddit-ticker-card",
                 raw_discussion_snapshot_id="raw-reddit-discussion",
             ),
@@ -57,11 +60,13 @@ class Phase4FixtureProviderFactory:
         payload = self.fixture_json("raw", "x", "recent_tsla.json")
         if payload is None:
             return None
-        return XRecentSearchProvider(
+        provider = XRecentSearchProvider(
             bearer_token="fixture-token",
             transport=_StaticJsonTransport({"tweets/search/recent": cast(JsonObject, payload)}),
-            now=utc_now,
+            now=lambda: self.fetched_at,
         )
+        provider.provider_name = "fixture-x-recent-search"
+        return provider
 
     def news_providers(self, symbol: str) -> tuple[NewsProvider, ...]:
         if symbol.upper() != "TSLA":
@@ -81,7 +86,7 @@ class Phase4FixtureProviderFactory:
                 transport=_StaticJsonTransport(
                     {"news.example.invalid/v1/search": cast(JsonObject, payload)}
                 ),
-                now=utc_now,
+                now=lambda: self.fetched_at,
             ),
         )
 
@@ -92,19 +97,19 @@ class Phase4FixtureProviderFactory:
         submissions = self.fixture_json("raw", "sec_edgar", "submissions_tsla.json")
         if companyfacts is None or submissions is None:
             return ()
-        return (
-            SecEdgarFundamentalsProvider(
-                ticker_cik_map={symbol.upper(): "1318605"},
-                user_agent="nlp-stock-prediction fixture-runtime contact@example.test",
-                transport=_StaticJsonTransport(
-                    {
-                        "companyfacts": cast(JsonObject, companyfacts),
-                        "submissions": cast(JsonObject, submissions),
-                    }
-                ),
-                now=utc_now,
+        provider = SecEdgarFundamentalsProvider(
+            ticker_cik_map={symbol.upper(): "1318605"},
+            user_agent="nlp-stock-prediction fixture-runtime contact@example.test",
+            transport=_StaticJsonTransport(
+                {
+                    "companyfacts": cast(JsonObject, companyfacts),
+                    "submissions": cast(JsonObject, submissions),
+                }
             ),
+            now=lambda: self.fetched_at,
         )
+        provider.provider_name = "fixture-sec-edgar"
+        return (provider,)
 
     def fixture_path(self, *parts: str) -> Path | None:
         path = self.repo_root.joinpath("tests", "fixtures", *parts)
@@ -133,8 +138,6 @@ class _StaticJsonTransport:
         for url_fragment, payload in self.responses.items():
             if url_fragment in url:
                 return JsonResponse(payload=payload)
-        if len(self.responses) == 1:
-            return JsonResponse(payload=next(iter(self.responses.values())))
         raise ProviderTransportError(
             f"No fixture JSON response is registered for URL: {url}",
             error_type="fixture_not_found",

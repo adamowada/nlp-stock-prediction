@@ -7,18 +7,25 @@ import sqlite3
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import UTC, date, datetime
+from pathlib import Path, PureWindowsPath
 from typing import cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.contracts.enums import PredictionType, TimeHorizon
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
+    CalibrationRunRecord,
+    CalibrationSliceRecord,
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
     EvidenceRecord,
     InstrumentRecord,
     InstrumentTradabilityEvidenceRecord,
+    OutcomeArtifactLinkRecord,
+    OutcomeEvaluationArtifactLinkRecord,
+    OutcomeEvaluationEvidenceLinkRecord,
+    OutcomeEvidenceLinkRecord,
     PlanAcceptanceCriterionRecord,
     PlanArtifactLinkRecord,
     PlanCommitLinkRecord,
@@ -27,11 +34,21 @@ from nlp_stock_prediction.storage.records import (
     PlanProgressRecord,
     PlanRecord,
     PredictionCandidateRecord,
+    PredictionEvaluationRecord,
+    PredictionOutcomeEvaluationRecord,
+    PredictionOutcomeRecord,
+    ReportArtifactRecord,
     ResearchRunRecord,
     SourceQueryRecord,
     ToolRunRecord,
     WatchlistItemRecord,
     WatchlistRecord,
+)
+from nlp_stock_prediction.storage.report_artifacts import (
+    fetch_latest_prior_report_artifact_row,
+    fetch_latest_report_artifact_row,
+    fetch_report_artifact_row,
+    fetch_report_artifact_rows_for_run,
 )
 from nlp_stock_prediction.storage.run_graph import (
     fetch_artifact_rows,
@@ -41,7 +58,7 @@ from nlp_stock_prediction.storage.run_graph import (
     fetch_tool_run_rows,
 )
 
-CURRENT_RESEARCH_SCHEMA_VERSION = 5
+CURRENT_RESEARCH_SCHEMA_VERSION = 7
 CURRENT_PLANNING_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = CURRENT_RESEARCH_SCHEMA_VERSION
 DEFAULT_RESEARCH_DATABASE_PATH = Path("data/prediction-research.sqlite3")
@@ -513,6 +530,7 @@ class SQLiteStore:
                     _format_datetime(created_at),
                 ),
             )
+            self._sync_candidate_links_for_artifact(connection, record.artifact_id)
 
     def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
         _validate_required(artifact_id, "artifact_id")
@@ -534,6 +552,173 @@ class SQLiteStore:
             _ensure_initialized(connection)
             rows = fetch_artifact_rows(connection, run_id)
         return tuple(_artifact_from_row(row) for row in rows)
+
+    def record_report_artifact(self, record: ReportArtifactRecord) -> None:
+        _validate_required(record.artifact_id, "artifact_id")
+        _validate_required(record.run_id, "run_id")
+        _validate_report_artifact_type(record.artifact_type)
+        _validate_required(record.sha256, "sha256")
+        _validate_required(record.schema_version, "schema_version")
+        _validate_required(record.report_schema_version, "report_schema_version")
+        _validate_required(record.report_data_mode, "report_data_mode")
+        _validate_relative_artifact_path(record.path)
+        if record.instrument_id is not None:
+            _validate_required(record.instrument_id, "instrument_id")
+        if record.symbol is not None:
+            _validate_required(record.symbol, "symbol")
+        created_at = record.created_at or _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            artifact_row = connection.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ?",
+                (record.artifact_id,),
+            ).fetchone()
+            if artifact_row is None:
+                raise ValueError(
+                    "report artifact index rows require an existing artifact ledger row"
+                )
+            artifact = _artifact_from_row(artifact_row)
+            _validate_report_artifact_matches_ledger(record, artifact)
+            connection.execute(
+                """
+                INSERT INTO report_artifact_index (
+                    artifact_id, run_id, tool_run_id, artifact_type, path, sha256,
+                    schema_version, report_schema_version, report_date, instrument_id,
+                    symbol, report_data_mode, source_run_started_at,
+                    source_run_completed_at, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(artifact_id) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    tool_run_id = excluded.tool_run_id,
+                    artifact_type = excluded.artifact_type,
+                    path = excluded.path,
+                    sha256 = excluded.sha256,
+                    schema_version = excluded.schema_version,
+                    report_schema_version = excluded.report_schema_version,
+                    report_date = excluded.report_date,
+                    instrument_id = excluded.instrument_id,
+                    symbol = excluded.symbol,
+                    report_data_mode = excluded.report_data_mode,
+                    source_run_started_at = excluded.source_run_started_at,
+                    source_run_completed_at = excluded.source_run_completed_at,
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    record.artifact_id,
+                    record.run_id,
+                    record.tool_run_id,
+                    record.artifact_type,
+                    str(record.path),
+                    record.sha256,
+                    record.schema_version,
+                    record.report_schema_version,
+                    record.report_date.isoformat(),
+                    record.instrument_id,
+                    record.symbol.strip().upper() if record.symbol is not None else None,
+                    record.report_data_mode,
+                    _format_datetime(record.source_run_started_at),
+                    _format_optional_datetime(record.source_run_completed_at),
+                    _dump_json(record.metadata),
+                    _format_datetime(created_at),
+                ),
+            )
+
+    def get_report_artifact(self, artifact_id: str) -> ReportArtifactRecord | None:
+        _validate_required(artifact_id, "artifact_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = fetch_report_artifact_row(connection, artifact_id)
+        if row is None:
+            return None
+        return _report_artifact_from_row(row)
+
+    def list_report_artifacts_for_run(
+        self,
+        run_id: str,
+    ) -> tuple[ReportArtifactRecord, ...]:
+        _validate_required(run_id, "run_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = fetch_report_artifact_rows_for_run(connection, run_id)
+        return tuple(_report_artifact_from_row(row) for row in rows)
+
+    def get_latest_report_artifact(
+        self,
+        *,
+        artifact_type: str = "json_report",
+        report_date: date | None = None,
+        instrument_id: str | None = None,
+        symbol: str | None = None,
+    ) -> ReportArtifactRecord | None:
+        _validate_report_artifact_type(artifact_type)
+        if instrument_id is not None:
+            _validate_required(instrument_id, "instrument_id")
+        if symbol is not None:
+            _validate_required(symbol, "symbol")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = fetch_latest_report_artifact_row(
+                connection,
+                artifact_type=artifact_type,
+                report_date=report_date,
+                instrument_id=instrument_id,
+                symbol=symbol,
+            )
+        if row is None:
+            return None
+        return _report_artifact_from_row(row)
+
+    def get_latest_prior_report_artifact(
+        self,
+        *,
+        before_report_date: date,
+        artifact_type: str = "json_report",
+        instrument_id: str | None = None,
+        symbol: str | None = None,
+    ) -> ReportArtifactRecord | None:
+        _validate_report_artifact_type(artifact_type)
+        if instrument_id is not None:
+            _validate_required(instrument_id, "instrument_id")
+        if symbol is not None:
+            _validate_required(symbol, "symbol")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = fetch_latest_prior_report_artifact_row(
+                connection,
+                before_report_date=before_report_date,
+                artifact_type=artifact_type,
+                instrument_id=instrument_id,
+                symbol=symbol,
+            )
+        if row is None:
+            return None
+        return _report_artifact_from_row(row)
+
+    def list_latest_report_artifact_bundle(
+        self,
+        *,
+        report_date: date | None = None,
+        instrument_id: str | None = None,
+        symbol: str | None = None,
+    ) -> tuple[ReportArtifactRecord, ...]:
+        latest = self.get_latest_report_artifact(
+            artifact_type="json_report",
+            report_date=report_date,
+            instrument_id=instrument_id,
+            symbol=symbol,
+        )
+        if latest is None:
+            return ()
+        run_artifacts = self.list_report_artifacts_for_run(latest.run_id)
+        return tuple(
+            artifact
+            for artifact in run_artifacts
+            if artifact.report_date == latest.report_date
+            and artifact.instrument_id == latest.instrument_id
+            and artifact.symbol == latest.symbol
+        )
 
     def record_source_query(self, record: SourceQueryRecord) -> None:
         _validate_required(record.source_query_id, "source_query_id")
@@ -645,6 +830,7 @@ class SQLiteStore:
                     _dump_json(record.metadata),
                 ),
             )
+            self._sync_candidate_links_for_evidence(connection, record.evidence_id)
 
     def get_evidence(self, evidence_id: str) -> EvidenceRecord | None:
         _validate_required(evidence_id, "evidence_id")
@@ -673,6 +859,65 @@ class SQLiteStore:
         _validate_required(tool_run_id, "tool_run_id")
         with self.connect() as connection:
             _ensure_initialized(connection)
+            connection.execute(
+                """
+                DELETE FROM calibration_runs
+                WHERE tool_run_id = ?
+                   OR artifact_id IN (
+                        SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                   )
+                """,
+                (tool_run_id, tool_run_id),
+            )
+            connection.execute(
+                """
+                DELETE FROM prediction_evaluations
+                WHERE artifact_id IN (
+                    SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                )
+                """,
+                (tool_run_id,),
+            )
+            connection.execute(
+                """
+                DELETE FROM prediction_outcome_evaluations
+                WHERE artifact_id IN (
+                    SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                )
+                   OR outcome_evaluation_id IN (
+                        SELECT outcome_evaluation_id
+                        FROM outcome_evaluation_artifact_links
+                        WHERE artifact_id IN (
+                            SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                        )
+                   )
+                """,
+                (tool_run_id, tool_run_id),
+            )
+            connection.execute(
+                """
+                DELETE FROM calibration_runs
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM json_each(calibration_runs.source_outcome_evaluation_ids_json) AS source
+                    LEFT JOIN prediction_outcome_evaluations AS evaluation
+                        ON evaluation.outcome_evaluation_id = source.value
+                    WHERE evaluation.outcome_evaluation_id IS NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                DELETE FROM prediction_outcomes
+                WHERE outcome_id IN (
+                    SELECT outcome_id FROM outcome_artifact_links
+                    WHERE artifact_id IN (
+                        SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                    )
+                )
+                """,
+                (tool_run_id,),
+            )
             connection.execute(
                 """
                 DELETE FROM candidate_artifact_links
@@ -721,6 +966,16 @@ class SQLiteStore:
         _validate_required(record.instrument_id, "instrument_id")
         _validate_required(record.prediction_horizon, "prediction_horizon")
         _validate_required(record.prediction_type, "prediction_type")
+        _validate_choice(
+            record.prediction_horizon,
+            "prediction_horizon",
+            {item.value for item in TimeHorizon},
+        )
+        _validate_choice(
+            record.prediction_type,
+            "prediction_type",
+            {item.value for item in PredictionType},
+        )
         _validate_required(record.scenario, "scenario")
         _validate_required(record.status, "status")
         _validate_confidence(record.confidence)
@@ -885,6 +1140,735 @@ class SQLiteStore:
             ).fetchall()
         return tuple(_candidate_artifact_link_from_row(row) for row in rows)
 
+    def record_prediction_evaluation(self, record: PredictionEvaluationRecord) -> None:
+        _validate_required(record.evaluation_id, "evaluation_id")
+        _validate_required(record.candidate_id, "candidate_id")
+        _validate_required(record.instrument_id, "instrument_id")
+        _validate_required(record.symbol, "symbol")
+        _validate_required(record.prediction_type, "prediction_type")
+        _validate_required(record.horizon, "horizon")
+        _validate_choice(
+            record.prediction_type, "prediction_type", {item.value for item in PredictionType}
+        )
+        _validate_choice(record.horizon, "horizon", {item.value for item in TimeHorizon})
+        _validate_required(record.status, "status")
+        _validate_confidence(record.score)
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            candidate = connection.execute(
+                """
+                SELECT run_id, instrument_id FROM prediction_candidates
+                WHERE candidate_id = ?
+                """,
+                (record.candidate_id,),
+            ).fetchone()
+            if candidate is not None:
+                if _row_text(candidate, "instrument_id") != record.instrument_id:
+                    raise ValueError("prediction evaluation candidate/instrument mismatch")
+                candidate_run_id = candidate["run_id"]
+                if (
+                    record.run_id is not None
+                    and candidate_run_id is not None
+                    and str(candidate_run_id) != record.run_id
+                ):
+                    raise ValueError("prediction evaluation run_id must match candidate run_id")
+            instrument = connection.execute(
+                """
+                SELECT symbol FROM instruments
+                WHERE instrument_id = ?
+                """,
+                (record.instrument_id,),
+            ).fetchone()
+            if (
+                instrument is not None
+                and _row_text(instrument, "symbol").upper() != record.symbol.upper()
+            ):
+                raise ValueError("prediction evaluation symbol must match instrument")
+            connection.execute(
+                """
+                INSERT INTO prediction_evaluations (
+                    evaluation_id, run_id, candidate_id, instrument_id, symbol, created_at,
+                    prediction_type, horizon, direction, status, score,
+                    baseline_comparison_json, evidence_counts_json, signal_counts_json,
+                    artifact_id, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(evaluation_id) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    candidate_id = excluded.candidate_id,
+                    instrument_id = excluded.instrument_id,
+                    symbol = excluded.symbol,
+                    created_at = excluded.created_at,
+                    prediction_type = excluded.prediction_type,
+                    horizon = excluded.horizon,
+                    direction = excluded.direction,
+                    status = excluded.status,
+                    score = excluded.score,
+                    baseline_comparison_json = excluded.baseline_comparison_json,
+                    evidence_counts_json = excluded.evidence_counts_json,
+                    signal_counts_json = excluded.signal_counts_json,
+                    artifact_id = excluded.artifact_id,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    record.evaluation_id,
+                    record.run_id,
+                    record.candidate_id,
+                    record.instrument_id,
+                    record.symbol,
+                    _format_datetime(record.created_at),
+                    record.prediction_type,
+                    record.horizon,
+                    record.direction,
+                    record.status,
+                    record.score,
+                    _dump_json(record.baseline_comparison),
+                    _dump_json(record.evidence_counts),
+                    _dump_json(record.signal_counts),
+                    record.artifact_id,
+                    _dump_json(record.metadata),
+                ),
+            )
+
+    def get_prediction_evaluation(self, evaluation_id: str) -> PredictionEvaluationRecord | None:
+        _validate_required(evaluation_id, "evaluation_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                "SELECT * FROM prediction_evaluations WHERE evaluation_id = ?",
+                (evaluation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _prediction_evaluation_from_row(row)
+
+    def list_prediction_evaluations_for_run(
+        self, run_id: str
+    ) -> tuple[PredictionEvaluationRecord, ...]:
+        _validate_required(run_id, "run_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM prediction_evaluations
+                WHERE run_id = ?
+                ORDER BY created_at, evaluation_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return tuple(_prediction_evaluation_from_row(row) for row in rows)
+
+    def list_prediction_evaluations_for_candidate(
+        self, candidate_id: str
+    ) -> tuple[PredictionEvaluationRecord, ...]:
+        _validate_required(candidate_id, "candidate_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM prediction_evaluations
+                WHERE candidate_id = ?
+                ORDER BY created_at, evaluation_id
+                """,
+                (candidate_id,),
+            ).fetchall()
+        return tuple(_prediction_evaluation_from_row(row) for row in rows)
+
+    def upsert_prediction_outcome(self, record: PredictionOutcomeRecord) -> None:
+        _validate_required(record.outcome_id, "outcome_id")
+        _validate_required(record.candidate_id, "candidate_id")
+        _validate_required(record.instrument_id, "instrument_id")
+        _validate_required(record.symbol, "symbol")
+        _validate_required(record.prediction_type, "prediction_type")
+        _validate_required(record.horizon, "horizon")
+        _validate_required(record.status, "status")
+        if record.evaluation_window_end <= record.evaluation_window_start:
+            raise ValueError("prediction outcome evaluation window end must be after start")
+        now = _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            candidate = connection.execute(
+                """
+                SELECT instrument_id FROM prediction_candidates
+                WHERE candidate_id = ?
+                """,
+                (record.candidate_id,),
+            ).fetchone()
+            if (
+                candidate is not None
+                and _row_text(candidate, "instrument_id") != record.instrument_id
+            ):
+                raise ValueError("prediction outcome candidate/instrument mismatch")
+            connection.execute(
+                """
+                INSERT INTO prediction_outcomes (
+                    outcome_id, candidate_id, instrument_id, symbol, prediction_type, horizon,
+                    evaluation_window_start, evaluation_window_end, status, observed_result,
+                    observed_at, result_summary, result_value, baseline_value, limitations_json,
+                    metadata_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(outcome_id) DO UPDATE SET
+                    candidate_id = excluded.candidate_id,
+                    instrument_id = excluded.instrument_id,
+                    symbol = excluded.symbol,
+                    prediction_type = excluded.prediction_type,
+                    horizon = excluded.horizon,
+                    evaluation_window_start = excluded.evaluation_window_start,
+                    evaluation_window_end = excluded.evaluation_window_end,
+                    status = excluded.status,
+                    observed_result = excluded.observed_result,
+                    observed_at = excluded.observed_at,
+                    result_summary = excluded.result_summary,
+                    result_value = excluded.result_value,
+                    baseline_value = excluded.baseline_value,
+                    limitations_json = excluded.limitations_json,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record.outcome_id,
+                    record.candidate_id,
+                    record.instrument_id,
+                    record.symbol,
+                    record.prediction_type,
+                    record.horizon,
+                    _format_datetime(record.evaluation_window_start),
+                    _format_datetime(record.evaluation_window_end),
+                    record.status,
+                    record.observed_result,
+                    _format_optional_datetime(record.observed_at),
+                    record.result_summary,
+                    record.result_value,
+                    record.baseline_value,
+                    _dump_json_array(record.limitations),
+                    _dump_json(record.metadata),
+                    _format_datetime(now),
+                    _format_datetime(now),
+                ),
+            )
+
+    def get_prediction_outcome(self, outcome_id: str) -> PredictionOutcomeRecord | None:
+        _validate_required(outcome_id, "outcome_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                "SELECT * FROM prediction_outcomes WHERE outcome_id = ?",
+                (outcome_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _prediction_outcome_from_row(row)
+
+    def list_prediction_outcomes_for_candidate(
+        self, candidate_id: str
+    ) -> tuple[PredictionOutcomeRecord, ...]:
+        _validate_required(candidate_id, "candidate_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM prediction_outcomes
+                WHERE candidate_id = ?
+                ORDER BY evaluation_window_start, outcome_id
+                """,
+                (candidate_id,),
+            ).fetchall()
+        return tuple(_prediction_outcome_from_row(row) for row in rows)
+
+    def link_outcome_evidence(self, record: OutcomeEvidenceLinkRecord) -> None:
+        _validate_required(record.outcome_id, "outcome_id")
+        _validate_required(record.evidence_id, "evidence_id")
+        _validate_required(record.relationship, "relationship")
+        created_at = record.created_at or _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO outcome_evidence_links (
+                    outcome_id, evidence_id, relationship, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(outcome_id, evidence_id, relationship) DO UPDATE SET
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    record.outcome_id,
+                    record.evidence_id,
+                    record.relationship,
+                    _dump_json(record.metadata),
+                    _format_datetime(created_at),
+                ),
+            )
+
+    def list_outcome_evidence_links(self, outcome_id: str) -> tuple[OutcomeEvidenceLinkRecord, ...]:
+        _validate_required(outcome_id, "outcome_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM outcome_evidence_links
+                WHERE outcome_id = ?
+                ORDER BY relationship, evidence_id
+                """,
+                (outcome_id,),
+            ).fetchall()
+        return tuple(_outcome_evidence_link_from_row(row) for row in rows)
+
+    def link_outcome_artifact(self, record: OutcomeArtifactLinkRecord) -> None:
+        _validate_required(record.outcome_id, "outcome_id")
+        _validate_required(record.artifact_id, "artifact_id")
+        _validate_required(record.relationship, "relationship")
+        created_at = record.created_at or _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO outcome_artifact_links (
+                    outcome_id, artifact_id, relationship, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(outcome_id, artifact_id, relationship) DO UPDATE SET
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    record.outcome_id,
+                    record.artifact_id,
+                    record.relationship,
+                    _dump_json(record.metadata),
+                    _format_datetime(created_at),
+                ),
+            )
+
+    def list_outcome_artifact_links(self, outcome_id: str) -> tuple[OutcomeArtifactLinkRecord, ...]:
+        _validate_required(outcome_id, "outcome_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM outcome_artifact_links
+                WHERE outcome_id = ?
+                ORDER BY relationship, artifact_id
+                """,
+                (outcome_id,),
+            ).fetchall()
+        return tuple(_outcome_artifact_link_from_row(row) for row in rows)
+
+    def upsert_prediction_outcome_evaluation(
+        self, record: PredictionOutcomeEvaluationRecord
+    ) -> None:
+        _validate_required(record.outcome_evaluation_id, "outcome_evaluation_id")
+        _validate_required(record.outcome_id, "outcome_id")
+        _validate_required(record.candidate_id, "candidate_id")
+        _validate_required(record.instrument_id, "instrument_id")
+        _validate_required(record.symbol, "symbol")
+        _validate_required(record.status, "status")
+        _validate_confidence(record.quality_score)
+        now = _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            outcome = connection.execute(
+                """
+                SELECT candidate_id, instrument_id, symbol FROM prediction_outcomes
+                WHERE outcome_id = ?
+                """,
+                (record.outcome_id,),
+            ).fetchone()
+            if outcome is None:
+                raise ValueError(f"prediction outcome does not exist: {record.outcome_id}")
+            if _row_text(outcome, "candidate_id") != record.candidate_id:
+                raise ValueError("outcome evaluation candidate_id must match outcome")
+            if _row_text(outcome, "instrument_id") != record.instrument_id:
+                raise ValueError("outcome evaluation instrument_id must match outcome")
+            if _row_text(outcome, "symbol").upper() != record.symbol.upper():
+                raise ValueError("outcome evaluation symbol must match outcome")
+            candidate = connection.execute(
+                """
+                SELECT run_id, instrument_id FROM prediction_candidates
+                WHERE candidate_id = ?
+                """,
+                (record.candidate_id,),
+            ).fetchone()
+            if candidate is not None:
+                if _row_text(candidate, "instrument_id") != record.instrument_id:
+                    raise ValueError("outcome evaluation candidate/instrument mismatch")
+                candidate_run_id = candidate["run_id"]
+                if (
+                    record.run_id is not None
+                    and candidate_run_id is not None
+                    and str(candidate_run_id) != record.run_id
+                ):
+                    raise ValueError("outcome evaluation run_id must match candidate run_id")
+            connection.execute(
+                """
+                INSERT INTO prediction_outcome_evaluations (
+                    outcome_evaluation_id, run_id, outcome_id, candidate_id, instrument_id,
+                    symbol, evaluated_at, status, quality_score, baseline_comparison_json,
+                    artifact_id, limitations_json, metadata_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(outcome_evaluation_id) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    outcome_id = excluded.outcome_id,
+                    candidate_id = excluded.candidate_id,
+                    instrument_id = excluded.instrument_id,
+                    symbol = excluded.symbol,
+                    evaluated_at = excluded.evaluated_at,
+                    status = excluded.status,
+                    quality_score = excluded.quality_score,
+                    baseline_comparison_json = excluded.baseline_comparison_json,
+                    artifact_id = excluded.artifact_id,
+                    limitations_json = excluded.limitations_json,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record.outcome_evaluation_id,
+                    record.run_id,
+                    record.outcome_id,
+                    record.candidate_id,
+                    record.instrument_id,
+                    record.symbol,
+                    _format_datetime(record.evaluated_at),
+                    record.status,
+                    record.quality_score,
+                    _dump_json(record.baseline_comparison),
+                    record.artifact_id,
+                    _dump_json_array(record.limitations),
+                    _dump_json(record.metadata),
+                    _format_datetime(now),
+                    _format_datetime(now),
+                ),
+            )
+
+    def get_prediction_outcome_evaluation(
+        self, outcome_evaluation_id: str
+    ) -> PredictionOutcomeEvaluationRecord | None:
+        _validate_required(outcome_evaluation_id, "outcome_evaluation_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                """
+                SELECT * FROM prediction_outcome_evaluations
+                WHERE outcome_evaluation_id = ?
+                """,
+                (outcome_evaluation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _prediction_outcome_evaluation_from_row(row)
+
+    def list_outcome_evaluations_for_run(
+        self, run_id: str
+    ) -> tuple[PredictionOutcomeEvaluationRecord, ...]:
+        _validate_required(run_id, "run_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM prediction_outcome_evaluations
+                WHERE run_id = ?
+                ORDER BY evaluated_at, outcome_evaluation_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return tuple(_prediction_outcome_evaluation_from_row(row) for row in rows)
+
+    def list_outcome_evaluations_for_candidate(
+        self, candidate_id: str
+    ) -> tuple[PredictionOutcomeEvaluationRecord, ...]:
+        _validate_required(candidate_id, "candidate_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM prediction_outcome_evaluations
+                WHERE candidate_id = ?
+                ORDER BY evaluated_at, outcome_evaluation_id
+                """,
+                (candidate_id,),
+            ).fetchall()
+        return tuple(_prediction_outcome_evaluation_from_row(row) for row in rows)
+
+    def link_outcome_evaluation_evidence(self, record: OutcomeEvaluationEvidenceLinkRecord) -> None:
+        _validate_required(record.outcome_evaluation_id, "outcome_evaluation_id")
+        _validate_required(record.evidence_id, "evidence_id")
+        _validate_required(record.relationship, "relationship")
+        created_at = record.created_at or _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO outcome_evaluation_evidence_links (
+                    outcome_evaluation_id, evidence_id, relationship,
+                    metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(outcome_evaluation_id, evidence_id, relationship)
+                DO UPDATE SET
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    record.outcome_evaluation_id,
+                    record.evidence_id,
+                    record.relationship,
+                    _dump_json(record.metadata),
+                    _format_datetime(created_at),
+                ),
+            )
+
+    def list_outcome_evaluation_evidence_links(
+        self, outcome_evaluation_id: str
+    ) -> tuple[OutcomeEvaluationEvidenceLinkRecord, ...]:
+        _validate_required(outcome_evaluation_id, "outcome_evaluation_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM outcome_evaluation_evidence_links
+                WHERE outcome_evaluation_id = ?
+                ORDER BY relationship, evidence_id
+                """,
+                (outcome_evaluation_id,),
+            ).fetchall()
+        return tuple(_outcome_evaluation_evidence_link_from_row(row) for row in rows)
+
+    def link_outcome_evaluation_artifact(self, record: OutcomeEvaluationArtifactLinkRecord) -> None:
+        _validate_required(record.outcome_evaluation_id, "outcome_evaluation_id")
+        _validate_required(record.artifact_id, "artifact_id")
+        _validate_required(record.relationship, "relationship")
+        created_at = record.created_at or _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO outcome_evaluation_artifact_links (
+                    outcome_evaluation_id, artifact_id, relationship,
+                    metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(outcome_evaluation_id, artifact_id, relationship)
+                DO UPDATE SET
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    record.outcome_evaluation_id,
+                    record.artifact_id,
+                    record.relationship,
+                    _dump_json(record.metadata),
+                    _format_datetime(created_at),
+                ),
+            )
+
+    def list_outcome_evaluation_artifact_links(
+        self, outcome_evaluation_id: str
+    ) -> tuple[OutcomeEvaluationArtifactLinkRecord, ...]:
+        _validate_required(outcome_evaluation_id, "outcome_evaluation_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM outcome_evaluation_artifact_links
+                WHERE outcome_evaluation_id = ?
+                ORDER BY relationship, artifact_id
+                """,
+                (outcome_evaluation_id,),
+            ).fetchall()
+        return tuple(_outcome_evaluation_artifact_link_from_row(row) for row in rows)
+
+    def record_calibration_run(self, record: CalibrationRunRecord) -> None:
+        _validate_required(record.calibration_id, "calibration_id")
+        _validate_required(record.run_id, "run_id")
+        _validate_required(record.method_version, "method_version")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            if record.source_outcome_evaluation_ids:
+                placeholders = ",".join("?" for _ in record.source_outcome_evaluation_ids)
+                rows = connection.execute(
+                    f"""
+                    SELECT outcome_evaluation_id, run_id
+                    FROM prediction_outcome_evaluations
+                    WHERE outcome_evaluation_id IN ({placeholders})
+                    """,
+                    record.source_outcome_evaluation_ids,
+                ).fetchall()
+                rows_by_id = {_row_text(row, "outcome_evaluation_id"): row for row in rows}
+                missing = tuple(
+                    outcome_evaluation_id
+                    for outcome_evaluation_id in record.source_outcome_evaluation_ids
+                    if outcome_evaluation_id not in rows_by_id
+                )
+                if missing:
+                    raise ValueError(
+                        "calibration source outcome evaluations do not exist: " + ", ".join(missing)
+                    )
+                mismatched = tuple(
+                    outcome_evaluation_id
+                    for outcome_evaluation_id, row in rows_by_id.items()
+                    if row["run_id"] is not None and str(row["run_id"]) != record.run_id
+                )
+                if mismatched:
+                    raise ValueError(
+                        "calibration source outcome evaluations must match run_id: "
+                        + ", ".join(sorted(mismatched))
+                    )
+            connection.execute(
+                """
+                INSERT INTO calibration_runs (
+                    calibration_id, run_id, tool_run_id, method_version, created_at,
+                    point_in_time_cutoff, cohort_query_json,
+                    source_outcome_evaluation_ids_json, artifact_id, limitations_json,
+                    metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(calibration_id) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    tool_run_id = excluded.tool_run_id,
+                    method_version = excluded.method_version,
+                    created_at = excluded.created_at,
+                    point_in_time_cutoff = excluded.point_in_time_cutoff,
+                    cohort_query_json = excluded.cohort_query_json,
+                    source_outcome_evaluation_ids_json =
+                        excluded.source_outcome_evaluation_ids_json,
+                    artifact_id = excluded.artifact_id,
+                    limitations_json = excluded.limitations_json,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    record.calibration_id,
+                    record.run_id,
+                    record.tool_run_id,
+                    record.method_version,
+                    _format_datetime(record.created_at),
+                    _format_datetime(record.point_in_time_cutoff),
+                    _dump_json(record.cohort_query),
+                    _dump_json_array(record.source_outcome_evaluation_ids),
+                    record.artifact_id,
+                    _dump_json_array(record.limitations),
+                    _dump_json(record.metadata),
+                ),
+            )
+
+    def delete_calibration_slices(self, calibration_id: str) -> None:
+        _validate_required(calibration_id, "calibration_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                "DELETE FROM calibration_slices WHERE calibration_id = ?",
+                (calibration_id,),
+            )
+
+    def get_calibration_run(self, calibration_id: str) -> CalibrationRunRecord | None:
+        _validate_required(calibration_id, "calibration_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                "SELECT * FROM calibration_runs WHERE calibration_id = ?",
+                (calibration_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _calibration_run_from_row(row)
+
+    def list_calibration_runs_for_run(self, run_id: str) -> tuple[CalibrationRunRecord, ...]:
+        _validate_required(run_id, "run_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM calibration_runs
+                WHERE run_id = ?
+                ORDER BY created_at, calibration_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return tuple(_calibration_run_from_row(row) for row in rows)
+
+    def record_calibration_slice(self, record: CalibrationSliceRecord) -> None:
+        _validate_required(record.slice_id, "slice_id")
+        _validate_required(record.calibration_id, "calibration_id")
+        _validate_required(record.cohort_label, "cohort_label")
+        _validate_non_negative_count(record.sample_count, "sample_count")
+        _validate_non_negative_count(record.resolved_count, "resolved_count")
+        _validate_non_negative_count(record.pending_count, "pending_count")
+        _validate_non_negative_count(record.stale_count, "stale_count")
+        _validate_non_negative_count(record.unavailable_count, "unavailable_count")
+        _validate_non_negative_count(record.not_evaluable_count, "not_evaluable_count")
+        status_total = (
+            record.resolved_count
+            + record.pending_count
+            + record.stale_count
+            + record.unavailable_count
+            + record.not_evaluable_count
+        )
+        if status_total != record.sample_count:
+            raise ValueError("calibration slice sample_count must equal status counts")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            connection.execute(
+                """
+                INSERT INTO calibration_slices (
+                    slice_id, calibration_id, signal_family, prediction_type, horizon,
+                    cohort_label, sample_count, resolved_count, pending_count, stale_count,
+                    unavailable_count, not_evaluable_count, metrics_json,
+                    baseline_comparison_json, provenance_json, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(slice_id) DO UPDATE SET
+                    calibration_id = excluded.calibration_id,
+                    signal_family = excluded.signal_family,
+                    prediction_type = excluded.prediction_type,
+                    horizon = excluded.horizon,
+                    cohort_label = excluded.cohort_label,
+                    sample_count = excluded.sample_count,
+                    resolved_count = excluded.resolved_count,
+                    pending_count = excluded.pending_count,
+                    stale_count = excluded.stale_count,
+                    unavailable_count = excluded.unavailable_count,
+                    not_evaluable_count = excluded.not_evaluable_count,
+                    metrics_json = excluded.metrics_json,
+                    baseline_comparison_json = excluded.baseline_comparison_json,
+                    provenance_json = excluded.provenance_json,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    record.slice_id,
+                    record.calibration_id,
+                    record.signal_family,
+                    record.prediction_type,
+                    record.horizon,
+                    record.cohort_label,
+                    record.sample_count,
+                    record.resolved_count,
+                    record.pending_count,
+                    record.stale_count,
+                    record.unavailable_count,
+                    record.not_evaluable_count,
+                    _dump_json(record.metrics),
+                    _dump_json(record.baseline_comparison),
+                    _dump_json(record.provenance),
+                    _dump_json(record.metadata),
+                ),
+            )
+
+    def list_calibration_slices(self, calibration_id: str) -> tuple[CalibrationSliceRecord, ...]:
+        _validate_required(calibration_id, "calibration_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM calibration_slices
+                WHERE calibration_id = ?
+                ORDER BY cohort_label, signal_family, slice_id
+                """,
+                (calibration_id,),
+            ).fetchall()
+        return tuple(_calibration_slice_from_row(row) for row in rows)
+
     def _sync_candidate_links(
         self,
         connection: sqlite3.Connection,
@@ -951,6 +1935,68 @@ class SQLiteStore:
                     _dump_json({"source": "prediction_candidate_record"}),
                     created_at,
                     artifact_id,
+                ),
+            )
+
+    def _sync_candidate_links_for_evidence(
+        self,
+        connection: sqlite3.Connection,
+        evidence_id: str,
+    ) -> None:
+        created_at = _format_datetime(_utc_now())
+        rows = connection.execute("SELECT * FROM prediction_candidates").fetchall()
+        for row in rows:
+            candidate = _prediction_candidate_from_row(row)
+            relationships: list[str] = []
+            if evidence_id in candidate.evidence_for:
+                relationships.append("supports")
+            if evidence_id in candidate.evidence_against:
+                relationships.append("contradicts")
+            for relationship in relationships:
+                connection.execute(
+                    """
+                    INSERT INTO candidate_evidence_links (
+                        candidate_id, evidence_id, relationship, metadata_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(candidate_id, evidence_id, relationship) DO UPDATE SET
+                        metadata_json = excluded.metadata_json
+                    """,
+                    (
+                        candidate.candidate_id,
+                        evidence_id,
+                        relationship,
+                        _dump_json({"source": "prediction_candidate_record"}),
+                        created_at,
+                    ),
+                )
+
+    def _sync_candidate_links_for_artifact(
+        self,
+        connection: sqlite3.Connection,
+        artifact_id: str,
+    ) -> None:
+        created_at = _format_datetime(_utc_now())
+        rows = connection.execute("SELECT * FROM prediction_candidates").fetchall()
+        for row in rows:
+            candidate = _prediction_candidate_from_row(row)
+            if artifact_id not in candidate.signal_artifacts:
+                continue
+            connection.execute(
+                """
+                INSERT INTO candidate_artifact_links (
+                    candidate_id, artifact_id, relationship, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(candidate_id, artifact_id, relationship) DO UPDATE SET
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    candidate.candidate_id,
+                    artifact_id,
+                    "signal",
+                    _dump_json({"source": "prediction_candidate_record"}),
+                    created_at,
                 ),
             )
 
@@ -1381,12 +2427,24 @@ def _migrate_research_schema_v5(connection: sqlite3.Connection) -> None:
             connection.execute(f"ALTER TABLE artifacts ADD COLUMN {column} {definition}")
 
 
+def _migrate_research_schema_v6(connection: sqlite3.Connection) -> None:
+    connection.executescript(_RESEARCH_EVALUATION_SCHEMA_SQL)
+    connection.executescript(_RESEARCH_REPORT_INDEX_SCHEMA_SQL)
+
+
+def _migrate_research_schema_v7(connection: sqlite3.Connection) -> None:
+    connection.executescript(_RESEARCH_EVALUATION_SCHEMA_SQL)
+    connection.executescript(_RESEARCH_REPORT_INDEX_SCHEMA_SQL)
+
+
 _RESEARCH_MIGRATION_STEPS = (
     _SchemaMigrationStep(1, "initial_research_schema", _noop_migration),
     _SchemaMigrationStep(2, "phase2_research_graph_schema", _noop_migration),
     _SchemaMigrationStep(3, "phase2_evidence_provenance_schema", _noop_migration),
     _SchemaMigrationStep(4, "registry_grade_research_schema_v4", _migrate_research_schema_v4),
     _SchemaMigrationStep(5, "artifact_audit_provenance_schema_v5", _migrate_research_schema_v5),
+    _SchemaMigrationStep(6, "phase5_phase6_runtime_schema_v6", _migrate_research_schema_v6),
+    _SchemaMigrationStep(7, "phase5_phase6_schema_reconciliation_v7", _migrate_research_schema_v7),
 )
 
 
@@ -1652,6 +2710,7 @@ _SAFE_SQL_TABLE_NAMES = frozenset(
         "planning_progress",
         "plans",
         "prediction_candidates",
+        "report_artifact_index",
         "research_runs",
         "schema_migrations",
         "source_queries",
@@ -1732,11 +2791,57 @@ def _validate_required(value: str, field_name: str) -> None:
         raise ValueError(f"{field_name} must be non-empty")
 
 
+def _validate_choice(value: str, field_name: str, allowed: set[str]) -> None:
+    if value not in allowed:
+        joined = ", ".join(sorted(allowed))
+        raise ValueError(f"{field_name} must be one of: {joined}")
+
+
 def _validate_relative_artifact_path(path: Path) -> None:
-    if path.is_absolute():
+    path_text = str(path).strip()
+    if not path_text or path_text == ".":
+        raise ValueError("artifact path must name a file")
+    windows_path = PureWindowsPath(path_text)
+    if (
+        path.is_absolute()
+        or path.anchor
+        or path.drive
+        or path.root
+        or windows_path.is_absolute()
+        or windows_path.anchor
+        or windows_path.drive
+        or windows_path.root
+    ):
         raise ValueError("artifact path must be relative")
-    if any(part == ".." for part in path.parts):
+    if any(part in {"..", "."} for part in (*path.parts, *windows_path.parts)):
         raise ValueError("artifact path must not contain parent traversal")
+
+
+def _validate_report_artifact_matches_ledger(
+    record: ReportArtifactRecord,
+    artifact: ArtifactRecord,
+) -> None:
+    expected = {
+        "artifact_type": artifact.artifact_type,
+        "path": str(artifact.path),
+        "sha256": artifact.sha256,
+        "schema_version": artifact.schema_version,
+        "tool_run_id": artifact.tool_run_id,
+    }
+    observed = {
+        "artifact_type": record.artifact_type,
+        "path": str(record.path),
+        "sha256": record.sha256,
+        "schema_version": record.schema_version,
+        "tool_run_id": record.tool_run_id,
+    }
+    mismatched = tuple(
+        field for field, expected_value in expected.items() if observed[field] != expected_value
+    )
+    if mismatched:
+        raise ValueError(
+            "report artifact index row must match artifact ledger fields: " + ", ".join(mismatched)
+        )
 
 
 def _validate_confidence(value: float | None) -> None:
@@ -1744,6 +2849,21 @@ def _validate_confidence(value: float | None) -> None:
         return
     if not 0.0 <= value <= 1.0:
         raise ValueError("confidence values must be between 0.0 and 1.0")
+
+
+def _validate_non_negative_count(value: int, field_name: str) -> None:
+    if value < 0:
+        raise ValueError(f"{field_name} must be non-negative")
+
+
+_REPORT_ARTIFACT_TYPES = frozenset({"markdown_report", "json_report", "audit_manifest"})
+
+
+def _validate_report_artifact_type(value: str) -> None:
+    _validate_required(value, "artifact_type")
+    if value not in _REPORT_ARTIFACT_TYPES:
+        allowed = ", ".join(sorted(_REPORT_ARTIFACT_TYPES))
+        raise ValueError(f"report artifact_type must be one of: {allowed}")
 
 
 def _utc_now() -> datetime:
@@ -1934,6 +3054,29 @@ def _artifact_from_row(row: sqlite3.Row) -> ArtifactRecord:
     )
 
 
+def _report_artifact_from_row(row: sqlite3.Row) -> ReportArtifactRecord:
+    return ReportArtifactRecord(
+        artifact_id=_row_text(row, "artifact_id"),
+        run_id=_row_text(row, "run_id"),
+        tool_run_id=_row_optional_text(row, "tool_run_id"),
+        artifact_type=_row_text(row, "artifact_type"),
+        path=Path(_row_text(row, "path")),
+        sha256=_row_text(row, "sha256"),
+        schema_version=_row_text(row, "schema_version"),
+        report_schema_version=_row_text(row, "report_schema_version"),
+        report_date=date.fromisoformat(_row_text(row, "report_date")),
+        instrument_id=_row_optional_text(row, "instrument_id"),
+        symbol=_row_optional_text(row, "symbol"),
+        report_data_mode=_row_text(row, "report_data_mode"),
+        source_run_started_at=_parse_datetime(_row_text(row, "source_run_started_at")),
+        source_run_completed_at=_parse_optional_datetime(
+            _row_optional_text(row, "source_run_completed_at")
+        ),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+    )
+
+
 def _research_run_from_row(row: sqlite3.Row) -> ResearchRunRecord:
     return ResearchRunRecord(
         run_id=_row_text(row, "run_id"),
@@ -2033,6 +3176,151 @@ def _candidate_artifact_link_from_row(row: sqlite3.Row) -> CandidateArtifactLink
         relationship=_row_text(row, "relationship"),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
         created_at=_parse_datetime(_row_text(row, "created_at")),
+    )
+
+
+def _prediction_evaluation_from_row(row: sqlite3.Row) -> PredictionEvaluationRecord:
+    return PredictionEvaluationRecord(
+        evaluation_id=_row_text(row, "evaluation_id"),
+        run_id=_row_optional_text(row, "run_id"),
+        candidate_id=_row_text(row, "candidate_id"),
+        instrument_id=_row_text(row, "instrument_id"),
+        symbol=_row_text(row, "symbol"),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+        prediction_type=_row_text(row, "prediction_type"),
+        horizon=_row_text(row, "horizon"),
+        direction=_row_optional_text(row, "direction"),
+        status=_row_text(row, "status"),
+        score=float(row["score"]),
+        baseline_comparison=_load_json_object(_row_text(row, "baseline_comparison_json")),
+        evidence_counts=_load_json_object(_row_text(row, "evidence_counts_json")),
+        signal_counts=_load_json_object(_row_text(row, "signal_counts_json")),
+        artifact_id=_row_optional_text(row, "artifact_id"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+    )
+
+
+def _prediction_outcome_from_row(row: sqlite3.Row) -> PredictionOutcomeRecord:
+    return PredictionOutcomeRecord(
+        outcome_id=_row_text(row, "outcome_id"),
+        candidate_id=_row_text(row, "candidate_id"),
+        instrument_id=_row_text(row, "instrument_id"),
+        symbol=_row_text(row, "symbol"),
+        prediction_type=_row_text(row, "prediction_type"),
+        horizon=_row_text(row, "horizon"),
+        evaluation_window_start=_parse_datetime(_row_text(row, "evaluation_window_start")),
+        evaluation_window_end=_parse_datetime(_row_text(row, "evaluation_window_end")),
+        status=_row_text(row, "status"),
+        observed_result=_row_optional_text(row, "observed_result"),
+        observed_at=_parse_optional_datetime(_row_optional_text(row, "observed_at")),
+        result_summary=_row_optional_text(row, "result_summary"),
+        result_value=_row_optional_float(row, "result_value"),
+        baseline_value=_row_optional_float(row, "baseline_value"),
+        limitations=_load_string_tuple(_row_text(row, "limitations_json")),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+    )
+
+
+def _prediction_outcome_evaluation_from_row(
+    row: sqlite3.Row,
+) -> PredictionOutcomeEvaluationRecord:
+    return PredictionOutcomeEvaluationRecord(
+        outcome_evaluation_id=_row_text(row, "outcome_evaluation_id"),
+        run_id=_row_optional_text(row, "run_id"),
+        outcome_id=_row_text(row, "outcome_id"),
+        candidate_id=_row_text(row, "candidate_id"),
+        instrument_id=_row_text(row, "instrument_id"),
+        symbol=_row_text(row, "symbol"),
+        evaluated_at=_parse_datetime(_row_text(row, "evaluated_at")),
+        status=_row_text(row, "status"),
+        quality_score=_row_optional_float(row, "quality_score"),
+        baseline_comparison=_load_json_object(_row_text(row, "baseline_comparison_json")),
+        artifact_id=_row_optional_text(row, "artifact_id"),
+        limitations=_load_string_tuple(_row_text(row, "limitations_json")),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+    )
+
+
+def _outcome_evidence_link_from_row(row: sqlite3.Row) -> OutcomeEvidenceLinkRecord:
+    return OutcomeEvidenceLinkRecord(
+        outcome_id=_row_text(row, "outcome_id"),
+        evidence_id=_row_text(row, "evidence_id"),
+        relationship=_row_text(row, "relationship"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+    )
+
+
+def _outcome_artifact_link_from_row(row: sqlite3.Row) -> OutcomeArtifactLinkRecord:
+    return OutcomeArtifactLinkRecord(
+        outcome_id=_row_text(row, "outcome_id"),
+        artifact_id=_row_text(row, "artifact_id"),
+        relationship=_row_text(row, "relationship"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+    )
+
+
+def _outcome_evaluation_evidence_link_from_row(
+    row: sqlite3.Row,
+) -> OutcomeEvaluationEvidenceLinkRecord:
+    return OutcomeEvaluationEvidenceLinkRecord(
+        outcome_evaluation_id=_row_text(row, "outcome_evaluation_id"),
+        evidence_id=_row_text(row, "evidence_id"),
+        relationship=_row_text(row, "relationship"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+    )
+
+
+def _outcome_evaluation_artifact_link_from_row(
+    row: sqlite3.Row,
+) -> OutcomeEvaluationArtifactLinkRecord:
+    return OutcomeEvaluationArtifactLinkRecord(
+        outcome_evaluation_id=_row_text(row, "outcome_evaluation_id"),
+        artifact_id=_row_text(row, "artifact_id"),
+        relationship=_row_text(row, "relationship"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+    )
+
+
+def _calibration_run_from_row(row: sqlite3.Row) -> CalibrationRunRecord:
+    return CalibrationRunRecord(
+        calibration_id=_row_text(row, "calibration_id"),
+        run_id=_row_text(row, "run_id"),
+        tool_run_id=_row_optional_text(row, "tool_run_id"),
+        method_version=_row_text(row, "method_version"),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+        point_in_time_cutoff=_parse_datetime(_row_text(row, "point_in_time_cutoff")),
+        cohort_query=_load_json_object(_row_text(row, "cohort_query_json")),
+        source_outcome_evaluation_ids=_load_string_tuple(
+            _row_text(row, "source_outcome_evaluation_ids_json")
+        ),
+        artifact_id=_row_optional_text(row, "artifact_id"),
+        limitations=_load_string_tuple(_row_text(row, "limitations_json")),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+    )
+
+
+def _calibration_slice_from_row(row: sqlite3.Row) -> CalibrationSliceRecord:
+    return CalibrationSliceRecord(
+        slice_id=_row_text(row, "slice_id"),
+        calibration_id=_row_text(row, "calibration_id"),
+        signal_family=_row_optional_text(row, "signal_family"),
+        prediction_type=_row_optional_text(row, "prediction_type"),
+        horizon=_row_optional_text(row, "horizon"),
+        cohort_label=_row_text(row, "cohort_label"),
+        sample_count=int(row["sample_count"]),
+        resolved_count=int(row["resolved_count"]),
+        pending_count=int(row["pending_count"]),
+        stale_count=int(row["stale_count"]),
+        unavailable_count=int(row["unavailable_count"]),
+        not_evaluable_count=int(row["not_evaluable_count"]),
+        metrics=_load_json_object(_row_text(row, "metrics_json")),
+        baseline_comparison=_load_json_object(_row_text(row, "baseline_comparison_json")),
+        provenance=_load_json_object(_row_text(row, "provenance_json")),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
     )
 
 
@@ -2379,6 +3667,235 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_items_instrument
 ON watchlist_items(instrument_id);
 """
 
+_RESEARCH_EVALUATION_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS prediction_evaluations (
+    evaluation_id TEXT PRIMARY KEY CHECK(length(evaluation_id) > 0),
+    run_id TEXT REFERENCES research_runs(run_id) ON DELETE SET NULL,
+    candidate_id TEXT NOT NULL REFERENCES prediction_candidates(candidate_id) ON DELETE CASCADE,
+    instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
+    symbol TEXT NOT NULL CHECK(length(symbol) > 0),
+    created_at TEXT NOT NULL,
+    prediction_type TEXT NOT NULL CHECK(length(prediction_type) > 0),
+    horizon TEXT NOT NULL CHECK(length(horizon) > 0),
+    direction TEXT,
+    status TEXT NOT NULL CHECK(length(status) > 0),
+    score REAL NOT NULL CHECK(score >= 0.0 AND score <= 1.0),
+    baseline_comparison_json TEXT NOT NULL DEFAULT '{}',
+    evidence_counts_json TEXT NOT NULL DEFAULT '{}',
+    signal_counts_json TEXT NOT NULL DEFAULT '{}',
+    artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_evaluations_run_id
+ON prediction_evaluations(run_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_evaluations_candidate_id
+ON prediction_evaluations(candidate_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_evaluations_artifact_id
+ON prediction_evaluations(artifact_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_evaluations_created_at
+ON prediction_evaluations(created_at);
+
+CREATE TABLE IF NOT EXISTS prediction_outcomes (
+    outcome_id TEXT PRIMARY KEY CHECK(length(outcome_id) > 0),
+    candidate_id TEXT NOT NULL REFERENCES prediction_candidates(candidate_id) ON DELETE CASCADE,
+    instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
+    symbol TEXT NOT NULL CHECK(length(symbol) > 0),
+    prediction_type TEXT NOT NULL CHECK(length(prediction_type) > 0),
+    horizon TEXT NOT NULL CHECK(length(horizon) > 0),
+    evaluation_window_start TEXT NOT NULL,
+    evaluation_window_end TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(length(status) > 0),
+    observed_result TEXT,
+    observed_at TEXT,
+    result_summary TEXT,
+    result_value REAL,
+    baseline_value REAL,
+    limitations_json TEXT NOT NULL DEFAULT '[]',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK(evaluation_window_end > evaluation_window_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_outcomes_candidate_id
+ON prediction_outcomes(candidate_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_outcomes_instrument_id
+ON prediction_outcomes(instrument_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_outcomes_status
+ON prediction_outcomes(status);
+CREATE INDEX IF NOT EXISTS idx_prediction_outcomes_window
+ON prediction_outcomes(evaluation_window_start, evaluation_window_end);
+
+CREATE TABLE IF NOT EXISTS prediction_outcome_evaluations (
+    outcome_evaluation_id TEXT PRIMARY KEY CHECK(length(outcome_evaluation_id) > 0),
+    run_id TEXT REFERENCES research_runs(run_id) ON DELETE SET NULL,
+    outcome_id TEXT NOT NULL REFERENCES prediction_outcomes(outcome_id) ON DELETE CASCADE,
+    candidate_id TEXT NOT NULL REFERENCES prediction_candidates(candidate_id) ON DELETE CASCADE,
+    instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
+    symbol TEXT NOT NULL CHECK(length(symbol) > 0),
+    evaluated_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(length(status) > 0),
+    quality_score REAL CHECK(
+        quality_score IS NULL
+        OR (quality_score >= 0.0 AND quality_score <= 1.0)
+    ),
+    baseline_comparison_json TEXT NOT NULL DEFAULT '{}',
+    artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+    limitations_json TEXT NOT NULL DEFAULT '[]',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_prediction_outcome_evaluations_run_id
+ON prediction_outcome_evaluations(run_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_outcome_evaluations_outcome_id
+ON prediction_outcome_evaluations(outcome_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_outcome_evaluations_candidate_id
+ON prediction_outcome_evaluations(candidate_id);
+CREATE INDEX IF NOT EXISTS idx_prediction_outcome_evaluations_artifact_id
+ON prediction_outcome_evaluations(artifact_id);
+
+CREATE TABLE IF NOT EXISTS outcome_evidence_links (
+    outcome_id TEXT NOT NULL REFERENCES prediction_outcomes(outcome_id) ON DELETE CASCADE,
+    evidence_id TEXT NOT NULL REFERENCES evidence_items(evidence_id) ON DELETE CASCADE,
+    relationship TEXT NOT NULL CHECK(length(relationship) > 0),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(outcome_id, evidence_id, relationship)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outcome_evidence_links_evidence_id
+ON outcome_evidence_links(evidence_id);
+
+CREATE TABLE IF NOT EXISTS outcome_artifact_links (
+    outcome_id TEXT NOT NULL REFERENCES prediction_outcomes(outcome_id) ON DELETE CASCADE,
+    artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+    relationship TEXT NOT NULL CHECK(length(relationship) > 0),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(outcome_id, artifact_id, relationship)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outcome_artifact_links_artifact_id
+ON outcome_artifact_links(artifact_id);
+
+CREATE TABLE IF NOT EXISTS outcome_evaluation_evidence_links (
+    outcome_evaluation_id TEXT NOT NULL
+        REFERENCES prediction_outcome_evaluations(outcome_evaluation_id) ON DELETE CASCADE,
+    evidence_id TEXT NOT NULL REFERENCES evidence_items(evidence_id) ON DELETE CASCADE,
+    relationship TEXT NOT NULL CHECK(length(relationship) > 0),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(outcome_evaluation_id, evidence_id, relationship)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outcome_eval_evidence_links_evidence_id
+ON outcome_evaluation_evidence_links(evidence_id);
+
+CREATE TABLE IF NOT EXISTS outcome_evaluation_artifact_links (
+    outcome_evaluation_id TEXT NOT NULL
+        REFERENCES prediction_outcome_evaluations(outcome_evaluation_id) ON DELETE CASCADE,
+    artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+    relationship TEXT NOT NULL CHECK(length(relationship) > 0),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(outcome_evaluation_id, artifact_id, relationship)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outcome_eval_artifact_links_artifact_id
+ON outcome_evaluation_artifact_links(artifact_id);
+
+CREATE TABLE IF NOT EXISTS calibration_runs (
+    calibration_id TEXT PRIMARY KEY CHECK(length(calibration_id) > 0),
+    run_id TEXT NOT NULL REFERENCES research_runs(run_id) ON DELETE CASCADE,
+    tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+    method_version TEXT NOT NULL CHECK(length(method_version) > 0),
+    created_at TEXT NOT NULL,
+    point_in_time_cutoff TEXT NOT NULL,
+    cohort_query_json TEXT NOT NULL DEFAULT '{}',
+    source_outcome_evaluation_ids_json TEXT NOT NULL DEFAULT '[]',
+    artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+    limitations_json TEXT NOT NULL DEFAULT '[]',
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_calibration_runs_run_id
+ON calibration_runs(run_id);
+CREATE INDEX IF NOT EXISTS idx_calibration_runs_tool_run_id
+ON calibration_runs(tool_run_id);
+CREATE INDEX IF NOT EXISTS idx_calibration_runs_artifact_id
+ON calibration_runs(artifact_id);
+
+CREATE TABLE IF NOT EXISTS calibration_slices (
+    slice_id TEXT PRIMARY KEY CHECK(length(slice_id) > 0),
+    calibration_id TEXT NOT NULL REFERENCES calibration_runs(calibration_id) ON DELETE CASCADE,
+    signal_family TEXT,
+    prediction_type TEXT,
+    horizon TEXT,
+    cohort_label TEXT NOT NULL CHECK(length(cohort_label) > 0),
+    sample_count INTEGER NOT NULL CHECK(sample_count >= 0),
+    resolved_count INTEGER NOT NULL CHECK(resolved_count >= 0),
+    pending_count INTEGER NOT NULL CHECK(pending_count >= 0),
+    stale_count INTEGER NOT NULL CHECK(stale_count >= 0),
+    unavailable_count INTEGER NOT NULL CHECK(unavailable_count >= 0),
+    not_evaluable_count INTEGER NOT NULL CHECK(not_evaluable_count >= 0),
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    baseline_comparison_json TEXT NOT NULL DEFAULT '{}',
+    provenance_json TEXT NOT NULL DEFAULT '{}',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    CHECK(
+        sample_count = resolved_count
+            + pending_count
+            + stale_count
+            + unavailable_count
+            + not_evaluable_count
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_calibration_slices_calibration_id
+ON calibration_slices(calibration_id);
+CREATE INDEX IF NOT EXISTS idx_calibration_slices_family
+ON calibration_slices(signal_family);
+"""
+
+_RESEARCH_REPORT_INDEX_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS report_artifact_index (
+    artifact_id TEXT PRIMARY KEY
+        REFERENCES artifacts(artifact_id) ON DELETE CASCADE
+        CHECK(length(artifact_id) > 0),
+    run_id TEXT NOT NULL
+        REFERENCES research_runs(run_id) ON DELETE CASCADE
+        CHECK(length(run_id) > 0),
+    tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+    artifact_type TEXT NOT NULL CHECK(
+        artifact_type IN ('markdown_report', 'json_report', 'audit_manifest')
+    ),
+    path TEXT NOT NULL CHECK(length(path) > 0),
+    sha256 TEXT NOT NULL CHECK(length(sha256) > 0),
+    schema_version TEXT NOT NULL CHECK(length(schema_version) > 0),
+    report_schema_version TEXT NOT NULL CHECK(length(report_schema_version) > 0),
+    report_date TEXT NOT NULL CHECK(length(report_date) > 0),
+    instrument_id TEXT,
+    symbol TEXT,
+    report_data_mode TEXT NOT NULL CHECK(length(report_data_mode) > 0),
+    source_run_started_at TEXT NOT NULL CHECK(length(source_run_started_at) > 0),
+    source_run_completed_at TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL CHECK(length(created_at) > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_artifact_index_run_id
+ON report_artifact_index(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_report_artifact_index_latest_json
+ON report_artifact_index(artifact_type, report_date, instrument_id, symbol, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_report_artifact_index_symbol_date
+ON report_artifact_index(symbol, report_date);
+"""
+
 _PLANNING_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -2475,11 +3992,17 @@ __all__ = [
     "DEFAULT_PLANNING_DATABASE_PATH",
     "DEFAULT_RESEARCH_DATABASE_PATH",
     "ArtifactRecord",
+    "CalibrationRunRecord",
+    "CalibrationSliceRecord",
     "CandidateArtifactLinkRecord",
     "CandidateEvidenceLinkRecord",
     "EvidenceRecord",
     "InstrumentRecord",
     "InstrumentTradabilityEvidenceRecord",
+    "OutcomeArtifactLinkRecord",
+    "OutcomeEvaluationArtifactLinkRecord",
+    "OutcomeEvaluationEvidenceLinkRecord",
+    "OutcomeEvidenceLinkRecord",
     "PlanAcceptanceCriterionRecord",
     "PlanArtifactLinkRecord",
     "PlanCommitLinkRecord",
@@ -2489,6 +4012,10 @@ __all__ = [
     "PlanRecord",
     "PlanningSQLiteStore",
     "PredictionCandidateRecord",
+    "PredictionEvaluationRecord",
+    "PredictionOutcomeEvaluationRecord",
+    "PredictionOutcomeRecord",
+    "ReportArtifactRecord",
     "ResearchRunRecord",
     "ResearchSQLiteStore",
     "SQLiteStore",

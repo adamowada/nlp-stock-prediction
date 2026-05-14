@@ -30,8 +30,8 @@ from nlp_stock_prediction.providers._base import (
     find_ticker_matches,
     first_ticker,
     freshness_status,
-    malformed_result,
     missing_credentials_result,
+    no_data_result,
     parse_optional_provider_datetime,
     provider_health,
     provider_warning,
@@ -41,7 +41,7 @@ from nlp_stock_prediction.providers._base import (
     utc_now,
 )
 from nlp_stock_prediction.providers.execution import (
-    evidence_result_from_records,
+    ProviderExecutionContext,
     partial_item_warning,
 )
 
@@ -103,6 +103,14 @@ class XRecentSearchProvider:
                 credential_name="X bearer token",
             )
         ticker = first_ticker(request)
+        if not request.query and not ticker:
+            return no_data_result(
+                provider_name=self.provider_name,
+                request=request,
+                fetched_at=fetched_at,
+                message="X recent search requires a query or ticker.",
+                credential_state=CredentialState.CONFIGURED,
+            )
         query = request.query or build_x_recent_search_query(ticker or "")
         url = append_query_params(
             self._endpoint,
@@ -121,6 +129,14 @@ class XRecentSearchProvider:
             query=query,
             url=url,
         )
+        execution = ProviderExecutionContext(
+            provider_name=self.provider_name,
+            request=request,
+            fetched_at=fetched_at,
+            credential_state=CredentialState.CONFIGURED,
+            cache_key=cache_key,
+        )
+        fetched: JsonFetch | None = None
         try:
             fetched = fetch_json(
                 transport=self._transport,
@@ -133,6 +149,7 @@ class XRecentSearchProvider:
                 cache=self._cache,
                 headers={"Authorization": f"Bearer {self._bearer_token}"},
                 timeout=self._timeout,
+                cacheable_payload=_is_x_recent_search_cacheable,
             )
             evidence, partial_warnings = self._map_payload(
                 request,
@@ -152,25 +169,21 @@ class XRecentSearchProvider:
                 credential_state=CredentialState.CONFIGURED,
             )
         except MalformedProviderResponse as exc:
-            return malformed_result(
-                provider_name=self.provider_name,
-                request=request,
-                fetched_at=fetched_at,
-                message=str(exc),
-                credential_state=CredentialState.CONFIGURED,
-                cache_key=cache_key,
-            )
-        return evidence_result_from_records(
-            provider_name=self.provider_name,
-            request=request,
-            fetched_at=fetched_at,
+            if fetched is not None:
+                execution = execution.with_fetch(
+                    raw_snapshot_id=fetched.raw_snapshot_id,
+                    cache_key=fetched.cache_key,
+                )
+            return execution.malformed(str(exc))
+        assert fetched is not None
+        return execution.with_fetch(
+            raw_snapshot_id=fetched.raw_snapshot_id,
+            cache_key=fetched.cache_key,
+        ).evidence_result(
             evidence=evidence,
             warnings=partial_warnings,
             no_data_message="X recent search returned no posts",
             stale_message="X recent search returned stale social posts",
-            credential_state=CredentialState.CONFIGURED,
-            raw_snapshot_id=fetched.raw_snapshot_id,
-            cache_key=fetched.cache_key,
         )
 
     def health(self) -> ProviderHealth:
@@ -207,6 +220,8 @@ class XRecentSearchProvider:
         fetched_at: datetime,
         sort_order: str,
     ) -> tuple[tuple[SourceEvidence, ...], tuple[ProviderWarning, ...]]:
+        if "data" not in payload and "meta" in payload:
+            return (), ()
         if "data" not in payload:
             raise MalformedProviderResponse("X response missing data")
         items = payload.get("data")
@@ -280,7 +295,7 @@ class XRecentSearchProvider:
                     provenance=source_provenance(
                         provider_name=self.provider_name,
                         source_kind=SourceKind.X_POST,
-                        retrieval_method=RetrievalMethod.OFFICIAL_API,
+                        retrieval_method=_retrieval_method_for_provider(self.provider_name),
                         fetched_at=fetched_at,
                         observed_at=created_at,
                         source_url=source_url,
@@ -328,6 +343,12 @@ def _social_score(metrics: dict[object, object]) -> int | None:
     return score if found else None
 
 
+def _retrieval_method_for_provider(provider_name: str) -> RetrievalMethod:
+    if "fixture" in provider_name.lower():
+        return RetrievalMethod.FIXTURE
+    return RetrievalMethod.OFFICIAL_API
+
+
 def _validate_sort_order(sort_order: str) -> str:
     normalized = sort_order.strip().lower()
     if normalized not in {"relevancy", "recency"}:
@@ -339,6 +360,12 @@ def _validate_limit(limit: int) -> int:
     if limit < 10 or limit > 100:
         raise ValueError("X recent-search default_limit must be between 10 and 100")
     return limit
+
+
+def _is_x_recent_search_cacheable(payload: dict[str, object]) -> bool:
+    if "data" in payload:
+        return isinstance(payload["data"], list)
+    return "meta" in payload
 
 
 __all__ = ["XRecentSearchProvider", "build_x_recent_search_query"]

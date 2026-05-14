@@ -372,7 +372,6 @@ def fetch_json(
     response = retry_call(
         lambda: transport.get_json(url, headers=headers, timeout=timeout),
         should_retry=lambda exc: isinstance(exc, ProviderTransportError) and exc.retryable,
-        sleep=lambda _delay: None,
     )
     if cache is None:
         return JsonFetch(
@@ -603,6 +602,9 @@ def transport_error_result(
     elif error.status_code == 429:
         status = ProviderStatus.RATE_LIMITED
         code = WarningCode.RATE_LIMITED
+    elif error.error_type == "timeout":
+        status = ProviderStatus.FAILED
+        code = WarningCode.TIMEOUT
     else:
         status = ProviderStatus.FAILED
         code = WarningCode.UPSTREAM_UNAVAILABLE

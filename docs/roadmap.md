@@ -45,10 +45,11 @@ Acceptance:
 
 Goal: make Codex the disciplined prediction research assistant.
 
-Status: initial orchestrator implemented and retained for legacy MCP smoke coverage. The default
-offline `research` command now routes through the Phase 4 fixture-backed tool suite. The Phase 2 MCP
-service remains available for focused orchestration tests that pin deterministic run IDs, duplicate
-run rejection, neutral-evidence handling, audit-manifest report artifacts, and transactional cleanup.
+Status: initial orchestrator implemented and retained for legacy MCP smoke coverage. The `research`
+command now routes explicit offline runs through the Phase 4 fixture-backed tool suite and explicit
+live runs through the guarded live-provider path. The Phase 2 MCP service remains available for
+focused orchestration tests that pin deterministic run IDs, duplicate run rejection,
+neutral-evidence handling, audit-manifest report artifacts, and transactional cleanup.
 
 Build:
 
@@ -74,8 +75,8 @@ Status: contract and storage layer implemented. The app can represent broad inst
 explicit query resolutions, provider IDs, watchlists, tradability/access evidence, related
 instruments, and fixture-backed universe artifacts. Resolution contracts now reject matches on
 unsupported/unavailable results, and report contracts verify that instrument sections and candidates
-use symbols that match their referenced instruments. The default CLI has not added a separate universe
-command, and live universe-discovery providers are not yet implemented.
+use symbols that match their referenced instruments. The live report path now materializes requested
+symbols as live-mode identities; broader provider-backed universe discovery remains future hardening.
 
 Built:
 
@@ -96,19 +97,18 @@ Acceptance status:
 - stocks, ETFs, crypto, currency/commodity exposure, and futures context can be represented in
   contracts and registry storage;
 - ambiguous symbols require explicit resolution and cannot select an instrument silently;
-- fixture-backed universe paths can write instrument records and artifacts;
+- fixture-backed and live-mode universe paths can write instrument records and artifacts;
 - first-class fixture-backed universe discovery is implemented in Phase 4; broader live provider
-  discovery remains future hardening.
+  discovery beyond requested-symbol identities remains future hardening.
 
 ## Phase 4: Tool Suite
 
 Goal: convert research capabilities into first-class independent tools.
 
-Status: fixture-backed first-class tools are implemented for universe discovery, market data,
-technical packages, social evidence, news/catalysts, fundamentals, sector/macro context, prediction
-candidate synthesis, prediction evaluation, and final report rendering. Tool runs write typed
-artifacts, index SQLite run-graph rows, and expose recoverable failures as visible warning/error
-results. Live provider coverage remains opt-in and incremental.
+Status: fixture-backed first-class tools are implemented for offline reports, and the guarded live
+report path now wires live market, social, news, fundamentals, and macro providers without fixture or
+dummy fallback. Tool runs write typed artifacts, index SQLite run-graph rows, and expose recoverable
+failures as visible warning/error results.
 
 Built:
 
@@ -133,20 +133,30 @@ Acceptance:
 
 Goal: make reports the primary product.
 
-Build:
+Status: implemented and release-hardened. The Phase 4 `research` command writes Markdown, JSON, and
+audit-manifest report artifacts for explicit offline and guarded live-provider runs. Reports preserve
+evidence for and against, dissent, uncertainty, baseline context, signal artifact references,
+provider health, material claim traces, prior-outcome reviews, and source/audit references. No-call,
+low-evidence, stale, malformed, unsupported, ambiguous, provider-failure, and contradictory outcomes
+are first-class report products rather than empty reports or fabricated conclusions.
+
+Built:
 
 - Markdown report rendering;
 - JSON report rendering;
 - evidence ledger appendix;
 - uncertainty and dissenting evidence sections;
 - "what would change this prediction" sections;
-- prior-outcome review.
+- prior-outcome review;
+- structured insufficient-evidence and failure reports;
+- runtime report artifact index.
 
-Acceptance:
+Acceptance status:
 
 - reports never use buy/sell instruction language;
 - reports include evidence for and against;
-- reports preserve artifact references and source links.
+- reports preserve artifact references and source links;
+- live report assembly refuses fixture, dummy, or smoke fallback inputs.
 
 ## Phase 6: Evaluation And Calibration
 

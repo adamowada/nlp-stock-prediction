@@ -39,6 +39,9 @@ from nlp_stock_prediction.orchestration.phase4_common import (
     sanitize_source_query_url,
 )
 from nlp_stock_prediction.orchestration.phase4_execution import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    report_data_mode_metadata_for_run_id,
+)
 from nlp_stock_prediction.providers._base import provider_health, provider_warning
 from nlp_stock_prediction.storage.records import SourceQueryRecord, ToolRunRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
@@ -156,6 +159,7 @@ class Phase4MarketDataTool:
         )
         tool_run_id = _market_data_tool_run_id(run_id, normalized_symbol)
         artifact_id = _market_data_artifact_id(run_id, normalized_symbol)
+        mode_metadata = report_data_mode_metadata_for_run_id(self.store, run_id)
         inputs: JsonObject = {
             "symbol": normalized_symbol,
             "instrument_id": instrument_id,
@@ -163,6 +167,7 @@ class Phase4MarketDataTool:
             "interval": interval,
             "adjusted": adjusted,
             "source_url": str(source_url) if source_url is not None else None,
+            **mode_metadata,
         }
         with safe_phase4_tool_execution(
             store=self.store,
@@ -209,6 +214,7 @@ class Phase4MarketDataTool:
                     inputs={
                         **inputs,
                         "provider": provider_result.provider_name,
+                        **mode_metadata,
                     },
                     warnings=tuple(warning.message for warning in warnings),
                 )
@@ -230,6 +236,7 @@ class Phase4MarketDataTool:
                         "cache_key": provider_result.cache_key,
                         "retrieval_method": retrieval_method.value,
                         **_data_quality_metadata(provider_result),
+                        **mode_metadata,
                     },
                 )
             )
@@ -253,6 +260,7 @@ class Phase4MarketDataTool:
                 produced_by=PHASE4_MARKET_DATA_TOOL_NAME,
                 tool_run_id=tool_run_id,
                 schema_version=PHASE4_MARKET_DATA_SCHEMA_VERSION,
+                default_metadata=mode_metadata,
             ).write_json(
                 artifact_id=artifact_id,
                 artifact_type="market_data",
