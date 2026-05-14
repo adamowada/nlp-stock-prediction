@@ -100,17 +100,20 @@ Acceptance status:
   contracts and registry storage;
 - ambiguous symbols require explicit resolution and cannot select an instrument silently;
 - fixture/dummy universe paths can write instrument records and artifacts;
-- first-class live universe discovery remains Phase 4 work.
+- first-class fixture-backed universe discovery is implemented in Phase 4; broader live provider
+  discovery remains future hardening.
 
 ## Phase 4: Tool Suite
 
 Goal: convert research capabilities into first-class independent tools.
 
-Status: provider and tool contract hardening has started ahead of the full tool-suite expansion.
-Shared provider fetch helpers retry retryable failures, avoid caching known error payloads, validate
-stored source spans, and degrade malformed/missing provider data into explicit warning results.
+Status: fixture-backed first-class tools are implemented for universe discovery, market data,
+technical packages, social evidence, news/catalysts, fundamentals, sector/macro context, prediction
+evaluation, and final report rendering. Tool runs write typed artifacts, index SQLite run-graph rows,
+and expose recoverable failures as visible warning/error results. Live provider coverage remains
+opt-in and incremental.
 
-Build:
+Built:
 
 - universe discovery tool over the Phase 3 contracts and registry;
 - market data tool;

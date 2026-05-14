@@ -118,7 +118,7 @@ def test_phase4_tool_execution_helper_records_terminal_statuses(tmp_path: Path) 
 
 
 @pytest.mark.unit
-def test_phase4_tool_execution_rolls_back_new_artifacts_but_records_failure(
+def test_phase4_tool_execution_rolls_back_new_and_overwritten_artifacts_but_records_failure(
     tmp_path: Path,
 ) -> None:
     service, run_id = _started_service(tmp_path)
@@ -143,7 +143,14 @@ def test_phase4_tool_execution_rolls_back_new_artifacts_but_records_failure(
             filename=failed_file.name,
             payload={"will": "rollback"},
         )
+        context.artifact_index(schema_version="unit-artifact.v1").write_text(
+            artifact_id="artifact-phase4-overwrite",
+            artifact_type="provider_result",
+            filename=existing_file.name,
+            content="overwritten\n",
+        )
         assert failed_file.exists()
+        assert existing_file.read_text(encoding="utf-8") == "overwritten\n"
         raise RuntimeError("deterministic phase4 failure")
 
     with pytest.raises(Phase4ToolExecutionError) as exc_info:
@@ -158,8 +165,10 @@ def test_phase4_tool_execution_rolls_back_new_artifacts_but_records_failure(
         )
 
     assert existing_file.exists()
+    assert existing_file.read_text(encoding="utf-8") == "keep\n"
     assert not failed_file.exists()
     assert service.store.get_artifact("artifact-phase4-failed") is None
+    assert service.store.get_artifact("artifact-phase4-overwrite") is None
     failed_record = service.store.get_tool_run(exc_info.value.tool_run_id)
     assert failed_record is not None
     assert failed_record.status == "failed"

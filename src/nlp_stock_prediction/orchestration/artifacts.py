@@ -224,18 +224,27 @@ class ArtifactIndex:
 
 @dataclass(frozen=True)
 class ArtifactFileTransaction:
-    """Track files present before a tool run and remove new files after rollback."""
+    """Track files present before a tool run and restore the tree after rollback."""
 
     root: Path
     files_before: frozenset[Path]
+    file_snapshots: dict[Path, bytes]
 
     @classmethod
     def begin(cls, root: Path) -> ArtifactFileTransaction:
         resolved_root = root.resolve()
-        return cls(root=resolved_root, files_before=_existing_files(resolved_root))
+        snapshots = _existing_file_snapshots(resolved_root)
+        return cls(
+            root=resolved_root,
+            files_before=frozenset(snapshots),
+            file_snapshots=snapshots,
+        )
 
     def rollback_new_files(self) -> None:
         if not self.root.exists():
+            for path, content in self.file_snapshots.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
             return
         for path in sorted(
             (candidate for candidate in self.root.rglob("*") if candidate.is_file()),
@@ -245,6 +254,9 @@ class ArtifactFileTransaction:
             resolved = path.resolve()
             if resolved not in self.files_before:
                 path.unlink(missing_ok=True)
+        for path, content in self.file_snapshots.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
         for directory in sorted(
             (candidate for candidate in self.root.rglob("*") if candidate.is_dir()),
             key=lambda item: len(item.parts),
@@ -258,6 +270,10 @@ def _existing_files(root: Path) -> frozenset[Path]:
     if not root.exists():
         return frozenset()
     return frozenset(path.resolve() for path in root.rglob("*") if path.is_file())
+
+
+def _existing_file_snapshots(root: Path) -> dict[Path, bytes]:
+    return {path: path.read_bytes() for path in _existing_files(root)}
 
 
 __all__ = ["ArtifactFileTransaction", "ArtifactIndex", "ArtifactType", "ArtifactWriter"]
