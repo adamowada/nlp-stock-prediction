@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from nlp_stock_prediction.contracts import (
     Direction,
+    DissentingEvidence,
     EvidenceReference,
     PredictionCandidate,
     PredictionStatus,
@@ -63,6 +64,7 @@ def prediction_candidate_from_record(
         confidence=candidate.confidence or 0.0,
         evidence_for=evidence_for_refs,
         evidence_against=evidence_against_refs,
+        dissenting_evidence=_dissenting_evidence(evidence_against_refs),
         assumptions=("Source evidence is observed material, not automatically true.",),
         uncertainties=(uncertainty,),
         change_trigger_limitations=(
@@ -152,14 +154,28 @@ def _candidate_status(
     evidence_for_refs: tuple[EvidenceReference, ...],
     evidence_against_refs: tuple[EvidenceReference, ...],
 ) -> PredictionStatus:
+    if evidence_against_refs:
+        return PredictionStatus.CONTRADICTED
     try:
         return PredictionStatus(candidate.status)
     except ValueError:
-        if evidence_against_refs:
-            return PredictionStatus.CONTRADICTED
         if evidence_for_refs:
             return PredictionStatus.EVIDENCE_SUPPORTED
         return PredictionStatus.INSUFFICIENT_EVIDENCE
+
+
+def _dissenting_evidence(
+    evidence_against_refs: tuple[EvidenceReference, ...],
+) -> tuple[DissentingEvidence, ...]:
+    if not evidence_against_refs:
+        return ()
+    return (
+        DissentingEvidence(
+            summary="Stored source evidence contradicts or materially limits the scenario.",
+            evidence=evidence_against_refs,
+            impact="contradicts",
+        ),
+    )
 
 
 def _direction(value: str | None) -> Direction:

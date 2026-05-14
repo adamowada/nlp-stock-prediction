@@ -199,6 +199,14 @@ must point to source evidence, tool artifacts, provider context, or prior outcom
 to a candidate. Candidate records must either include specific change triggers or an explicit
 limitation explaining why the report cannot define them yet.
 
+Insufficient-evidence reports are first-class outputs. They carry blocking reasons, missing evidence
+types, provider names, evidence references, artifact IDs, and metadata for excluded candidates,
+missing evidence, missing artifacts, provider statuses, and instrument-resolution status counts.
+Contradictory source evidence remains visible as `evidence_against` and dissenting evidence, and it
+forces a contradicted report candidate rather than being converted into an evidence-supported
+conclusion. Audit manifests now include provider-health snapshots so failed, stale, empty, partial,
+or malformed provider/tool results remain visible in both the JSON report and the audit manifest.
+
 `json-report-contract.v1` validates the machine-readable report artifact without wrapping or
 renaming the top-level `DailyReport` fields. It maps each material Markdown section to stable JSON
 pointers and round-trips through the `DailyReport` contract. Final report artifacts are indexed in

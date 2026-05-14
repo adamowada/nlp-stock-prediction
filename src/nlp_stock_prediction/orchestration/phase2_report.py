@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from pathlib import Path
 from typing import cast
 
+from pydantic import ValidationError
+
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.enums import (
     CredentialState,
+    InstrumentResolutionStatus,
     ProviderStatus,
 )
-from nlp_stock_prediction.contracts.instruments import Instrument
+from nlp_stock_prediction.contracts.instruments import (
+    Instrument,
+    InstrumentResolution,
+    InstrumentUniverse,
+)
 from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderHealth
 from nlp_stock_prediction.contracts.report import (
     AuditArtifact,
@@ -32,6 +40,7 @@ from nlp_stock_prediction.orchestration.phase2_common import (
 from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
 from nlp_stock_prediction.orchestration.prior_outcomes import apply_prior_outcome_context
 from nlp_stock_prediction.orchestration.report_assembly import (
+    ReportAssemblyState,
     material_claim_traces,
     prepare_report_assembly_state,
     report_source_references,
@@ -49,6 +58,8 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.storage.records import (
+    ArtifactRecord,
+    PredictionCandidateRecord,
     ReportArtifactRecord,
     ResearchRunRecord,
     ToolRunRecord,
@@ -90,6 +101,11 @@ def render_phase2_prediction_report(
     instrument = _primary_instrument(store, symbol=symbol, fallback_generated_at=now)
     candidate_records = store.list_prediction_candidates_for_run(run.run_id)
     artifact_records = store.list_artifacts_for_run(run.run_id)
+    instrument_resolutions = _instrument_resolutions_from_artifacts(
+        artifact_records,
+        repo_root=repo_root,
+        report_instrument_ids=(instrument.instrument_id,),
+    )
     tool_runs = store.list_tool_runs_for_run(run.run_id)
     assembly_state = prepare_report_assembly_state(
         store=store,
@@ -217,15 +233,38 @@ def render_phase2_prediction_report(
     )
     material_traces = (*material_traces, *prior_outcome_context.material_claim_traces)
     prior_outcome_reviews = prior_outcome_context.prior_outcome_reviews
+    resolution_blocking_reasons = _instrument_resolution_blocking_reasons(
+        instrument_resolutions,
+    )
+    blocking_reasons = tuple(
+        dict.fromkeys((*assembly_state.blocking_reasons, *resolution_blocking_reasons))
+    )
     insufficient_summary = _insufficient_evidence_summary(
         prediction_candidates=prediction_candidates,
-        assembly_state_blocking_reasons=assembly_state.blocking_reasons,
+        blocking_reasons=blocking_reasons,
         default_summary=insufficient_evidence_summary,
     )
     insufficient_blocking_reasons = (
-        assembly_state.blocking_reasons
-        if assembly_state.blocking_reasons
-        else (insufficient_summary,)
+        blocking_reasons if blocking_reasons else (insufficient_summary,)
+    )
+    insufficient_missing_evidence_types = _insufficient_missing_evidence_types(
+        prediction_candidates=prediction_candidates,
+        evidence_sources=evidence_sources,
+        candidate_records=candidate_records,
+        assembly_state=assembly_state,
+        provider_health=provider_health,
+        stale_provider_names=stale_provider_names,
+        instrument_resolutions=instrument_resolutions,
+    )
+    insufficient_artifact_ids = _insufficient_artifact_ids(
+        audit_artifacts=audit_artifacts,
+        assembly_state=assembly_state,
+    )
+    insufficient_metadata = _insufficient_evidence_metadata(
+        candidate_records=candidate_records,
+        assembly_state=assembly_state,
+        provider_health=provider_health,
+        instrument_resolutions=instrument_resolutions,
     )
     insufficient_evidence = (
         None
@@ -233,7 +272,11 @@ def render_phase2_prediction_report(
         else InsufficientEvidenceReport(
             summary=insufficient_summary,
             blocking_reasons=insufficient_blocking_reasons,
+            missing_evidence_types=insufficient_missing_evidence_types,
             provider_names=tuple(health.provider_name for health in provider_health),
+            evidence=section_refs,
+            artifact_ids=insufficient_artifact_ids,
+            metadata=insufficient_metadata,
         )
     )
     instrument_section = instrument_section.model_copy(
@@ -244,6 +287,9 @@ def render_phase2_prediction_report(
                 "assembled_candidate_count": len(prediction_candidates),
                 "excluded_candidate_count": len(assembly_state.excluded_candidate_reasons),
                 "audit_artifact_count": len(audit_artifacts),
+                "instrument_resolution_status_counts": _resolution_status_counts(
+                    instrument_resolutions
+                ),
             }
         }
     )
@@ -265,6 +311,7 @@ def render_phase2_prediction_report(
         ),
         provider_health=provider_health,
         evidence_sources=evidence_sources,
+        instrument_resolutions=instrument_resolutions,
         instrument_sections=(instrument_section,),
         prediction_candidates=prediction_candidates,
         insufficient_evidence=insufficient_evidence,
@@ -277,6 +324,7 @@ def render_phase2_prediction_report(
             schema_version="audit-manifest.v2",
             created_at=now,
             artifacts=audit_artifacts,
+            provider_health=provider_health,
             command_args={"run_id": run.run_id, "symbol": symbol.upper(), **mode_metadata},
             prediction_trace_ids=tuple(
                 candidate.candidate_id for candidate in prediction_candidates
@@ -467,19 +515,180 @@ def _stale_provider_names(evidence_sources: tuple[object, ...]) -> tuple[str, ..
     return tuple(dict.fromkeys(provider_names))
 
 
+def _instrument_resolutions_from_artifacts(
+    artifact_records: tuple[ArtifactRecord, ...],
+    *,
+    repo_root: Path,
+    report_instrument_ids: tuple[str, ...],
+) -> tuple[InstrumentResolution, ...]:
+    report_ids = set(report_instrument_ids)
+    resolutions: list[InstrumentResolution] = []
+    seen: set[tuple[str, str, str | None]] = set()
+    for record in artifact_records:
+        if record.artifact_type != "instrument_universe":
+            continue
+        path = _artifact_record_path(record, repo_root)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                continue
+            universe_payload = payload.get("universe")
+            if isinstance(universe_payload, dict):
+                universe_payload = dict(universe_payload)
+                universe_payload.pop("instrument_ids", None)
+            universe = InstrumentUniverse.model_validate(universe_payload)
+        except OSError, json.JSONDecodeError, ValidationError, ValueError:
+            continue
+        for resolution in universe.resolutions:
+            if (
+                resolution.selected_instrument_id is not None
+                and resolution.selected_instrument_id not in report_ids
+            ):
+                continue
+            key = (
+                resolution.query,
+                resolution.status.value,
+                resolution.selected_instrument_id,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            resolutions.append(resolution)
+    return tuple(resolutions)
+
+
+def _instrument_resolution_blocking_reasons(
+    instrument_resolutions: tuple[InstrumentResolution, ...],
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    for resolution in instrument_resolutions:
+        if resolution.status == InstrumentResolutionStatus.RESOLVED:
+            continue
+        warning_text = f" Warnings: {'; '.join(resolution.warnings)}" if resolution.warnings else ""
+        if resolution.status == InstrumentResolutionStatus.AMBIGUOUS:
+            reasons.append(
+                f"Instrument query {resolution.query} is ambiguous; no default instrument was "
+                f"selected.{warning_text}"
+            )
+            continue
+        reasons.append(
+            f"Instrument query {resolution.query} is {resolution.status.value}; it cannot support "
+            f"a reportable prediction candidate.{warning_text}"
+        )
+    return tuple(dict.fromkeys(reasons))
+
+
+def _insufficient_missing_evidence_types(
+    *,
+    prediction_candidates: tuple[object, ...],
+    evidence_sources: tuple[object, ...],
+    candidate_records: tuple[PredictionCandidateRecord, ...],
+    assembly_state: ReportAssemblyState,
+    provider_health: tuple[ProviderHealth, ...],
+    stale_provider_names: tuple[str, ...],
+    instrument_resolutions: tuple[InstrumentResolution, ...],
+) -> tuple[str, ...]:
+    if prediction_candidates:
+        return ()
+    missing: list[str] = []
+    if not candidate_records:
+        missing.append("stored prediction candidates")
+    elif assembly_state.excluded_candidate_reasons:
+        missing.append("usable prediction candidates")
+    if not evidence_sources:
+        missing.append("attributable source evidence")
+    if stale_provider_names:
+        missing.append("fresh source evidence")
+    if assembly_state.missing_evidence_ids:
+        missing.append("cited source evidence records")
+    if assembly_state.missing_artifact_ids:
+        missing.append("required tool artifacts")
+    if any(_provider_status_blocks_evidence(health.status) for health in provider_health):
+        missing.append("complete provider outputs")
+    if any(
+        resolution.status != InstrumentResolutionStatus.RESOLVED
+        for resolution in instrument_resolutions
+    ):
+        missing.append("resolved supported instrument identity")
+    return tuple(dict.fromkeys(missing))
+
+
+def _insufficient_artifact_ids(
+    *,
+    audit_artifacts: tuple[AuditArtifact, ...],
+    assembly_state: ReportAssemblyState,
+) -> tuple[str, ...]:
+    if not audit_artifacts:
+        return ()
+    if not assembly_state.blocking_reasons:
+        return tuple(artifact.artifact_id for artifact in audit_artifacts)
+    return tuple(
+        artifact.artifact_id
+        for artifact in audit_artifacts
+        if artifact.metadata.get("assembly_required") is True
+        or artifact.metadata.get("assembly_status") != "ok"
+    )
+
+
+def _insufficient_evidence_metadata(
+    *,
+    candidate_records: tuple[PredictionCandidateRecord, ...],
+    assembly_state: ReportAssemblyState,
+    provider_health: tuple[ProviderHealth, ...],
+    instrument_resolutions: tuple[InstrumentResolution, ...],
+) -> JsonObject:
+    return {
+        "stored_candidate_count": len(candidate_records),
+        "excluded_candidate_ids": list(assembly_state.excluded_candidate_ids),
+        "missing_evidence_ids": list(assembly_state.missing_evidence_ids),
+        "missing_artifact_ids": list(assembly_state.missing_artifact_ids),
+        "provider_statuses": {
+            health.provider_name: health.status.value for health in provider_health
+        },
+        "instrument_resolution_status_counts": _resolution_status_counts(instrument_resolutions),
+    }
+
+
+def _provider_status_blocks_evidence(status: ProviderStatus) -> bool:
+    return status in {
+        ProviderStatus.EMPTY,
+        ProviderStatus.PARTIAL,
+        ProviderStatus.STALE,
+        ProviderStatus.UNCONFIGURED,
+        ProviderStatus.UNAUTHORIZED,
+        ProviderStatus.RATE_LIMITED,
+        ProviderStatus.FAILED,
+        ProviderStatus.MALFORMED,
+    }
+
+
+def _resolution_status_counts(
+    instrument_resolutions: tuple[InstrumentResolution, ...],
+) -> JsonObject:
+    counts: JsonObject = {}
+    for resolution in instrument_resolutions:
+        current = counts.get(resolution.status.value, 0)
+        counts[resolution.status.value] = int(current) + 1 if isinstance(current, int) else 1
+    return counts
+
+
+def _artifact_record_path(record: ArtifactRecord, repo_root: Path) -> Path:
+    return record.path if record.path.is_absolute() else repo_root / record.path
+
+
 def _insufficient_evidence_summary(
     *,
     prediction_candidates: tuple[object, ...],
-    assembly_state_blocking_reasons: tuple[str, ...],
+    blocking_reasons: tuple[str, ...],
     default_summary: str | None,
 ) -> str:
     if prediction_candidates:
         return ""
-    if assembly_state_blocking_reasons:
+    if blocking_reasons:
         return (
             "Report assembly could not use stored prediction candidates because required "
-            "tool artifacts or evidence were missing, malformed, or not linked through the "
-            "stored run graph."
+            "instrument resolution, tool artifacts, evidence, or provider checks blocked a "
+            "reliable conclusion."
         )
     return default_summary or "No candidate could be synthesized."
 

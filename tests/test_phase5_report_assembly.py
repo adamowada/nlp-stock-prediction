@@ -9,9 +9,25 @@ from typing import Any, cast
 
 import pytest
 
+from nlp_stock_prediction.contracts import (
+    AssetClass,
+    FreshnessStatus,
+    Instrument,
+    InstrumentResolution,
+    InstrumentResolutionStatus,
+    InstrumentUniverse,
+    RetrievalMethod,
+    SourceEvidence,
+    SourceKind,
+    SourceProvenance,
+)
 from nlp_stock_prediction.orchestration import Phase4Service
+from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
+    phase4_universe_artifact_payload,
+)
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
+    EvidenceRecord,
     InstrumentRecord,
     PredictionCandidateRecord,
     ToolRunRecord,
@@ -111,11 +127,18 @@ def test_report_assembly_missing_candidate_artifact_becomes_insufficient_evidenc
         "Missing required artifact artifact-missing-technical" in reason
         for reason in insufficient["blocking_reasons"]
     )
+    assert "required tool artifacts" in insufficient["missing_evidence_types"]
+    assert insufficient["metadata"]["missing_artifact_ids"] == ["artifact-missing-technical"]
     assert "report-assembly" in insufficient["provider_names"]
     provider_health = cast(list[dict[str, Any]], payload["provider_health"])
     assert any(
         health["provider_name"] == "report-assembly" and health["status"] == "malformed"
         for health in provider_health
+    )
+    audit_health = cast(list[dict[str, Any]], payload["audit_manifest"]["provider_health"])
+    assert any(
+        health["provider_name"] == "report-assembly" and health["status"] == "malformed"
+        for health in audit_health
     )
 
 
@@ -162,6 +185,169 @@ def test_report_assembly_malformed_required_artifact_becomes_insufficient_eviden
     assert any(
         "Artifact payload is malformed" in reason for reason in insufficient["blocking_reasons"]
     )
+    assert artifact_id in insufficient["artifact_ids"]
+    assert "complete provider outputs" in insufficient["missing_evidence_types"]
+
+
+@pytest.mark.integration
+def test_report_assembly_failed_provider_run_is_visible_in_report_and_audit_manifest(
+    tmp_path: Path,
+) -> None:
+    service, run_id = _service_with_started_run(tmp_path)
+    service.store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-stage8-malformed-page",
+            run_id=run_id,
+            tool_name="phase4_news_catalyst",
+            tool_version="phase4.news.v1",
+            status="failed",
+            started_at=NOW,
+            completed_at=NOW,
+            inputs={"symbol": "TSLA"},
+            warnings=("Malformed provider page returned no readable article text.",),
+            error_message="Malformed provider page returned no readable article text.",
+        )
+    )
+
+    rendered = service.render_prediction_report(run_id=run_id, symbol="TSLA")
+
+    payload = _read_report_payload(rendered)
+    provider_health = cast(list[dict[str, Any]], payload["provider_health"])
+    assert any(
+        health["provider_name"] == "tool:phase4_news_catalyst" and health["status"] == "failed"
+        for health in provider_health
+    )
+    audit_health = cast(list[dict[str, Any]], payload["audit_manifest"]["provider_health"])
+    assert any(
+        health["provider_name"] == "tool:phase4_news_catalyst" and health["status"] == "failed"
+        for health in audit_health
+    )
+    insufficient = cast(dict[str, Any], payload["insufficient_evidence"])
+    assert "complete provider outputs" in insufficient["missing_evidence_types"]
+    markdown = Path(str(rendered["markdown_path"])).read_text(encoding="utf-8")
+    assert "Malformed provider page returned no readable article text." in markdown
+
+
+@pytest.mark.integration
+def test_report_assembly_stale_evidence_renders_structured_insufficient_evidence(
+    tmp_path: Path,
+) -> None:
+    service, run_id = _service_with_started_run(tmp_path)
+    evidence = _source_evidence(
+        "evidence-stage8-stale",
+        text="A stale source claims Tesla demand was improving last quarter.",
+        freshness_status=FreshnessStatus.STALE,
+    )
+    _record_evidence(service, run_id=run_id, evidence=evidence)
+
+    rendered = service.render_prediction_report(run_id=run_id, symbol="TSLA")
+
+    payload = _read_report_payload(rendered)
+    insufficient = cast(dict[str, Any], payload["insufficient_evidence"])
+    assert payload["prediction_candidates"] == []
+    assert insufficient["evidence"][0]["evidence_id"] == evidence.evidence_id
+    assert "fresh source evidence" in insufficient["missing_evidence_types"]
+    assert payload["data_freshness"]["stale_provider_names"] == ["fixture-news"]
+    markdown = Path(str(rendered["markdown_path"])).read_text(encoding="utf-8")
+    assert "`evidence-stage8-stale` news_article via fixture-news" in markdown
+    assert "Report-authored scenario" not in markdown
+
+
+@pytest.mark.integration
+def test_report_assembly_surfaces_ambiguous_and_unsupported_instrument_resolutions(
+    tmp_path: Path,
+) -> None:
+    service, run_id = _service_with_started_run(tmp_path)
+    artifact_path = _write_universe_resolution_artifact(
+        service=service,
+        run_id=run_id,
+        tmp_path=tmp_path,
+    )
+    service.store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-stage8-universe-resolution",
+            artifact_type="instrument_universe",
+            path=artifact_path.relative_to(tmp_path),
+            sha256=hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+            schema_version="phase4.instrument-universe.v1",
+            tool_run_id="tool-stage8-universe",
+            produced_by="phase4_universe_discovery",
+            record_count=2,
+            metadata={"symbol": "TSLA"},
+            created_at=NOW,
+        )
+    )
+
+    rendered = service.render_prediction_report(run_id=run_id, symbol="TSLA")
+
+    payload = _read_report_payload(rendered)
+    statuses = {
+        resolution["query"]: resolution["status"]
+        for resolution in cast(list[dict[str, Any]], payload["instrument_resolutions"])
+    }
+    assert statuses["AI"] == "ambiguous"
+    assert statuses["OTC:MISSING"] == "unsupported"
+    insufficient = cast(dict[str, Any], payload["insufficient_evidence"])
+    assert "resolved supported instrument identity" in insufficient["missing_evidence_types"]
+    assert any(
+        "Instrument query AI is ambiguous" in reason for reason in insufficient["blocking_reasons"]
+    )
+    markdown = Path(str(rendered["markdown_path"])).read_text(encoding="utf-8")
+    assert "## Universe Resolution" in markdown
+    assert "`AI`: ambiguous" in markdown
+    assert "`OTC:MISSING`: unsupported" in markdown
+
+
+@pytest.mark.integration
+def test_report_assembly_preserves_contradictory_evidence_as_contradicted_candidate(
+    tmp_path: Path,
+) -> None:
+    service, run_id = _service_with_started_run(tmp_path)
+    support = _source_evidence(
+        "evidence-stage8-support",
+        text="A cited source claims Tesla deliveries improved sequentially.",
+        freshness_status=FreshnessStatus.FRESH,
+    )
+    conflict = _source_evidence(
+        "evidence-stage8-conflict",
+        text="A cited source claims Tesla margin pressure remains elevated.",
+        freshness_status=FreshnessStatus.FRESH,
+    )
+    _record_evidence(service, run_id=run_id, evidence=support)
+    _record_evidence(service, run_id=run_id, evidence=conflict)
+    service.store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            candidate_id="candidate-stage8-contradiction",
+            run_id=run_id,
+            instrument_id="instrument:equity:us:tsla",
+            prediction_horizon="swing",
+            prediction_type="directional",
+            scenario="TSLA has mixed source evidence and should remain a contested scenario.",
+            status="evidence_supported",
+            confidence=0.52,
+            direction="mixed",
+            evidence_for=(support.evidence_id,),
+            evidence_against=(conflict.evidence_id,),
+            baseline={"summary": "No directional edge is assumed without source-backed evidence."},
+            uncertainty="Contradictory source evidence limits confidence.",
+            metadata={"symbol": "TSLA"},
+        )
+    )
+
+    rendered = service.render_prediction_report(run_id=run_id, symbol="TSLA")
+
+    payload = _read_report_payload(rendered)
+    candidate = cast(list[dict[str, Any]], payload["prediction_candidates"])[0]
+    assert candidate["status"] == "contradicted"
+    assert candidate["evidence_against"][0]["evidence_id"] == conflict.evidence_id
+    assert candidate["dissenting_evidence"][0]["impact"] == "contradicts"
+    assert (
+        "Source evidence is observed material, not automatically true." in candidate["assumptions"]
+    )
+    markdown = Path(str(rendered["markdown_path"])).read_text(encoding="utf-8")
+    assert "Status: contradicted" in markdown
+    assert "Evidence against: `evidence-stage8-conflict`" in markdown
+    assert "Dissenting evidence: contradicts" in markdown
 
 
 def _service_with_started_run(tmp_path: Path) -> tuple[Phase4Service, str]:
@@ -227,6 +413,134 @@ def _write_bad_technical_artifact(
             started_at=NOW,
             completed_at=NOW,
             inputs={"symbol": "TSLA"},
+        )
+    )
+    return artifact_path
+
+
+def _source_evidence(
+    evidence_id: str,
+    *,
+    text: str,
+    freshness_status: FreshnessStatus,
+) -> SourceEvidence:
+    return SourceEvidence(
+        evidence_id=evidence_id,
+        source_kind=SourceKind.NEWS_ARTICLE,
+        ticker="TSLA",
+        text=text,
+        created_at=NOW,
+        permalink=f"https://example.test/{evidence_id}",
+        matched_tickers=("TSLA",),
+        matched_instrument_ids=("instrument:equity:us:tsla",),
+        instrument_id="instrument:equity:us:tsla",
+        provenance=SourceProvenance(
+            provider_name="fixture-news",
+            source_kind=SourceKind.NEWS_ARTICLE,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=NOW,
+            observed_at=NOW,
+            source_url=f"https://example.test/{evidence_id}",
+            permalink=f"https://example.test/{evidence_id}",
+            raw_identifier=evidence_id,
+            raw_snapshot_id=f"raw-{evidence_id}",
+            freshness_status=freshness_status,
+        ),
+    )
+
+
+def _record_evidence(
+    service: Phase4Service,
+    *,
+    run_id: str,
+    evidence: SourceEvidence,
+) -> None:
+    tool_run_id = f"tool-{evidence.evidence_id}"
+    service.store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id=tool_run_id,
+            run_id=run_id,
+            tool_name="stage8_test_evidence",
+            tool_version="test.v1",
+            status="successful",
+            started_at=NOW,
+            completed_at=NOW,
+            inputs={"symbol": "TSLA"},
+        )
+    )
+    service.store.record_evidence(
+        EvidenceRecord(
+            evidence_id=evidence.evidence_id,
+            tool_run_id=tool_run_id,
+            source_type=evidence.source_kind.value,
+            provider=evidence.provenance.provider_name,
+            retrieved_at=evidence.provenance.fetched_at,
+            published_at=evidence.created_at,
+            instruments=evidence.matched_instrument_ids,
+            claim=evidence.text,
+            url=evidence.provenance.source_url,
+            freshness_status=evidence.provenance.freshness_status.value,
+            metadata={"source_evidence": evidence.model_dump(mode="json")},
+        )
+    )
+
+
+def _write_universe_resolution_artifact(
+    *,
+    service: Phase4Service,
+    run_id: str,
+    tmp_path: Path,
+) -> Path:
+    run = service.store.get_research_run(run_id)
+    assert run is not None
+    output_dir = Path(str(run.metadata["output_dir"]))
+    if not output_dir.is_absolute():
+        output_dir = tmp_path / output_dir
+    artifact_path = output_dir / RUN_DATE.isoformat() / "tsla" / "audit" / "universe.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    ai_equity = Instrument(
+        instrument_id="instrument:equity:us:ai",
+        symbol="AI",
+        display_name="C3.ai Inc.",
+        asset_class=AssetClass.STOCK,
+    )
+    ai_crypto = Instrument(
+        instrument_id="instrument:crypto:ai-token",
+        symbol="AI",
+        display_name="AI Token",
+        asset_class=AssetClass.CRYPTO,
+    )
+    universe = InstrumentUniverse(
+        request_id="stage8-universe-resolution",
+        generated_at=NOW,
+        resolutions=(
+            InstrumentResolution(
+                query="AI",
+                status=InstrumentResolutionStatus.AMBIGUOUS,
+                matches=(ai_equity, ai_crypto),
+                warnings=("AI maps to multiple instruments; no default selected.",),
+            ),
+            InstrumentResolution(
+                query="OTC:MISSING",
+                status=InstrumentResolutionStatus.UNSUPPORTED,
+                warnings=("OTC fixture symbol is unsupported for this report.",),
+            ),
+        ),
+        instruments=(ai_equity, ai_crypto),
+    )
+    payload = phase4_universe_artifact_payload(run_id=run_id, universe=universe)
+    artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    service.store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-stage8-universe",
+            run_id=run_id,
+            tool_name="phase4_universe_discovery",
+            tool_version="phase4.universe.v1",
+            status="partial",
+            started_at=NOW,
+            completed_at=NOW,
+            inputs={"symbol": "TSLA"},
+            warnings=("Ambiguous and unsupported universe inputs were retained.",),
         )
     )
     return artifact_path

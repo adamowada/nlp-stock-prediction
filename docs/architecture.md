@@ -120,6 +120,12 @@ mode, tool run, and source run timestamps; report bodies and raw provider payloa
 Phase 2 smoke and Phase 4 tool-suite runs use deterministic run IDs, reject duplicate starts where
 applicable, and preserve prior successful outputs if a later transactional tool retry fails.
 
+Report failure modes are report products rather than exceptions when the run graph is otherwise
+valid. Missing evidence, malformed artifacts or pages, failed providers, stale evidence,
+unsupported or ambiguous instrument resolutions, and contradictory source evidence are rendered as
+structured insufficient-evidence, provider-health, audit-manifest, or contradicted-candidate context
+instead of being hidden or converted into unsupported conclusions.
+
 ## ML Signal Discipline
 
 Technical ML sidecars are conservative audit inputs. OHLCV timestamps are normalized across date and

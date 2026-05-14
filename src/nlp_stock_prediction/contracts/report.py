@@ -384,6 +384,7 @@ class AuditManifest(ContractModel):
     schema_version: NonEmptyStr
     created_at: AwareDatetime
     artifacts: tuple[AuditArtifact, ...] = Field(default_factory=tuple)
+    provider_health: tuple[ProviderHealth, ...] = Field(default_factory=tuple)
     provider_run_ids: tuple[str, ...] = Field(default_factory=tuple)
     model_versions: JsonObject = Field(default_factory=dict)
     prompt_versions: JsonObject = Field(default_factory=dict)

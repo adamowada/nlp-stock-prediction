@@ -111,6 +111,8 @@ Integration tests should cover:
 - audit manifests that include rendered report artifacts;
 - deterministic run IDs, duplicate-run rejection, and cleanup after failed transactional tool steps;
 - neutral-only evidence staying insufficient instead of becoming supporting evidence.
+- report failure products for stale, missing, malformed, unsupported, ambiguous, contradictory, and
+  failed-provider inputs.
 
 ### Live API And Live Scraping
 

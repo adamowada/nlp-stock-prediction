@@ -702,6 +702,7 @@ def _render_audit_manifest_details(manifest: AuditManifest) -> list[str]:
         f"- Manifest schema: `{_markdown_code(manifest.schema_version)}`",
         f"- Created at: {manifest.created_at.isoformat()}",
         f"- Provider run IDs: {_format_code_list(manifest.provider_run_ids)}",
+        f"- Provider health: {_format_audit_provider_health(manifest.provider_health)}",
         f"- Model versions: {_format_metadata(manifest.model_versions)}",
         f"- Prompt versions: {_format_metadata(manifest.prompt_versions)}",
         f"- Config hash: {_format_optional_code(manifest.config_hash)}",
@@ -709,6 +710,16 @@ def _render_audit_manifest_details(manifest: AuditManifest) -> list[str]:
         f"- Prediction trace IDs: {_format_code_list(manifest.prediction_trace_ids)}",
     ]
     return lines
+
+
+def _format_audit_provider_health(provider_health: tuple[ProviderHealth, ...]) -> str:
+    if not provider_health:
+        return "none"
+    return "; ".join(
+        f"`{_markdown_code(health.provider_name)}` {health.status.value} "
+        f"warnings={len(health.warnings)}"
+        for health in provider_health
+    )
 
 
 def _render_audit_artifact(artifact: AuditArtifact) -> list[str]:

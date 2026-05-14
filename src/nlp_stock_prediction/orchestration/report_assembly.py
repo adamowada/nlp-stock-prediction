@@ -92,6 +92,8 @@ class ReportAssemblyState:
     candidate_evidence_ids: dict[str, tuple[str, ...]]
     artifact_candidate_ids: dict[str, tuple[str, ...]]
     evidence_candidate_ids: dict[str, tuple[str, ...]]
+    missing_artifact_ids: tuple[str, ...]
+    missing_evidence_ids: tuple[str, ...]
 
     @property
     def excluded_candidate_ids(self) -> tuple[str, ...]:
@@ -123,6 +125,8 @@ class _AssemblyBuilder:
     candidate_evidence_ids: dict[str, tuple[str, ...]] = field(default_factory=dict)
     artifact_candidate_ids: dict[str, tuple[str, ...]] = field(default_factory=dict)
     evidence_candidate_ids: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    missing_artifact_ids: list[str] = field(default_factory=list)
+    missing_evidence_ids: list[str] = field(default_factory=list)
 
     def build(self) -> ReportAssemblyState:
         artifacts_by_id = {record.artifact_id: record for record in self.artifact_records}
@@ -154,6 +158,7 @@ class _AssemblyBuilder:
         )
         for artifact_id in missing_required_artifacts:
             validation_by_artifact_id[artifact_id] = (f"Missing required artifact {artifact_id}.",)
+            self.missing_artifact_ids.append(artifact_id)
 
         usable_candidates: list[PredictionCandidateRecord] = []
         for candidate in self.candidate_records:
@@ -187,6 +192,8 @@ class _AssemblyBuilder:
             candidate_evidence_ids=dict(self.candidate_evidence_ids),
             artifact_candidate_ids=dict(self.artifact_candidate_ids),
             evidence_candidate_ids=dict(self.evidence_candidate_ids),
+            missing_artifact_ids=tuple(dict.fromkeys(self.missing_artifact_ids)),
+            missing_evidence_ids=tuple(dict.fromkeys(self.missing_evidence_ids)),
         )
 
     def _candidate_requirements(
@@ -289,9 +296,11 @@ class _AssemblyBuilder:
         for evidence_id in requirements.evidence_ids:
             if evidence_id not in evidence_by_id:
                 reasons.append(f"Missing required evidence {evidence_id}.")
+                self.missing_evidence_ids.append(evidence_id)
         for artifact_id in requirements.artifact_ids:
             if artifact_id not in artifacts_by_id:
                 reasons.append(f"Missing required artifact {artifact_id}.")
+                self.missing_artifact_ids.append(artifact_id)
                 continue
             artifact_warnings = validation_by_artifact_id.get(artifact_id, ())
             if artifact_warnings:
