@@ -1,5 +1,15 @@
 """Prediction-quality evaluation tools."""
 
+from nlp_stock_prediction.evaluation.ablation import (
+    PHASE6_ABLATION_TOOL_NAME,
+    PHASE6_ABLATION_TOOL_VERSION,
+    SignalFamilyAblationArtifactPayload,
+    SignalFamilyAblationArtifacts,
+    SignalFamilyAblationInput,
+    compute_signal_family_ablations,
+    signal_family_ablation_inputs_from_outcome_artifacts,
+    write_signal_family_ablation_artifact,
+)
 from nlp_stock_prediction.evaluation.outcomes import (
     PHASE6_OUTCOME_TOOL_NAME,
     PHASE6_OUTCOME_TOOL_VERSION,
@@ -16,14 +26,22 @@ from nlp_stock_prediction.evaluation.prediction import (
 )
 
 __all__ = [
+    "PHASE6_ABLATION_TOOL_NAME",
+    "PHASE6_ABLATION_TOOL_VERSION",
     "PHASE6_OUTCOME_TOOL_NAME",
     "PHASE6_OUTCOME_TOOL_VERSION",
     "PointInTimeOutcomeEvaluationArtifacts",
+    "SignalFamilyAblationArtifactPayload",
+    "SignalFamilyAblationArtifacts",
+    "SignalFamilyAblationInput",
     "attach_evaluation_metadata",
     "build_prediction_evaluation_target",
     "build_prediction_outcome",
+    "compute_signal_family_ablations",
     "evaluate_prediction_candidate",
     "evaluate_prediction_outcome",
+    "signal_family_ablation_inputs_from_outcome_artifacts",
     "write_point_in_time_outcome_evaluation_artifacts",
     "write_prediction_evaluation_artifact",
+    "write_signal_family_ablation_artifact",
 ]

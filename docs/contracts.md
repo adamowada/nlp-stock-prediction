@@ -213,6 +213,14 @@ status, quality score when resolved, optional baseline comparison, evidence, art
 limitations. Resolved outcome evaluations require an observed outcome plus evidence or artifacts;
 pending, stale, or not-evaluable evaluations must explain their limitations.
 
+Phase 6 calibration can now persist signal-family ablations. A `signal_family_ablation` audit
+artifact records the point-in-time cohort, source target/outcome-evaluation IDs, source signal
+artifacts, and one `SignalFamilyAblation` per requested family. Each ablation compares resolved
+prediction quality for candidates with that signal family against the cohort without it, while
+unresolved cohorts remain metric-free and carry explicit limitations. The same run is indexed in
+SQLite through `calibration_runs` and `calibration_slices` so downstream calibration summaries can
+reuse the persisted attribution data.
+
 ## Planning State
 
 Active plans belong in the tracked planning SQLite database. Planning contracts include:
