@@ -43,6 +43,10 @@ from nlp_stock_prediction.orchestration.phase4_fundamentals import (
     PHASE4_FUNDAMENTALS_TOOL_NAME,
     run_phase4_fundamentals_tool,
 )
+from nlp_stock_prediction.orchestration.phase4_live_providers import (
+    Phase4LiveProviderFactory,
+    Phase4LiveProviderFactoryProtocol,
+)
 from nlp_stock_prediction.orchestration.phase4_market_data import (
     PHASE4_MARKET_DATA_TOOL_NAME,
     Phase4MarketDataTool,
@@ -70,6 +74,7 @@ from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
     Phase4UniverseDiscoveryTool,
 )
 from nlp_stock_prediction.orchestration.report_data_modes import (
+    LIVE_REPORT_DATA_MODE,
     OFFLINE_FIXTURE_REPORT_DATA_MODE,
     REPORT_DATA_MODE_KEY,
     ReportDataMode,
@@ -317,7 +322,7 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
             Phase4ToolMetadata(
                 tool_id=PHASE4_UNIVERSE_TOOL_ID,
                 tool_name=PHASE4_UNIVERSE_TOOL_NAME,
-                tool_version="phase4.fixture.v1",
+                tool_version="phase4.universe.v1",
                 stage="discover",
                 description=(
                     "Resolve the requested instrument universe and write instrument-universe "
@@ -325,17 +330,18 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                 ),
                 artifact_kinds=("instrument_universe",),
                 offline_capable=True,
-                live_capable=False,
+                live_capable=True,
             ),
             Phase4ToolMetadata(
                 tool_id=PHASE4_MARKET_DATA_TOOL_ID,
                 tool_name=PHASE4_MARKET_DATA_TOOL_NAME,
                 tool_version="phase4.market-data.v1",
                 stage="collect",
-                description="Fetch or fixture daily market data and preserve provider provenance.",
+                description="Fetch daily market data and preserve provider provenance.",
                 artifact_kinds=("market_data",),
                 offline_capable=True,
-                live_capable=False,
+                live_capable=True,
+                requires_network=True,
                 dependencies=(PHASE4_UNIVERSE_TOOL_ID,),
             ),
             Phase4ToolMetadata(
@@ -348,6 +354,7 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                     "TimesFM remains sidecar context only."
                 ),
                 artifact_kinds=("technical_package",),
+                live_capable=True,
                 dependencies=(PHASE4_MARKET_DATA_TOOL_ID,),
             ),
             Phase4ToolMetadata(
@@ -357,6 +364,8 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                 stage="collect",
                 description="Normalize social evidence and preserve source/provider provenance.",
                 artifact_kinds=("normalized_evidence",),
+                live_capable=True,
+                requires_network=True,
                 dependencies=(PHASE4_UNIVERSE_TOOL_ID,),
             ),
             Phase4ToolMetadata(
@@ -366,6 +375,8 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                 stage="collect",
                 description="Normalize news/catalyst evidence with derived labels.",
                 artifact_kinds=("normalized_evidence",),
+                live_capable=True,
+                requires_network=True,
                 dependencies=(PHASE4_UNIVERSE_TOOL_ID,),
             ),
             Phase4ToolMetadata(
@@ -375,6 +386,8 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                 stage="collect",
                 description="Fetch fundamentals evidence and write analysis context artifacts.",
                 artifact_kinds=("analysis_context",),
+                live_capable=True,
+                requires_network=True,
                 dependencies=(PHASE4_UNIVERSE_TOOL_ID,),
             ),
             Phase4ToolMetadata(
@@ -384,6 +397,8 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                 stage="analyze",
                 description="Build sector and macro baseline context with provenance.",
                 artifact_kinds=("analysis_context",),
+                live_capable=True,
+                requires_network=True,
                 dependencies=(PHASE4_FUNDAMENTALS_TOOL_ID,),
             ),
             Phase4ToolMetadata(
@@ -396,6 +411,7 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                     "Phase 4 evidence."
                 ),
                 artifact_kinds=("prediction_input",),
+                live_capable=True,
                 dependencies=(
                     PHASE4_SOCIAL_TOOL_ID,
                     PHASE4_NEWS_TOOL_ID,
@@ -410,6 +426,7 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                 stage="evaluate",
                 description="Evaluate stored prediction candidates as prediction-quality records.",
                 artifact_kinds=("prediction_evaluation",),
+                live_capable=True,
                 dependencies=(
                     PHASE4_CANDIDATE_SYNTHESIS_TOOL_ID,
                     PHASE4_TECHNICAL_TOOL_ID,
@@ -429,6 +446,7 @@ def build_phase4_tool_registry() -> Phase4ToolRegistry:
                     "and artifacts."
                 ),
                 artifact_kinds=("markdown_report", "json_report", "audit_manifest"),
+                live_capable=True,
                 dependencies=(PHASE4_PREDICTION_EVALUATION_TOOL_ID,),
                 metadata={"final_only": True},
             ),
@@ -566,8 +584,13 @@ class Phase4Service:
     repo_root: Path = Path(".")
     database_path: Path = Path("data/prediction-research.sqlite3")
     fixture_root: Path | None = None
+    provider_cache_root: Path | None = None
     extra_write_roots: tuple[Path, ...] = ()
     registry: Phase4ToolRegistry = field(default_factory=build_phase4_tool_registry)
+    live_provider_factory: Phase4LiveProviderFactoryProtocol | None = field(
+        default=None,
+        compare=False,
+    )
     _store: SQLiteStore = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -579,9 +602,20 @@ class Phase4Service:
         )
         object.__setattr__(
             self,
+            "provider_cache_root",
+            None if self.provider_cache_root is None else self.provider_cache_root.resolve(),
+        )
+        object.__setattr__(
+            self,
             "extra_write_roots",
             tuple(path.resolve() for path in self.extra_write_roots),
         )
+        if self.live_provider_factory is None:
+            object.__setattr__(
+                self,
+                "live_provider_factory",
+                Phase4LiveProviderFactory(cache_root=self.provider_cache_root),
+            )
         object.__setattr__(
             self,
             "_store",
@@ -599,6 +633,12 @@ class Phase4Service:
     @property
     def fixtures(self) -> Phase4FixtureProviderFactory:
         return Phase4FixtureProviderFactory(cast(Path, self.fixture_root))
+
+    @property
+    def live_providers(self) -> Phase4LiveProviderFactoryProtocol:
+        if self.live_provider_factory is None:
+            raise RuntimeError("live provider factory was not initialized")
+        return self.live_provider_factory
 
     def start_research_run(
         self,
@@ -661,7 +701,17 @@ class Phase4Service:
             as_of=context.generated_at,
             queries=(InstrumentQuery(query=normalized_symbol),),
         )
-        result = Phase4UniverseDiscoveryTool().run(
+        universe_provider = (
+            self.live_providers.universe_provider()
+            if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
+            else None
+        )
+        universe_tool = (
+            Phase4UniverseDiscoveryTool(provider=universe_provider)
+            if universe_provider is not None
+            else Phase4UniverseDiscoveryTool()
+        )
+        result = universe_tool.run(
             request=request,
             context=context,
             store=self.store,
@@ -682,12 +732,23 @@ class Phase4Service:
         normalized_symbol = self._validated_symbol(run, symbol)
         run_date = run_date_from_run(run)
         paths = self._paths(run_date, str(run.metadata["output_dir"]), symbol=normalized_symbol)
-        fixture_path = self.fixtures.market_html_path(normalized_symbol)
-        provider = CandlechartsMarketDataProvider(
-            html_path=fixture_path,
-            now=utc_now,
-            allow_live=False,
-        )
+        report_data_mode = report_data_mode_from_run(run)
+        fixture_path: Path | None = None
+        source_url: str | Path | None = None
+        options = report_data_mode_metadata_from_run(run)
+        if report_data_mode == LIVE_REPORT_DATA_MODE:
+            provider = self.live_providers.market_data_provider(normalized_symbol)
+            source_url = self.live_providers.market_data_source_query_url(normalized_symbol)
+            if source_url is not None:
+                options = {**options, "source_query_url": source_url}
+        else:
+            fixture_path = self.fixtures.market_html_path(normalized_symbol)
+            source_url = fixture_path
+            provider = CandlechartsMarketDataProvider(
+                html_path=fixture_path,
+                now=utc_now,
+                allow_live=False,
+            )
         result = Phase4MarketDataTool(
             store=self.store,
             repo_root=self.repo_root,
@@ -699,8 +760,8 @@ class Phase4Service:
             run_date=run_date,
             symbol=normalized_symbol,
             instrument_id=self._instrument_id(normalized_symbol),
-            source_url=fixture_path,
-            options=report_data_mode_metadata_from_run(run),
+            source_url=source_url,
+            options=options,
         )
         return {
             "run_id": run_id,
@@ -754,8 +815,16 @@ class Phase4Service:
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
-            reddit_provider=self.fixtures.reddit_provider(),
-            x_provider=self.fixtures.x_provider(normalized_symbol),
+            reddit_provider=(
+                self.live_providers.reddit_provider()
+                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
+                else self.fixtures.reddit_provider()
+            ),
+            x_provider=(
+                self.live_providers.x_provider(normalized_symbol)
+                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
+                else self.fixtures.x_provider(normalized_symbol)
+            ),
             instrument_id=self._instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
@@ -771,7 +840,11 @@ class Phase4Service:
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
-            providers=self.fixtures.news_providers(normalized_symbol),
+            providers=(
+                self.live_providers.news_providers(normalized_symbol)
+                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
+                else self.fixtures.news_providers(normalized_symbol)
+            ),
             instrument_id=self._instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
@@ -787,7 +860,11 @@ class Phase4Service:
             symbol=normalized_symbol,
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
-            providers=self.fixtures.fundamentals_providers(normalized_symbol),
+            providers=(
+                self.live_providers.fundamentals_providers(normalized_symbol)
+                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
+                else self.fixtures.fundamentals_providers(normalized_symbol)
+            ),
             instrument_id=self._instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
@@ -804,6 +881,11 @@ class Phase4Service:
             run_date=run_date_from_run(run),
             generated_at=utc_now(),
             target_snapshot=FundamentalsSnapshot(ticker=normalized_symbol),
+            macro_providers=(
+                self.live_providers.macro_providers(normalized_symbol)
+                if report_data_mode_from_run(run) == LIVE_REPORT_DATA_MODE
+                else ()
+            ),
             instrument_id=self._instrument_id(normalized_symbol),
         )
         return _phase4_tool_result_payload(result)
@@ -884,12 +966,60 @@ class Phase4Service:
         report = self.render_prediction_report(run_id=run_id, symbol=normalized_symbol)
         return {"run_id": run_id, "symbol": normalized_symbol, "report": report}
 
+    def run_live_phase4_flow(self, *, run_date: str, output_dir: str, symbol: str) -> JsonObject:
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            raise ValueError("symbol must be non-empty")
+        run_id = phase4_run_id(date.fromisoformat(run_date), normalized_symbol)
+        existing_run = self.store.get_research_run(run_id)
+        if existing_run is None:
+            started = self.start_research_run(
+                run_date=run_date,
+                output_dir=output_dir,
+                symbol=normalized_symbol,
+                objective=f"Live provider prediction research for {normalized_symbol}",
+                report_data_mode=LIVE_REPORT_DATA_MODE,
+            )
+            run_id = str(started["run_id"])
+            normalized_symbol = str(started["symbol"])
+        else:
+            existing_mode = report_data_mode_from_run(existing_run)
+            if existing_mode != LIVE_REPORT_DATA_MODE:
+                raise ValueError("live Phase 4 flow requires a live report_data_mode")
+        self.phase4_universe_discovery(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_market_data(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_technical_package(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_social_evidence(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_news_catalyst(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_fundamentals(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_sector_macro(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_candidate_synthesis(run_id=run_id, symbol=normalized_symbol)
+        self.phase4_prediction_evaluation(run_id=run_id, symbol=normalized_symbol)
+        report = self.render_prediction_report(run_id=run_id, symbol=normalized_symbol)
+        return {"run_id": run_id, "symbol": normalized_symbol, "report": report}
+
     def phase4_candidate_synthesis(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)
         normalized_symbol = self._validated_symbol(run, symbol)
         evidence_count = len(self.store.list_evidence_for_run(run_id))
+        report_data_mode = report_data_mode_from_run(run)
 
         def action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
+            if report_data_mode == LIVE_REPORT_DATA_MODE and evidence_count == 0:
+                message = (
+                    "No attributable live provider evidence was available; report rendering "
+                    "will emit structured insufficient evidence."
+                )
+                return Phase4ToolRunOutcome(
+                    status="empty",
+                    payload={
+                        "run_id": run_id,
+                        "candidate_count": 0,
+                        "warnings": [message],
+                    },
+                    warnings=(message,),
+                    metadata={"candidate_count": 0, "live_no_evidence": True},
+                )
             result = self._synthesize_phase4_prediction_candidate(
                 run_id=run_id,
                 symbol=normalized_symbol,

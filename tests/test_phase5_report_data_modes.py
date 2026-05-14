@@ -7,17 +7,42 @@ from typing import Any, cast
 
 import pytest
 
-from nlp_stock_prediction.contracts import RunConfig
+from nlp_stock_prediction.cli import build_parser, build_research_config
+from nlp_stock_prediction.contracts import (
+    EvidenceRequest,
+    FundamentalsProvider,
+    MacroProvider,
+    MarketDataRequest,
+    MarketSnapshot,
+    NewsProvider,
+    ProviderHealth,
+    ProviderResult,
+    RedditProvider,
+    RunConfig,
+    SourceEvidence,
+    XProvider,
+)
 from nlp_stock_prediction.orchestration import (
     LIVE_REPORT_DATA_MODE,
     OFFLINE_FIXTURE_REPORT_DATA_MODE,
     Phase4Service,
     Phase4ToolExecutionError,
 )
+from nlp_stock_prediction.orchestration.phase4_live_providers import (
+    Phase4LiveProviderFactoryProtocol,
+)
+from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
+    Phase4LiveSymbolUniverseProvider,
+    UniverseDiscoveryProvider,
+)
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    find_non_live_report_input_violations,
+)
 from nlp_stock_prediction.pipeline import (
     LIVE_ORCHESTRATION_DISABLED_MESSAGE,
     generate_daily_report,
 )
+from nlp_stock_prediction.providers._base import missing_credentials_result, no_data_result
 from nlp_stock_prediction.storage import ToolRunRecord
 
 RUN_DATE = date(2026, 5, 13)
@@ -36,6 +61,29 @@ def test_pipeline_refuses_live_config_without_fixture_or_dummy_fallback(tmp_path
         )
 
     assert "fixture or dummy fallback" in LIVE_ORCHESTRATION_DISABLED_MESSAGE
+
+
+@pytest.mark.unit
+def test_cli_research_live_mode_is_explicit_and_machine_marked(tmp_path: Path) -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "research",
+            "--date",
+            RUN_DATE.isoformat(),
+            "--output",
+            str(tmp_path / "reports"),
+            "--symbol",
+            "TSLA",
+            "--live",
+        ]
+    )
+
+    config = build_research_config(args)
+
+    assert config.offline is False
+    assert config.source_mode == "live"
+    assert config.live_providers is True
 
 
 @pytest.mark.integration
@@ -114,3 +162,121 @@ def test_live_phase4_report_rejects_fixture_or_dummy_leakage(tmp_path: Path) -> 
     assert "live report assembly cannot use non-live report inputs" in str(
         exc_info.value.original_error
     )
+
+
+@pytest.mark.integration
+def test_live_phase4_flow_uses_live_providers_and_degrades_to_insufficient_evidence(
+    tmp_path: Path,
+) -> None:
+    service = Phase4Service(
+        repo_root=tmp_path,
+        live_provider_factory=_UnitLiveProviderFactory(),
+    )
+
+    result = service.run_live_phase4_flow(
+        run_date=RUN_DATE.isoformat(),
+        output_dir="reports/live-no-evidence",
+        symbol="TSLA",
+    )
+    run_id = str(result["run_id"])
+    run = service.store.get_research_run(run_id)
+    assert run is not None
+
+    violations = find_non_live_report_input_violations(store=service.store, run=run)
+    assert violations == ()
+
+    report_payload = cast(dict[str, object], result["report"])
+    json_path = Path(str(report_payload["json_path"]))
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert payload["command_args"]["report_data_mode"] == LIVE_REPORT_DATA_MODE
+    assert payload["prediction_candidates"] == []
+    assert payload["insufficient_evidence"]["provider_names"][0] == "live-providers"
+    assert "tool:phase4_news_catalyst" in payload["insufficient_evidence"]["provider_names"]
+    assert any(
+        health["provider_name"] == "tool:phase4_news_catalyst" and health["status"] == "partial"
+        for health in payload["provider_health"]
+    )
+    assert any(
+        run.tool_name == "phase4_prediction_candidate_synthesis" and run.status == "empty"
+        for run in service.store.list_tool_runs_for_run(run_id)
+    )
+
+
+class _UnitLiveProviderFactory(Phase4LiveProviderFactoryProtocol):
+    def universe_provider(self) -> UniverseDiscoveryProvider:
+        return Phase4LiveSymbolUniverseProvider()
+
+    def market_data_provider(self, symbol: str) -> _UnitLiveMarketDataProvider:
+        del symbol
+        return _UnitLiveMarketDataProvider()
+
+    def market_data_source_query_url(self, symbol: str) -> str:
+        return f"https://live.example.invalid/market-data?symbol={symbol.strip().upper()}"
+
+    def reddit_provider(self) -> RedditProvider | None:
+        return None
+
+    def x_provider(self, symbol: str) -> XProvider | None:
+        del symbol
+        return None
+
+    def news_providers(self, symbol: str) -> tuple[NewsProvider, ...]:
+        del symbol
+        return (_UnitLiveMissingNewsProvider(),)
+
+    def fundamentals_providers(self, symbol: str) -> tuple[FundamentalsProvider, ...]:
+        del symbol
+        return ()
+
+    def macro_providers(self, symbol: str) -> tuple[MacroProvider, ...]:
+        del symbol
+        return ()
+
+
+class _UnitLiveMarketDataProvider:
+    provider_name = "unit-live-market-data"
+
+    def fetch_daily_candles(
+        self,
+        request: MarketDataRequest,
+    ) -> ProviderResult[MarketSnapshot]:
+        return no_data_result(
+            provider_name=self.provider_name,
+            request=request,
+            fetched_at=NOW,
+            message="Unit live market provider returned no bars.",
+        )
+
+    def health(self) -> ProviderHealth:
+        return self.fetch_daily_candles(
+            MarketDataRequest(
+                request_id="unit-live-market-health",
+                run_date=RUN_DATE,
+                tickers=("TSLA",),
+            )
+        ).health
+
+
+class _UnitLiveMissingNewsProvider:
+    provider_name = "unit-live-news"
+
+    def fetch_articles(
+        self,
+        request: EvidenceRequest,
+    ) -> ProviderResult[tuple[SourceEvidence, ...]]:
+        return missing_credentials_result(
+            provider_name=self.provider_name,
+            request=request,
+            fetched_at=NOW,
+            credential_name="unit live news API key",
+        )
+
+    def health(self) -> ProviderHealth:
+        return self.fetch_articles(
+            EvidenceRequest(
+                request_id="unit-live-news-health",
+                run_date=RUN_DATE,
+                tickers=("TSLA",),
+            )
+        ).health

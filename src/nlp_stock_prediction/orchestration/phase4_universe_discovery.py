@@ -39,8 +39,10 @@ from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 PHASE4_UNIVERSE_SCHEMA_VERSION = "phase4.instrument-universe.v1"
 PHASE4_FIXTURE_PROVIDER = "phase4-fixture-directory"
+PHASE4_LIVE_SYMBOL_PROVIDER = "live-symbol-directory"
 PHASE4_TOOL_NAME = "phase4_universe_discovery"
 PHASE4_TOOL_VERSION = "phase4.fixture.v1"
+PHASE4_LIVE_TOOL_VERSION = "phase4.live.v1"
 
 
 @dataclass(frozen=True)
@@ -134,7 +136,7 @@ class Phase4UniverseDiscoveryTool:
             tool_run_id=tool_run_id,
             run_id=context.run_id,
             tool_name=PHASE4_TOOL_NAME,
-            tool_version=PHASE4_TOOL_VERSION,
+            tool_version=self.provider.provider_version,
             started_at=retrieved_at,
             inputs=inputs,
         ):
@@ -179,7 +181,7 @@ class Phase4UniverseDiscoveryTool:
                 tool_run_id=tool_run_id,
                 run_id=context.run_id,
                 tool_name=PHASE4_TOOL_NAME,
-                tool_version=PHASE4_TOOL_VERSION,
+                tool_version=self.provider.provider_version,
                 status="partial" if warnings else "successful",
                 started_at=retrieved_at,
                 completed_at=retrieved_at,
@@ -291,6 +293,77 @@ class Phase4FixtureUniverseProvider:
             instruments=_dedupe_instruments(tuple(instruments)),
             source_queries=tuple(source_queries),
             warnings=(),
+        )
+
+
+@dataclass(frozen=True)
+class Phase4LiveSymbolUniverseProvider:
+    """Create live-mode instrument identities from explicit user symbol requests."""
+
+    provider_name: str = PHASE4_LIVE_SYMBOL_PROVIDER
+    provider_version: str = PHASE4_LIVE_TOOL_VERSION
+
+    def discover(
+        self,
+        request: InstrumentUniverseRequest,
+        *,
+        retrieved_at: datetime,
+    ) -> UniverseDiscoveryProviderResult:
+        validated = InstrumentUniverseRequest.model_validate(request)
+        instruments: list[Instrument] = []
+        source_queries: list[UniverseDiscoverySourceQuery] = []
+        warnings: list[str] = []
+
+        for index, target in enumerate(_iter_request_targets(validated)):
+            query = target.query
+            if query.asset_class == AssetClass.UNKNOWN:
+                source_queries.append(
+                    UniverseDiscoverySourceQuery(
+                        provider=self.provider_name,
+                        query=query.query,
+                        metadata={
+                            "provider_version": self.provider_version,
+                            "request_id": validated.request_id,
+                            "request_query_index": index,
+                            "request_query": cast(JsonObject, query.model_dump(mode="json")),
+                            "requested_instrument_id": target.requested_instrument_id,
+                            "matched_instrument_ids": [],
+                            "resolution_basis": "unsupported_unknown_asset_class",
+                        },
+                    )
+                )
+                warnings.append(
+                    f"Live instrument query {query.query!r} used unknown asset_class; "
+                    "no instrument identity was materialized."
+                )
+                continue
+
+            instrument = _live_requested_instrument(
+                query=query,
+                retrieved_at=retrieved_at,
+                provider_name=self.provider_name,
+            )
+            instruments.append(instrument)
+            source_queries.append(
+                UniverseDiscoverySourceQuery(
+                    provider=self.provider_name,
+                    query=query.query,
+                    metadata={
+                        "provider_version": self.provider_version,
+                        "request_id": validated.request_id,
+                        "request_query_index": index,
+                        "request_query": cast(JsonObject, query.model_dump(mode="json")),
+                        "requested_instrument_id": target.requested_instrument_id,
+                        "matched_instrument_ids": [instrument.instrument_id],
+                        "resolution_basis": "explicit_live_symbol_request",
+                    },
+                )
+            )
+
+        return UniverseDiscoveryProviderResult(
+            instruments=_dedupe_instruments(tuple(instruments)),
+            source_queries=tuple(source_queries),
+            warnings=tuple(dict.fromkeys(warnings)),
         )
 
 
@@ -693,6 +766,81 @@ def _fixture_instrument_url(provider_identifier: str) -> str:
     )
 
 
+def _live_requested_instrument(
+    *,
+    query: InstrumentQuery,
+    retrieved_at: datetime,
+    provider_name: str,
+) -> Instrument:
+    symbol = query.provider_identifier or query.query
+    normalized_symbol = symbol.strip().upper()
+    asset_class = _live_asset_class(query)
+    instrument_id = f"instrument:live:{asset_class.value}:{_slug(normalized_symbol)}"
+    return Instrument(
+        instrument_id=instrument_id,
+        symbol=normalized_symbol,
+        display_name=f"{normalized_symbol} live research symbol",
+        asset_class=asset_class,
+        venue=query.venue,
+        aliases=query.aliases,
+        provider_ids=(
+            ProviderInstrumentId(
+                provider=provider_name,
+                identifier=normalized_symbol,
+                namespace=query.provider_namespace or "symbol",
+                metadata={
+                    "provider_version": PHASE4_LIVE_TOOL_VERSION,
+                    "resolution_basis": "explicit_live_symbol_request",
+                },
+            ),
+        ),
+        tradability_evidence=(
+            TradabilityEvidence(
+                provider=provider_name,
+                status=TradabilityStatus.UNKNOWN,
+                retrieved_at=retrieved_at,
+                raw_identifier=f"{normalized_symbol}:live-symbol-request",
+                notes=(
+                    "Symbol was explicitly requested for live-provider research; this records "
+                    "identity only and does not assert tradability."
+                ),
+                metadata={"resolution_basis": "explicit_live_symbol_request"},
+            ),
+        ),
+        data_availability=(
+            InstrumentDataAvailability(
+                provider=provider_name,
+                data_type="live_provider_research",
+                status=TradabilityStatus.UNKNOWN,
+                checked_at=retrieved_at,
+                provider_identifier=normalized_symbol,
+                notes="Availability depends on live providers, credentials, and upstream status.",
+                metadata={"resolution_basis": "explicit_live_symbol_request"},
+            ),
+        ),
+        metadata={
+            "phase": "phase4",
+            "live_provider_symbol": True,
+            "resolution_basis": "explicit_live_symbol_request",
+        },
+    )
+
+
+def _live_asset_class(query: InstrumentQuery) -> AssetClass:
+    if query.asset_class is not None and query.asset_class != AssetClass.UNKNOWN:
+        return query.asset_class
+    normalized = query.query.strip().upper()
+    if normalized in {"SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "ARKK", "XLK", "XLY"}:
+        return AssetClass.ETF
+    if any(token in normalized for token in ("BTC", "ETH", "SOL", "USDT", "USDC")) and (
+        "/" in normalized or "-" in normalized or ":" in normalized
+    ):
+        return AssetClass.CRYPTO
+    if normalized.endswith("USD") and len(normalized) == 6:
+        return AssetClass.CURRENCY
+    return AssetClass.STOCK
+
+
 def _stable_digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
@@ -709,10 +857,13 @@ def _normalize(value: str) -> str:
 
 __all__ = [
     "PHASE4_FIXTURE_PROVIDER",
+    "PHASE4_LIVE_SYMBOL_PROVIDER",
+    "PHASE4_LIVE_TOOL_VERSION",
     "PHASE4_TOOL_NAME",
     "PHASE4_TOOL_VERSION",
     "PHASE4_UNIVERSE_SCHEMA_VERSION",
     "Phase4FixtureUniverseProvider",
+    "Phase4LiveSymbolUniverseProvider",
     "Phase4UniverseDiscoveryTool",
     "Phase4UniverseDiscoveryToolResult",
     "UniverseDiscoveryProvider",

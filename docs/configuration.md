@@ -26,6 +26,12 @@ Generate the deterministic offline report:
 python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --offline
 ```
 
+Generate a guarded live-provider report:
+
+```sh
+python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --live
+```
+
 Reports are written under `<output>/<YYYY-MM-DD>/<symbol-slug>/`.
 
 ## Report Data Modes
@@ -35,18 +41,20 @@ Report assembly records a machine-checkable `report_data_mode` in run metadata, 
 
 Implemented modes:
 
-- `offline_fixture`: the current `research --offline` Phase 4 path. It uses deterministic fixture
+- `offline_fixture`: the `research --offline` Phase 4 path. It uses deterministic fixture
   providers and is allowed only when the caller explicitly requests offline mode.
 - `dummy_smoke`: the legacy deterministic dummy orchestration path. It is structural validation only
   and refuses non-offline configs.
 - `codex_smoke`: the optional Codex smoke path that may include live Codex search evidence but still
   uses smoke-only structural tools.
-- `live`: reserved for real live-provider report assembly. Live report assembly refuses stored
-  fixture, dummy, or smoke inputs. If a live run has no admissible stored evidence or candidates, the
-  report renders structured insufficient evidence rather than falling back to fixtures or dummy data.
+- `live`: the guarded `research --live` Phase 4 path. It uses live provider adapters and public
+  source adapters only, records missing credentials or upstream failures as tool/provider warnings,
+  and refuses stored fixture, dummy, or smoke inputs. If a live run has no admissible stored evidence
+  or candidates, the report renders structured insufficient evidence rather than falling back to
+  fixtures or dummy data.
 
-The public `research` CLI remains offline-only today. Direct non-offline pipeline calls fail with a
-visible error instead of silently routing to fixture or dummy data.
+Direct non-offline pipeline calls still fail unless `source_mode="live"` or `live_providers=True` is
+set, so callers cannot accidentally route live requests to fixture or dummy data.
 
 ## Report Assembly Source Of Truth
 
@@ -181,9 +189,12 @@ Expected variable families:
 ```text
 OPENAI_API_KEY
 NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE
+NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY
+NLP_STOCK_PREDICTION_FRED_API_KEY
 NLP_STOCK_PREDICTION_X_BEARER_TOKEN
 NLP_STOCK_PREDICTION_LIVE_USER_AGENT
 NLP_STOCK_PREDICTION_SEC_USER_AGENT
+NLP_STOCK_PREDICTION_SEC_CIK_MAP
 NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT
 NEWS_* provider keys
 MARKET_DATA_* provider keys
@@ -192,7 +203,10 @@ NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL
 NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT
 ```
 
-Provider-specific names should be documented when a provider is implemented.
+`NLP_STOCK_PREDICTION_SEC_CIK_MAP` accepts comma-separated `SYMBOL=CIK` entries for SEC EDGAR
+lookups. The live path also honors `ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`,
+`FRED_API_KEY`, and `X_BEARER_TOKEN` as fallback names. Missing optional credentials are surfaced in
+the run graph and final report instead of being replaced with fixture data.
 
 ## Internet Search
 
@@ -212,9 +226,10 @@ regular reports.
 
 ## Instrument Universe
 
-The implemented Phase 3 universe layer is contract and storage infrastructure. It does not introduce
-a new CLI command or a live universe provider. The current command surface remains the offline
-`research` command and the legacy-named optional Phase 4 Codex smoke runner above.
+The implemented Phase 3 universe layer is contract and storage infrastructure. The live `research`
+path materializes requested symbols as live-mode instrument identities, then relies on provider
+artifacts and warnings to establish actual data availability. The legacy-named optional Phase 4
+Codex smoke runner remains separate from the live-provider CLI path.
 
 The target universe is retail-accessible instruments, including:
 

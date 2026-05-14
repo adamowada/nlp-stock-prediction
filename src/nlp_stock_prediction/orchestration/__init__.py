@@ -20,6 +20,10 @@ from nlp_stock_prediction.orchestration.phase4_fundamentals import (
     Phase4FundamentalsTool,
     run_phase4_fundamentals_tool,
 )
+from nlp_stock_prediction.orchestration.phase4_live_providers import (
+    Phase4LiveProviderFactory,
+    Phase4LiveProviderFactoryProtocol,
+)
 from nlp_stock_prediction.orchestration.phase4_market_data import (
     MarketDataToolResult,
     Phase4MarketDataArtifact,
@@ -104,6 +108,8 @@ __all__ = [
     "OrchestrationTool",
     "Phase2McpService",
     "Phase4FundamentalsTool",
+    "Phase4LiveProviderFactory",
+    "Phase4LiveProviderFactoryProtocol",
     "Phase4MarketDataArtifact",
     "Phase4MarketDataTool",
     "Phase4NewsCatalystTool",

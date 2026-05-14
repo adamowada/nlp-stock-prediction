@@ -119,7 +119,7 @@ class RunConfig(ContractModel):
     fixture_dir: Path | None = None
     cache_dir: Path | None = None
     offline: bool = False
-    source_mode: Literal["disabled", "offline"] = "disabled"
+    source_mode: Literal["disabled", "offline", "live"] = "disabled"
     live_providers: bool = False
 
 
