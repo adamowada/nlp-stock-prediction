@@ -20,6 +20,11 @@ from nlp_stock_prediction.orchestration.phase4_fundamentals import (
     Phase4FundamentalsTool,
     run_phase4_fundamentals_tool,
 )
+from nlp_stock_prediction.orchestration.phase4_market_data import (
+    MarketDataToolResult,
+    Phase4MarketDataArtifact,
+    Phase4MarketDataTool,
+)
 from nlp_stock_prediction.orchestration.phase4_news import (
     Phase4NewsCatalystTool,
     run_phase4_news_catalyst_tool,
@@ -44,6 +49,11 @@ from nlp_stock_prediction.orchestration.phase4_social import (
     Phase4SocialEvidenceTool,
     run_phase4_social_evidence_tool,
 )
+from nlp_stock_prediction.orchestration.phase4_technical_package import (
+    Phase4TechnicalPackageArtifact,
+    Phase4TechnicalPackageTool,
+    TechnicalPackageToolResult,
+)
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationExecutionError,
     OrchestrationState,
@@ -66,15 +76,20 @@ __all__ = [
     "ArtifactIndex",
     "ArtifactType",
     "ArtifactWriter",
+    "MarketDataToolResult",
     "OrchestrationExecutionError",
     "OrchestrationState",
     "OrchestrationTool",
     "Phase2McpService",
     "Phase4FundamentalsTool",
+    "Phase4MarketDataArtifact",
+    "Phase4MarketDataTool",
     "Phase4NewsCatalystTool",
     "Phase4SectorMacroTool",
     "Phase4Service",
     "Phase4SocialEvidenceTool",
+    "Phase4TechnicalPackageArtifact",
+    "Phase4TechnicalPackageTool",
     "Phase4ToolExecutionError",
     "Phase4ToolMetadata",
     "Phase4ToolRegistry",
@@ -85,6 +100,7 @@ __all__ = [
     "RunContext",
     "StagedExecutionResult",
     "StagedExecutor",
+    "TechnicalPackageToolResult",
     "ToolRegistry",
     "ToolRunRecord",
     "ToolRunResult",
