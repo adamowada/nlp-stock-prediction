@@ -150,6 +150,22 @@ python -m pytest tests/test_phase1_schema_contracts.py -k "resolution or report"
 These gates are offline. They should not require live market-data providers, live scraping, OpenAI
 credentials, optional GPU packages, or a new CLI command.
 
+### Phase 4 QA Scaffold Gates
+
+The Phase 4 cross-worktree scaffold is intentionally fixture-backed until the independent tool-suite
+branches merge. It uses fake in-test tools over stable public contracts, SQLite indexing, and report
+rendering so coordinator integration can replace the helper runner with real tools while preserving
+the same end-to-end assertions.
+
+```sh
+python -m pytest tests/test_phase4_tool_suite_e2e.py
+python -m pytest tests/test_phase4_tool_suite_e2e.py tests/test_phase2_mcp_service.py tests/test_orchestration_runtime.py
+```
+
+The scaffold gate must stay offline and should verify mixed-asset universe discovery, typed
+artifacts, SQLite tool-run/evidence/candidate indexing, rendered Markdown/JSON reports, audit
+manifest coverage, and visible recovery from partial tool failure.
+
 ### Cross-Cutting Integrity Gates
 
 Run these when contracts, providers, orchestration, reporting, storage, or local ML behavior changes:
