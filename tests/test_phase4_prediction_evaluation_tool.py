@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from nlp_stock_prediction.contracts import (
     AssetClass,
@@ -133,6 +134,58 @@ def _candidate() -> PredictionCandidate:
         confidence=0.62,
         evidence_for=(EvidenceReference(evidence_id="evidence-support"),),
         uncertainties=("Fixture sources are deterministic test inputs.",),
+        metadata={
+            "baseline": {
+                "baseline_id": "no_directional_edge",
+                "summary": "No directional edge is assumed without source-backed evidence.",
+                "provenance": {
+                    "provider": "fixture-baseline",
+                    "retrieved_at": NOW.isoformat(),
+                },
+            }
+        },
+    )
+
+
+def _report(
+    *,
+    candidate: PredictionCandidate,
+    source: SourceEvidence,
+    artifact,
+) -> DailyReport:
+    instrument = Instrument(
+        instrument_id=INSTRUMENT_ID,
+        symbol="TSLA",
+        display_name="Tesla Inc.",
+        asset_class=AssetClass.STOCK,
+    )
+    return DailyReport(
+        schema_version="daily-report.v2",
+        run_id=RUN_ID,
+        report_date=date(2026, 5, 13),
+        generated_at=NOW,
+        timezone="UTC",
+        objective="Evaluate prediction scenario quality.",
+        universe="Phase 4 fixture universe.",
+        instruments=(instrument,),
+        data_freshness=DataFreshnessSummary(as_of=NOW, summary="fresh fixture"),
+        evidence_sources=(source,),
+        instrument_sections=(
+            InstrumentReportSection(
+                instrument_id=INSTRUMENT_ID,
+                symbol="TSLA",
+                prediction_candidate_ids=(candidate.candidate_id,),
+                evidence=(EvidenceReference(evidence_id=source.evidence_id),),
+            ),
+        ),
+        prediction_candidates=(candidate,),
+        audit_manifest=AuditManifest(
+            run_id=RUN_ID,
+            schema_version="audit-manifest.v2",
+            created_at=NOW,
+            artifacts=(artifact,),
+            prediction_trace_ids=(candidate.candidate_id,),
+        ),
     )
 
 
@@ -180,6 +233,30 @@ def test_prediction_evaluation_tool_writes_indexed_artifact(tmp_path: Path) -> N
 
 
 @pytest.mark.unit
+def test_prediction_evaluation_tool_rejects_in_memory_candidate_mismatch(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    candidate = _candidate().model_copy(
+        update={
+            "instrument_id": "instrument:equity:us:nvda",
+            "symbol": "NVDA",
+        }
+    )
+
+    with pytest.raises(ValueError, match="stored prediction candidate mismatch"):
+        write_prediction_evaluation_artifact(
+            store=store,
+            repo_root=tmp_path,
+            artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+            run_id=RUN_ID,
+            candidate=candidate,
+            evidence_sources=(_source(),),
+            created_at=NOW,
+        )
+
+
+@pytest.mark.unit
 def test_reports_preserve_prediction_quality_language_without_advice_terms(
     tmp_path: Path,
 ) -> None:
@@ -200,40 +277,7 @@ def test_reports_preserve_prediction_quality_language_without_advice_terms(
         evaluation,
         artifact=artifact,
     )
-    instrument = Instrument(
-        instrument_id=INSTRUMENT_ID,
-        symbol="TSLA",
-        display_name="Tesla Inc.",
-        asset_class=AssetClass.STOCK,
-    )
-    report = DailyReport(
-        schema_version="daily-report.v2",
-        run_id=RUN_ID,
-        report_date=date(2026, 5, 13),
-        generated_at=NOW,
-        timezone="UTC",
-        objective="Evaluate prediction scenario quality.",
-        universe="Phase 4 fixture universe.",
-        instruments=(instrument,),
-        data_freshness=DataFreshnessSummary(as_of=NOW, summary="fresh fixture"),
-        evidence_sources=(source,),
-        instrument_sections=(
-            InstrumentReportSection(
-                instrument_id=INSTRUMENT_ID,
-                symbol="TSLA",
-                prediction_candidate_ids=(evaluated_candidate.candidate_id,),
-                evidence=(EvidenceReference(evidence_id=source.evidence_id),),
-            ),
-        ),
-        prediction_candidates=(evaluated_candidate,),
-        audit_manifest=AuditManifest(
-            run_id=RUN_ID,
-            schema_version="audit-manifest.v2",
-            created_at=NOW,
-            artifacts=(artifact,),
-            prediction_trace_ids=(evaluated_candidate.candidate_id,),
-        ),
-    )
+    report = _report(candidate=evaluated_candidate, source=source, artifact=artifact)
 
     markdown = render_markdown_report(report)
     json_payload = json.loads(render_json_report(report))
@@ -250,3 +294,85 @@ def test_reports_preserve_prediction_quality_language_without_advice_terms(
     assert "recommendation" not in rendered
     assert "buy" not in rendered
     assert "sell" not in rendered
+
+
+@pytest.mark.unit
+def test_report_rejects_mismatched_evaluation_status_metadata(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    candidate = _candidate()
+    source = _source()
+    evaluation, artifact = write_prediction_evaluation_artifact(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate=candidate,
+        evidence_sources=(source,),
+        created_at=NOW,
+    )
+    evaluated_candidate = attach_evaluation_metadata(candidate, evaluation, artifact=artifact)
+    mismatched_candidate = evaluated_candidate.model_copy(
+        update={"status": PredictionStatus.INSUFFICIENT_EVIDENCE}
+    )
+
+    with pytest.raises(ValidationError, match="prediction evaluation status"):
+        _report(candidate=mismatched_candidate, source=source, artifact=artifact)
+
+
+@pytest.mark.unit
+def test_attach_evaluation_metadata_updates_rendered_candidate_status(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    candidate = _candidate()
+    source = _source().model_copy(
+        update={
+            "provenance": _source().provenance.model_copy(
+                update={"freshness_status": FreshnessStatus.STALE}
+            )
+        }
+    )
+    evaluation, artifact = write_prediction_evaluation_artifact(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate=candidate,
+        evidence_sources=(source,),
+        created_at=NOW,
+    )
+    evaluated_candidate = attach_evaluation_metadata(candidate, evaluation, artifact=artifact)
+    report = _report(candidate=evaluated_candidate, source=source, artifact=artifact)
+
+    markdown = render_markdown_report(report)
+    json_payload = json.loads(render_json_report(report))
+
+    assert evaluated_candidate.status == PredictionStatus.INSUFFICIENT_EVIDENCE
+    assert "Status: insufficient_evidence" in markdown
+    assert json_payload["prediction_candidates"][0]["status"] == "insufficient_evidence"
+
+
+@pytest.mark.unit
+def test_report_authored_fields_reject_trading_instructions_but_source_text_is_evidence(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    candidate = _candidate()
+    source = _source().model_copy(update={"text": "Buy TSLA now, the article claims."})
+    evaluation, artifact = write_prediction_evaluation_artifact(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate=candidate,
+        evidence_sources=(source,),
+        created_at=NOW,
+    )
+    evaluated_candidate = attach_evaluation_metadata(candidate, evaluation, artifact=artifact)
+    safe_report = _report(candidate=evaluated_candidate, source=source, artifact=artifact)
+
+    assert safe_report.evidence_sources[0].text == "Buy TSLA now, the article claims."
+
+    trade_instruction_candidate = evaluated_candidate.model_copy(
+        update={"thesis": "Buy TSLA now because the fixture catalyst is strong."}
+    )
+    with pytest.raises(ValidationError, match="imperative trading language"):
+        _report(candidate=trade_instruction_candidate, source=source, artifact=artifact)

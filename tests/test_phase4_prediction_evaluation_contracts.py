@@ -31,17 +31,24 @@ from nlp_stock_prediction.evaluation import evaluate_prediction_candidate
 NOW = datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
 
 
-def _source(evidence_id: str, text: str) -> SourceEvidence:
+def _source(
+    evidence_id: str,
+    text: str,
+    *,
+    ticker: str = "TSLA",
+    instrument_id: str = "instrument:equity:us:tsla",
+    freshness_status: FreshnessStatus = FreshnessStatus.FRESH,
+) -> SourceEvidence:
     return SourceEvidence(
         evidence_id=evidence_id,
         source_kind=SourceKind.NEWS_ARTICLE,
-        ticker="TSLA",
+        ticker=ticker,
         text=text,
         created_at=NOW,
         permalink=f"https://example.test/{evidence_id}",
-        matched_tickers=("TSLA",),
-        matched_instrument_ids=("instrument:equity:us:tsla",),
-        instrument_id="instrument:equity:us:tsla",
+        matched_tickers=(ticker,),
+        matched_instrument_ids=(instrument_id,),
+        instrument_id=instrument_id,
         provenance=SourceProvenance(
             provider_name="fixture-news",
             source_kind=SourceKind.NEWS_ARTICLE,
@@ -52,7 +59,7 @@ def _source(evidence_id: str, text: str) -> SourceEvidence:
             permalink=f"https://example.test/{evidence_id}",
             raw_identifier=evidence_id,
             raw_snapshot_id=f"raw-{evidence_id}",
-            freshness_status=FreshnessStatus.FRESH,
+            freshness_status=freshness_status,
         ),
     )
 
@@ -62,6 +69,7 @@ def _candidate(
     evidence_for: tuple[EvidenceReference, ...] = (),
     evidence_against: tuple[EvidenceReference, ...] = (),
     signal_artifact_ids: tuple[str, ...] = (),
+    include_structured_baseline: bool = True,
 ) -> PredictionCandidate:
     status = (
         PredictionStatus.EVIDENCE_SUPPORTED
@@ -82,6 +90,20 @@ def _candidate(
         evidence_against=evidence_against,
         signal_artifact_ids=signal_artifact_ids,
         uncertainties=("Fixture sources are deterministic test inputs.",),
+        metadata=(
+            {
+                "baseline": {
+                    "baseline_id": "no_directional_edge",
+                    "summary": "No directional edge is assumed without source-backed evidence.",
+                    "provenance": {
+                        "provider": "fixture-baseline",
+                        "retrieved_at": NOW.isoformat(),
+                    },
+                }
+            }
+            if include_structured_baseline
+            else {}
+        ),
     )
 
 
@@ -143,6 +165,67 @@ def test_evaluation_scores_no_source_evidence_as_insufficient() -> None:
     assert evaluation.evidence_counts.technical_signal_artifacts == 1
     assert evaluation.baseline_comparison.verdict == "below_baseline"
     assert any("No attributable source evidence" in item for item in evaluation.uncertainty)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("source", "expected_context"),
+    (
+        (
+            _source(
+                "evidence-stale",
+                "Old fixture catalyst should not support the TSLA scenario.",
+                freshness_status=FreshnessStatus.STALE,
+            ),
+            "stale or unavailable",
+        ),
+        (
+            _source(
+                "evidence-nvda",
+                "NVDA fixture catalyst should not support the TSLA scenario.",
+                ticker="NVDA",
+                instrument_id="instrument:equity:us:nvda",
+            ),
+            "wrong instrument",
+        ),
+    ),
+)
+def test_evaluation_rejects_stale_or_wrong_instrument_source_support(
+    source: SourceEvidence,
+    expected_context: str,
+) -> None:
+    candidate = _candidate(evidence_for=(EvidenceReference(evidence_id=source.evidence_id),))
+
+    evaluation = evaluate_prediction_candidate(
+        candidate,
+        evidence_sources=(source,),
+        created_at=NOW,
+    )
+
+    assert evaluation.status == PredictionStatus.INSUFFICIENT_EVIDENCE
+    assert evaluation.evidence_counts.supporting_source_evidence == 0
+    assert evaluation.evidence_counts.missing_source_references == 1
+    assert source.evidence_id in evaluation.evidence_counts.missing_reference_ids
+    assert any(expected_context in item for item in evaluation.uncertainty)
+
+
+@pytest.mark.unit
+def test_baseline_comparison_avoids_directional_claim_without_structured_baseline() -> None:
+    source = _source("evidence-support", "Fixture catalyst supports the TSLA scenario.")
+    candidate = _candidate(
+        evidence_for=(EvidenceReference(evidence_id=source.evidence_id),),
+        include_structured_baseline=False,
+    )
+
+    evaluation = evaluate_prediction_candidate(
+        candidate,
+        evidence_sources=(source,),
+        created_at=NOW,
+    )
+
+    assert evaluation.baseline_comparison.verdict == "baseline_unavailable"
+    assert evaluation.baseline_comparison.score_delta == 0.0
+    assert any("structured baseline" in item for item in evaluation.uncertainty)
 
 
 @pytest.mark.unit

@@ -10,7 +10,7 @@ from typing import cast
 
 from nlp_stock_prediction.contracts.analysis import AnalysisBundle
 from nlp_stock_prediction.contracts.base import JsonObject
-from nlp_stock_prediction.contracts.enums import PredictionStatus
+from nlp_stock_prediction.contracts.enums import FreshnessStatus, PredictionStatus
 from nlp_stock_prediction.contracts.evaluation import (
     BaselineComparison,
     EvaluationEvidenceCounts,
@@ -21,9 +21,11 @@ from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
 from nlp_stock_prediction.contracts.report import AuditArtifact, PredictionCandidate
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
+from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
 from nlp_stock_prediction.storage.records import (
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
+    PredictionCandidateRecord,
     ToolRunRecord,
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
@@ -44,16 +46,23 @@ def evaluate_prediction_candidate(
     """Score a candidate as prediction quality using attributable source evidence."""
 
     evaluated_at = _aware_utc(created_at)
-    source_ids = frozenset(evidence.evidence_id for evidence in evidence_sources)
+    source_by_id = {evidence.evidence_id: evidence for evidence in evidence_sources}
     supporting_refs, missing_supporting = _partition_attributed_refs(
         candidate.evidence_for,
-        source_ids,
+        source_by_id,
+        candidate=candidate,
     )
     contradicting_refs, missing_contradicting = _partition_attributed_refs(
         candidate.evidence_against,
-        source_ids,
+        source_by_id,
+        candidate=candidate,
     )
-    missing_refs = (*missing_supporting, *missing_contradicting)
+    missing_refs = tuple(
+        reference for reference, _reason in (*missing_supporting, *missing_contradicting)
+    )
+    missing_reasons = tuple(
+        reason for _reference, reason in (*missing_supporting, *missing_contradicting)
+    )
     ml_signal_count = _ml_signal_count(analysis_bundle)
     counts = EvaluationEvidenceCounts(
         supporting_source_evidence=len(supporting_refs),
@@ -69,8 +78,14 @@ def evaluate_prediction_candidate(
     )
     status = _evaluation_status(counts)
     score = _evaluation_score(candidate, counts, status)
-    uncertainty = _uncertainty_context(candidate, counts, analysis_bundle)
     baseline = _baseline_comparison(candidate, score)
+    uncertainty = _uncertainty_context(
+        candidate,
+        counts,
+        analysis_bundle,
+        missing_reasons=missing_reasons,
+        baseline=baseline,
+    )
     return PredictionEvaluation(
         evaluation_id=evaluation_id or _evaluation_id(candidate.candidate_id, evaluated_at),
         candidate_id=candidate.candidate_id,
@@ -91,6 +106,10 @@ def evaluate_prediction_candidate(
             "candidate_declared_status": candidate.status.value,
             "analysis_bundle_id": analysis_bundle.analysis_id if analysis_bundle else None,
             "technical_or_ml_support_is_sidecar_only": True,
+            "missing_source_reference_reasons": {
+                reference.evidence_id: reason
+                for reference, reason in (*missing_supporting, *missing_contradicting)
+            },
         },
     )
 
@@ -112,33 +131,28 @@ def write_prediction_evaluation_artifact(
     stored_candidate = store.get_prediction_candidate(candidate.candidate_id)
     if stored_candidate is None:
         raise ValueError("prediction evaluation requires a stored prediction candidate")
+    _validate_candidate_matches_stored(
+        candidate=candidate,
+        stored_candidate=stored_candidate,
+        run_id=run_id,
+    )
+    evaluation_candidate = _candidate_with_stored_baseline(candidate, stored_candidate)
 
     evaluated_at = _aware_utc(created_at)
     digest = _stable_digest(f"{run_id}:{candidate.candidate_id}:{evaluated_at.isoformat()}")
     evaluation = evaluate_prediction_candidate(
-        candidate,
+        evaluation_candidate,
         evidence_sources=evidence_sources,
         analysis_bundle=analysis_bundle,
         created_at=evaluated_at,
         evaluation_id=f"evaluation-{_slug(candidate.candidate_id)}-{digest[:8]}",
     )
     tool_run_id = f"tool-prediction-evaluation-{digest[:12]}"
-    store.record_tool_run(
-        ToolRunRecord(
-            tool_run_id=tool_run_id,
-            run_id=run_id,
-            tool_name=_TOOL_NAME,
-            tool_version=_TOOL_VERSION,
-            status="ok",
-            started_at=evaluated_at,
-            completed_at=evaluated_at,
-            inputs={
-                "candidate_id": candidate.candidate_id,
-                "source_evidence_count": len(evidence_sources),
-                "analysis_bundle_id": analysis_bundle.analysis_id if analysis_bundle else None,
-            },
-        )
-    )
+    inputs: JsonObject = {
+        "candidate_id": candidate.candidate_id,
+        "source_evidence_count": len(evidence_sources),
+        "analysis_bundle_id": analysis_bundle.analysis_id if analysis_bundle else None,
+    }
     payload = PredictionEvaluationArtifactPayload(
         run_id=run_id,
         created_at=evaluated_at,
@@ -152,47 +166,69 @@ def write_prediction_evaluation_artifact(
     )
     artifact_id = f"artifact-prediction-evaluation-{_slug(candidate.candidate_id)}-{digest[:8]}"
     filename = artifact_filename or f"prediction-evaluation-{_slug(candidate.candidate_id)}.json"
-    artifact = ArtifactIndex.for_directory(
+    with safe_phase4_tool_execution(
         store=store,
-        repo_root=repo_root,
-        base_dir=artifact_dir,
-        created_at=evaluated_at,
-        produced_by=_TOOL_NAME,
+        artifact_roots=(artifact_dir,),
         tool_run_id=tool_run_id,
-        schema_version=payload.schema_version,
-    ).write_json(
-        artifact_id=artifact_id,
-        artifact_type="prediction_evaluation",
-        filename=filename,
-        payload=cast(JsonObject, payload.model_dump(mode="json")),
-        record_count=1,
-        metadata={
-            "run_id": run_id,
-            "candidate_id": candidate.candidate_id,
-            "evaluation_id": evaluation.evaluation_id,
-            "status": evaluation.status.value,
-            "quality_language": evaluation.quality_language.model_dump(mode="json"),
-        },
-    )
-    store.link_candidate_artifact(
-        CandidateArtifactLinkRecord(
-            candidate_id=candidate.candidate_id,
-            artifact_id=artifact.artifact_id,
-            relationship="prediction_evaluation",
+        run_id=run_id,
+        tool_name=_TOOL_NAME,
+        tool_version=_TOOL_VERSION,
+        started_at=evaluated_at,
+        inputs=inputs,
+    ):
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=_TOOL_NAME,
+                tool_version=_TOOL_VERSION,
+                status="successful",
+                started_at=evaluated_at,
+                completed_at=evaluated_at,
+                inputs=inputs,
+            )
+        )
+        artifact = ArtifactIndex.for_directory(
+            store=store,
+            repo_root=repo_root,
+            base_dir=artifact_dir,
+            created_at=evaluated_at,
+            produced_by=_TOOL_NAME,
+            tool_run_id=tool_run_id,
+            schema_version=payload.schema_version,
+        ).write_json(
+            artifact_id=artifact_id,
+            artifact_type="prediction_evaluation",
+            filename=filename,
+            payload=cast(JsonObject, payload.model_dump(mode="json")),
+            record_count=1,
             metadata={
+                "run_id": run_id,
+                "candidate_id": candidate.candidate_id,
                 "evaluation_id": evaluation.evaluation_id,
                 "status": evaluation.status.value,
+                "quality_language": evaluation.quality_language.model_dump(mode="json"),
             },
+        )
+        store.link_candidate_artifact(
+            CandidateArtifactLinkRecord(
+                candidate_id=candidate.candidate_id,
+                artifact_id=artifact.artifact_id,
+                relationship="prediction_evaluation",
+                metadata={
+                    "evaluation_id": evaluation.evaluation_id,
+                    "status": evaluation.status.value,
+                },
+                created_at=evaluated_at,
+            )
+        )
+        _link_available_evidence(
+            store=store,
+            candidate_id=candidate.candidate_id,
+            evaluation=evaluation,
             created_at=evaluated_at,
         )
-    )
-    _link_available_evidence(
-        store=store,
-        candidate_id=candidate.candidate_id,
-        evaluation=evaluation,
-        created_at=evaluated_at,
-    )
-    return evaluation, artifact
+        return evaluation, artifact
 
 
 def attach_evaluation_metadata(
@@ -205,21 +241,46 @@ def attach_evaluation_metadata(
 
     metadata: JsonObject = dict(candidate.metadata)
     metadata["prediction_evaluation"] = _evaluation_metadata(evaluation, artifact)
-    return candidate.model_copy(update={"metadata": metadata})
+    return candidate.model_copy(update={"metadata": metadata, "status": evaluation.status})
 
 
 def _partition_attributed_refs(
     references: tuple[EvidenceReference, ...],
-    source_ids: frozenset[str],
-) -> tuple[tuple[EvidenceReference, ...], tuple[EvidenceReference, ...]]:
+    source_by_id: dict[str, SourceEvidence],
+    *,
+    candidate: PredictionCandidate,
+) -> tuple[tuple[EvidenceReference, ...], tuple[tuple[EvidenceReference, str], ...]]:
     attributed: list[EvidenceReference] = []
-    missing: list[EvidenceReference] = []
+    missing: list[tuple[EvidenceReference, str]] = []
     for reference in references:
-        if reference.evidence_id in source_ids:
+        source = source_by_id.get(reference.evidence_id)
+        if source is None:
+            missing.append((reference, "missing source evidence input"))
+            continue
+        rejection_reason = _source_attribution_rejection_reason(candidate, source)
+        if rejection_reason is None:
             attributed.append(reference)
         else:
-            missing.append(reference)
+            missing.append((reference, rejection_reason))
     return tuple(attributed), tuple(missing)
+
+
+def _source_attribution_rejection_reason(
+    candidate: PredictionCandidate,
+    source: SourceEvidence,
+) -> str | None:
+    if source.provenance.freshness_status != FreshnessStatus.FRESH:
+        return "stale or unavailable source evidence"
+
+    instrument_ids = _source_instrument_ids(source)
+    tickers = _source_tickers(source)
+    if instrument_ids and candidate.instrument_id not in instrument_ids:
+        return "wrong instrument source evidence"
+    if tickers and candidate.symbol.upper() not in tickers:
+        return "wrong symbol source evidence"
+    if not instrument_ids and not tickers:
+        return "source evidence lacks instrument or symbol attribution"
+    return None
 
 
 def _evaluation_status(counts: EvaluationEvidenceCounts) -> PredictionStatus:
@@ -256,7 +317,19 @@ def _evaluation_score(
 
 
 def _baseline_comparison(candidate: PredictionCandidate, score: float) -> BaselineComparison:
-    delta = round(score - _BASELINE_SCORE, 6)
+    baseline_context = _structured_baseline_context(candidate)
+    if baseline_context is None:
+        return BaselineComparison(
+            baseline_id="baseline_unavailable",
+            baseline_summary=candidate.baseline,
+            baseline_score=_BASELINE_SCORE,
+            candidate_score=score,
+            score_delta=0.0,
+            verdict="baseline_unavailable",
+        )
+
+    baseline_score = _baseline_score(baseline_context)
+    delta = round(score - baseline_score, 6)
     if delta > 0.05:
         verdict = "above_baseline"
     elif delta < -0.05:
@@ -264,9 +337,9 @@ def _baseline_comparison(candidate: PredictionCandidate, score: float) -> Baseli
     else:
         verdict = "near_baseline"
     return BaselineComparison(
-        baseline_id="no_directional_edge",
-        baseline_summary=candidate.baseline,
-        baseline_score=_BASELINE_SCORE,
+        baseline_id=_baseline_id(baseline_context),
+        baseline_summary=_baseline_summary(candidate, baseline_context),
+        baseline_score=baseline_score,
         candidate_score=score,
         score_delta=delta,
         verdict=verdict,
@@ -277,6 +350,9 @@ def _uncertainty_context(
     candidate: PredictionCandidate,
     counts: EvaluationEvidenceCounts,
     analysis_bundle: AnalysisBundle | None,
+    *,
+    missing_reasons: tuple[str, ...],
+    baseline: BaselineComparison,
 ) -> tuple[str, ...]:
     uncertainty = list(candidate.uncertainties)
     if counts.supporting_source_evidence == 0:
@@ -290,9 +366,150 @@ def _uncertainty_context(
         uncertainty.append(
             "Some cited evidence references were not present in the source evidence inputs."
         )
+    if any("stale or unavailable" in reason for reason in missing_reasons):
+        uncertainty.append("Some cited source evidence is stale or unavailable.")
+    if any("wrong instrument" in reason or "wrong symbol" in reason for reason in missing_reasons):
+        uncertainty.append("Some cited source evidence is attributed to the wrong instrument.")
+    if any("lacks instrument or symbol" in reason for reason in missing_reasons):
+        uncertainty.append("Some cited source evidence lacks instrument or symbol attribution.")
     if analysis_bundle is not None and analysis_bundle.contradictions:
         uncertainty.append("Analysis bundle reports contradictions that require review.")
+    if baseline.verdict == "baseline_unavailable":
+        uncertainty.append(
+            "No structured baseline context was available, so above/near/below-baseline "
+            "claims are not made."
+        )
     return tuple(dict.fromkeys(uncertainty))
+
+
+def _structured_baseline_context(candidate: PredictionCandidate) -> JsonObject | None:
+    for key in ("baseline", "baseline_context", "stored_baseline"):
+        value = candidate.metadata.get(key)
+        if isinstance(value, dict) and value:
+            return dict(value)
+    provenance = candidate.metadata.get("baseline_provenance")
+    if isinstance(provenance, dict) and provenance:
+        return {"baseline_id": "provided_baseline", "provenance": dict(provenance)}
+    return None
+
+
+def _baseline_id(baseline_context: JsonObject) -> str:
+    for key in ("baseline_id", "id", "comparison"):
+        value = baseline_context.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return "structured_baseline"
+
+
+def _baseline_summary(
+    candidate: PredictionCandidate,
+    baseline_context: JsonObject,
+) -> str:
+    value = baseline_context.get("summary")
+    if isinstance(value, str) and value.strip():
+        return value
+    value = baseline_context.get("description")
+    if isinstance(value, str) and value.strip():
+        return value
+    return candidate.baseline
+
+
+def _baseline_score(baseline_context: JsonObject) -> float:
+    for key in ("baseline_score", "score"):
+        value = baseline_context.get(key)
+        if isinstance(value, (int, float)):
+            return _round_score(float(value))
+    return _BASELINE_SCORE
+
+
+def _source_instrument_ids(source: SourceEvidence) -> frozenset[str]:
+    values = (
+        *((source.instrument_id,) if source.instrument_id else ()),
+        *source.matched_instrument_ids,
+    )
+    return frozenset(values)
+
+
+def _source_tickers(source: SourceEvidence) -> frozenset[str]:
+    values = (
+        *((source.ticker,) if source.ticker else ()),
+        *source.matched_tickers,
+    )
+    return frozenset(ticker.upper() for ticker in values)
+
+
+def _validate_candidate_matches_stored(
+    *,
+    candidate: PredictionCandidate,
+    stored_candidate: PredictionCandidateRecord,
+    run_id: str,
+) -> None:
+    mismatches: list[str] = []
+    if stored_candidate.run_id not in {None, run_id}:
+        mismatches.append("run_id")
+    _append_mismatch(
+        mismatches, "instrument_id", candidate.instrument_id, stored_candidate.instrument_id
+    )
+    _append_mismatch(
+        mismatches,
+        "prediction_horizon",
+        candidate.horizon.value,
+        stored_candidate.prediction_horizon,
+    )
+    _append_mismatch(mismatches, "scenario", candidate.thesis, stored_candidate.scenario)
+    if stored_candidate.direction is not None:
+        _append_mismatch(
+            mismatches, "direction", candidate.direction.value, stored_candidate.direction
+        )
+    if (
+        stored_candidate.confidence is not None
+        and abs(candidate.confidence - stored_candidate.confidence) > 1e-9
+    ):
+        mismatches.append("confidence")
+    _append_mismatch(mismatches, "status", candidate.status.value, stored_candidate.status)
+    _append_mismatch(
+        mismatches,
+        "evidence_for",
+        tuple(reference.evidence_id for reference in candidate.evidence_for),
+        stored_candidate.evidence_for,
+    )
+    _append_mismatch(
+        mismatches,
+        "evidence_against",
+        tuple(reference.evidence_id for reference in candidate.evidence_against),
+        stored_candidate.evidence_against,
+    )
+    _append_mismatch(
+        mismatches,
+        "signal_artifacts",
+        candidate.signal_artifact_ids,
+        stored_candidate.signal_artifacts,
+    )
+    if mismatches:
+        raise ValueError(
+            "stored prediction candidate mismatch: " + ", ".join(dict.fromkeys(mismatches))
+        )
+
+
+def _append_mismatch(
+    mismatches: list[str],
+    field_name: str,
+    in_memory: object,
+    stored: object,
+) -> None:
+    if in_memory != stored:
+        mismatches.append(field_name)
+
+
+def _candidate_with_stored_baseline(
+    candidate: PredictionCandidate,
+    stored_candidate: PredictionCandidateRecord,
+) -> PredictionCandidate:
+    if not stored_candidate.baseline or _structured_baseline_context(candidate) is not None:
+        return candidate
+    metadata: JsonObject = dict(candidate.metadata)
+    metadata["stored_baseline"] = stored_candidate.baseline
+    return candidate.model_copy(update={"metadata": metadata})
 
 
 def _ml_signal_count(analysis_bundle: AnalysisBundle | None) -> int:
@@ -341,6 +558,8 @@ def _evaluation_metadata(
     metadata: JsonObject = {
         "evaluation_id": evaluation.evaluation_id,
         "status": evaluation.status.value,
+        "instrument_id": evaluation.instrument_id,
+        "symbol": evaluation.symbol,
         "score": evaluation.score,
         "baseline_verdict": evaluation.baseline_comparison.verdict,
         "quality_label": evaluation.quality_language.report_label,

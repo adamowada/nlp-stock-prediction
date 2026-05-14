@@ -52,7 +52,12 @@ class BaselineComparison(ContractModel):
     baseline_score: Confidence
     candidate_score: Confidence
     score_delta: float = Field(ge=-1.0, le=1.0)
-    verdict: Literal["above_baseline", "near_baseline", "below_baseline"]
+    verdict: Literal[
+        "above_baseline",
+        "near_baseline",
+        "below_baseline",
+        "baseline_unavailable",
+    ]
 
 
 class PredictionQualityLanguage(ContractModel):
