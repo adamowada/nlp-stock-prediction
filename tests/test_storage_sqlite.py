@@ -9,11 +9,17 @@ import pytest
 from nlp_stock_prediction.contracts import JsonObject
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
+    CalibrationRunRecord,
+    CalibrationSliceRecord,
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
     EvidenceRecord,
     InstrumentRecord,
     InstrumentTradabilityEvidenceRecord,
+    OutcomeArtifactLinkRecord,
+    OutcomeEvaluationArtifactLinkRecord,
+    OutcomeEvaluationEvidenceLinkRecord,
+    OutcomeEvidenceLinkRecord,
     PlanAcceptanceCriterionRecord,
     PlanArtifactLinkRecord,
     PlanCommitLinkRecord,
@@ -23,6 +29,9 @@ from nlp_stock_prediction.storage import (
     PlanProgressRecord,
     PlanRecord,
     PredictionCandidateRecord,
+    PredictionEvaluationRecord,
+    PredictionOutcomeEvaluationRecord,
+    PredictionOutcomeRecord,
     ResearchRunRecord,
     SourceQueryRecord,
     SQLiteStore,
@@ -66,6 +75,88 @@ def _column_names(store: SQLiteStore, table_name: str) -> set[str]:
         }
 
 
+def _seed_phase6_prediction_graph(store: SQLiteStore) -> None:
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="equity:NASDAQ:MSFT",
+            symbol="MSFT",
+            asset_class="stock",
+            name="Microsoft Corporation",
+            venue="NASDAQ",
+        )
+    )
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id="run-phase6-eval",
+            run_kind="prediction_evaluation",
+            objective="evaluate prior prediction outcomes",
+            status="running",
+            started_at=_timestamp(),
+        )
+    )
+    store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            candidate_id="candidate-msft-5d",
+            run_id="run-phase6-eval",
+            instrument_id="equity:NASDAQ:MSFT",
+            prediction_horizon="5d",
+            prediction_type="direction",
+            scenario="Evidence supports a bullish five-day scenario.",
+            direction="bullish",
+            confidence=0.62,
+            status="evidence_supported",
+            baseline={"baseline_id": "market-neutral"},
+        )
+    )
+    store.record_source_query(
+        SourceQueryRecord(
+            source_query_id="query-phase6-outcome",
+            provider="example-market-data",
+            query="MSFT 2026-05-18 close",
+            url="https://example.test/market/msft/2026-05-18",
+            retrieved_at=_timestamp(),
+            metadata={"purpose": "outcome-observation"},
+        )
+    )
+    for artifact_id, artifact_type in (
+        ("artifact-phase6-evidence", "market_data"),
+        ("artifact-phase6-evaluation", "prediction_evaluation"),
+        ("artifact-phase6-outcome", "prediction_outcome"),
+        ("artifact-phase6-review", "prediction_outcome_evaluation"),
+        ("artifact-phase6-calibration", "calibration_summary"),
+    ):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                path=Path(f"artifacts/phase6/{artifact_id}.json"),
+                sha256="e" * 64,
+                schema_version=f"{artifact_type}.v1",
+                produced_by="phase6_evaluation_calibration",
+                record_count=1,
+                metadata={"run_id": "run-phase6-eval"},
+                created_at=_timestamp(),
+            )
+        )
+    store.record_evidence(
+        EvidenceRecord(
+            evidence_id="evidence-phase6-observed-close",
+            source_type="market_data",
+            provider="example-market-data",
+            retrieved_at=_timestamp(),
+            claim="Microsoft closed above the baseline comparison value.",
+            source_query_id="query-phase6-outcome",
+            url="https://example.test/market/msft/2026-05-18",
+            query="MSFT 2026-05-18 close",
+            instruments=("equity:NASDAQ:MSFT",),
+            extraction_confidence=0.98,
+            freshness_status="fresh",
+            artifact_id="artifact-phase6-evidence",
+            provenance_json={"source_query_id": "query-phase6-outcome"},
+        )
+    )
+
+
 @pytest.mark.unit
 def test_research_database_initialization_is_idempotent_and_excludes_planning(
     tmp_path: Path,
@@ -82,6 +173,8 @@ def test_research_database_initialization_is_idempotent_and_excludes_planning(
     assert migration_count == CURRENT_RESEARCH_SCHEMA_VERSION
     assert {
         "artifacts",
+        "calibration_runs",
+        "calibration_slices",
         "candidate_artifact_links",
         "candidate_evidence_links",
         "evidence_items",
@@ -92,7 +185,14 @@ def test_research_database_initialization_is_idempotent_and_excludes_planning(
         "instrument_related_instruments",
         "instrument_tradability_evidence",
         "prediction_candidates",
+        "prediction_evaluations",
+        "prediction_outcome_evaluations",
+        "prediction_outcomes",
         "research_runs",
+        "outcome_artifact_links",
+        "outcome_evaluation_artifact_links",
+        "outcome_evaluation_evidence_links",
+        "outcome_evidence_links",
         "source_queries",
         "tool_runs",
         "watchlist_items",
@@ -238,6 +338,8 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
     }.issubset(_column_names(store, "evidence_items"))
     assert {"produced_by", "record_count"}.issubset(_column_names(store, "artifacts"))
     assert {
+        "calibration_runs",
+        "calibration_slices",
         "candidate_artifact_links",
         "candidate_evidence_links",
         "instrument_aliases",
@@ -245,6 +347,13 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
         "instrument_provider_ids",
         "instrument_related_instruments",
         "instrument_tradability_evidence",
+        "outcome_artifact_links",
+        "outcome_evaluation_artifact_links",
+        "outcome_evaluation_evidence_links",
+        "outcome_evidence_links",
+        "prediction_evaluations",
+        "prediction_outcome_evaluations",
+        "prediction_outcomes",
         "watchlist_items",
         "watchlists",
     }.issubset(_table_names(store))
@@ -504,6 +613,255 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
             created_at=_timestamp(),
         ),
     )
+
+
+@pytest.mark.unit
+def test_phase6_evaluation_calibration_records_round_trip_and_extend_run_graph(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    _seed_phase6_prediction_graph(store)
+
+    evaluation = PredictionEvaluationRecord(
+        evaluation_id="evaluation-msft-5d",
+        run_id="run-phase6-eval",
+        candidate_id="candidate-msft-5d",
+        instrument_id="equity:NASDAQ:MSFT",
+        symbol="MSFT",
+        created_at=_timestamp(),
+        prediction_type="direction",
+        horizon="5d",
+        direction="bullish",
+        status="evidence_supported",
+        score=0.68,
+        baseline_comparison={
+            "baseline_id": "market-neutral",
+            "verdict": "above_baseline",
+        },
+        evidence_counts={"supporting_source_evidence": 1},
+        signal_counts={"technical": 0, "news": 0},
+        artifact_id="artifact-phase6-evaluation",
+    )
+    outcome = PredictionOutcomeRecord(
+        outcome_id="outcome-msft-5d",
+        candidate_id="candidate-msft-5d",
+        instrument_id="equity:NASDAQ:MSFT",
+        symbol="MSFT",
+        prediction_type="direction",
+        horizon="5d",
+        evaluation_window_start=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
+        evaluation_window_end=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
+        status="observed",
+        observed_result="confirmed",
+        observed_at=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
+        result_summary="The observed close was above the comparison baseline.",
+        result_value=433.25,
+        baseline_value=428.1,
+        metadata={"target_id": "target-msft-5d"},
+    )
+    outcome_evaluation = PredictionOutcomeEvaluationRecord(
+        outcome_evaluation_id="outcome-evaluation-msft-5d",
+        run_id="run-phase6-eval",
+        outcome_id="outcome-msft-5d",
+        candidate_id="candidate-msft-5d",
+        instrument_id="equity:NASDAQ:MSFT",
+        symbol="MSFT",
+        evaluated_at=datetime(2026, 5, 18, 21, 0, tzinfo=UTC),
+        status="confirmed",
+        quality_score=0.74,
+        baseline_comparison={"verdict": "above_baseline"},
+        artifact_id="artifact-phase6-review",
+    )
+    calibration_run = CalibrationRunRecord(
+        calibration_id="calibration-msft-cohort",
+        run_id="run-phase6-eval",
+        method_version="phase6-evalcal.v1",
+        created_at=datetime(2026, 5, 18, 22, 0, tzinfo=UTC),
+        point_in_time_cutoff=datetime(2026, 5, 18, 21, 0, tzinfo=UTC),
+        cohort_query={"prediction_type": "direction", "horizon": "5d"},
+        source_outcome_evaluation_ids=("outcome-evaluation-msft-5d",),
+        artifact_id="artifact-phase6-calibration",
+        limitations=("single resolved record in unit test",),
+    )
+    calibration_slice = CalibrationSliceRecord(
+        slice_id="calibration-msft-cohort-overall",
+        calibration_id="calibration-msft-cohort",
+        cohort_label="overall",
+        sample_count=1,
+        resolved_count=1,
+        metrics={"brier_score": 0.06, "accuracy": 1.0},
+        baseline_comparison={"verdict": "above_baseline"},
+        provenance={"source_outcome_evaluation_ids": ["outcome-evaluation-msft-5d"]},
+    )
+
+    store.record_prediction_evaluation(evaluation)
+    store.upsert_prediction_outcome(outcome)
+    store.link_outcome_evidence(
+        OutcomeEvidenceLinkRecord(
+            outcome_id="outcome-msft-5d",
+            evidence_id="evidence-phase6-observed-close",
+            relationship="observes",
+            metadata={"field": "close"},
+            created_at=_timestamp(),
+        )
+    )
+    store.link_outcome_artifact(
+        OutcomeArtifactLinkRecord(
+            outcome_id="outcome-msft-5d",
+            artifact_id="artifact-phase6-outcome",
+            relationship="outcome_payload",
+            created_at=_timestamp(),
+        )
+    )
+    store.upsert_prediction_outcome_evaluation(outcome_evaluation)
+    store.link_outcome_evaluation_evidence(
+        OutcomeEvaluationEvidenceLinkRecord(
+            outcome_evaluation_id="outcome-evaluation-msft-5d",
+            evidence_id="evidence-phase6-observed-close",
+            relationship="supports_review",
+            created_at=_timestamp(),
+        )
+    )
+    store.link_outcome_evaluation_artifact(
+        OutcomeEvaluationArtifactLinkRecord(
+            outcome_evaluation_id="outcome-evaluation-msft-5d",
+            artifact_id="artifact-phase6-review",
+            relationship="review_payload",
+            created_at=_timestamp(),
+        )
+    )
+    store.record_calibration_run(calibration_run)
+    store.record_calibration_slice(calibration_slice)
+
+    assert store.get_prediction_evaluation("evaluation-msft-5d") == evaluation
+    assert store.list_prediction_evaluations_for_run("run-phase6-eval") == (evaluation,)
+    assert store.list_prediction_evaluations_for_candidate("candidate-msft-5d") == (evaluation,)
+    assert store.get_prediction_outcome("outcome-msft-5d") == outcome
+    assert store.list_prediction_outcomes_for_candidate("candidate-msft-5d") == (outcome,)
+    assert store.list_outcome_evidence_links("outcome-msft-5d") == (
+        OutcomeEvidenceLinkRecord(
+            outcome_id="outcome-msft-5d",
+            evidence_id="evidence-phase6-observed-close",
+            relationship="observes",
+            metadata={"field": "close"},
+            created_at=_timestamp(),
+        ),
+    )
+    assert store.list_outcome_artifact_links("outcome-msft-5d") == (
+        OutcomeArtifactLinkRecord(
+            outcome_id="outcome-msft-5d",
+            artifact_id="artifact-phase6-outcome",
+            relationship="outcome_payload",
+            created_at=_timestamp(),
+        ),
+    )
+    assert (
+        store.get_prediction_outcome_evaluation("outcome-evaluation-msft-5d") == outcome_evaluation
+    )
+    assert store.list_outcome_evaluations_for_run("run-phase6-eval") == (outcome_evaluation,)
+    assert store.list_outcome_evaluation_evidence_links("outcome-evaluation-msft-5d") == (
+        OutcomeEvaluationEvidenceLinkRecord(
+            outcome_evaluation_id="outcome-evaluation-msft-5d",
+            evidence_id="evidence-phase6-observed-close",
+            relationship="supports_review",
+            created_at=_timestamp(),
+        ),
+    )
+    assert store.list_outcome_evaluation_artifact_links("outcome-evaluation-msft-5d") == (
+        OutcomeEvaluationArtifactLinkRecord(
+            outcome_evaluation_id="outcome-evaluation-msft-5d",
+            artifact_id="artifact-phase6-review",
+            relationship="review_payload",
+            created_at=_timestamp(),
+        ),
+    )
+    assert store.get_calibration_run("calibration-msft-cohort") == calibration_run
+    assert store.list_calibration_runs_for_run("run-phase6-eval") == (calibration_run,)
+    assert store.list_calibration_slices("calibration-msft-cohort") == (calibration_slice,)
+
+    assert {
+        artifact.artifact_id for artifact in store.list_artifacts_for_run("run-phase6-eval")
+    } == {
+        "artifact-phase6-calibration",
+        "artifact-phase6-evaluation",
+        "artifact-phase6-evidence",
+        "artifact-phase6-outcome",
+        "artifact-phase6-review",
+    }
+    assert tuple(
+        evidence.evidence_id for evidence in store.list_evidence_for_run("run-phase6-eval")
+    ) == ("evidence-phase6-observed-close",)
+    assert tuple(
+        query.source_query_id for query in store.list_source_queries_for_run("run-phase6-eval")
+    ) == ("query-phase6-outcome",)
+
+    store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-phase6-failed",
+            run_id="run-phase6-eval",
+            tool_name="phase6_evaluation",
+            tool_version="0.1",
+            status="failed",
+            started_at=_timestamp(),
+            error_message="simulated failure after partial writes",
+        )
+    )
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-phase6-failed",
+            tool_run_id="tool-phase6-failed",
+            artifact_type="prediction_evaluation",
+            path=Path("artifacts/phase6/failed-evaluation.json"),
+            sha256="f" * 64,
+            schema_version="prediction_evaluation.v1",
+            created_at=_timestamp(),
+        )
+    )
+    store.record_prediction_evaluation(
+        PredictionEvaluationRecord(
+            evaluation_id="evaluation-msft-failed",
+            run_id="run-phase6-eval",
+            candidate_id="candidate-msft-5d",
+            instrument_id="equity:NASDAQ:MSFT",
+            symbol="MSFT",
+            created_at=_timestamp(),
+            prediction_type="direction",
+            horizon="5d",
+            status="insufficient_evidence",
+            score=0.1,
+            artifact_id="artifact-phase6-failed",
+        )
+    )
+    store.record_calibration_run(
+        CalibrationRunRecord(
+            calibration_id="calibration-msft-failed",
+            run_id="run-phase6-eval",
+            tool_run_id="tool-phase6-failed",
+            method_version="phase6-evalcal.v1",
+            created_at=datetime(2026, 5, 18, 23, 0, tzinfo=UTC),
+            point_in_time_cutoff=datetime(2026, 5, 18, 22, 0, tzinfo=UTC),
+            artifact_id="artifact-phase6-failed",
+        )
+    )
+
+    store.delete_tool_run_outputs("tool-phase6-failed")
+
+    assert store.get_prediction_evaluation("evaluation-msft-failed") is None
+    assert store.get_calibration_run("calibration-msft-failed") is None
+    assert store.get_artifact("artifact-phase6-failed") is None
+    assert store.get_tool_run("tool-phase6-failed") is None
+
+    with pytest.raises(ValueError, match="sample_count"):
+        store.record_calibration_slice(
+            CalibrationSliceRecord(
+                slice_id="calibration-msft-invalid",
+                calibration_id="calibration-msft-cohort",
+                cohort_label="invalid",
+                sample_count=2,
+                resolved_count=1,
+            )
+        )
 
 
 @pytest.mark.unit

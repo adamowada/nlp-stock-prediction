@@ -20,7 +20,21 @@ def fetch_tool_run_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
 def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sqlite3.Row, ...]:
     rows = connection.execute(
         """
-        WITH run_evidence AS (
+        WITH run_candidates AS (
+            SELECT candidate_id FROM prediction_candidates
+            WHERE run_id = ?
+        ),
+        phase6_outcomes AS (
+            SELECT outcome_id FROM prediction_outcomes
+            WHERE candidate_id IN (SELECT candidate_id FROM run_candidates)
+        ),
+        phase6_outcome_evaluations AS (
+            SELECT outcome_evaluation_id FROM prediction_outcome_evaluations
+            WHERE run_id = ?
+                OR candidate_id IN (SELECT candidate_id FROM run_candidates)
+                OR outcome_id IN (SELECT outcome_id FROM phase6_outcomes)
+        ),
+        run_evidence AS (
             SELECT DISTINCT evidence_items.evidence_id, evidence_items.artifact_id
             FROM evidence_items
             LEFT JOIN tool_runs direct_tool_runs
@@ -37,10 +51,46 @@ def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
                 ON evidence_items.evidence_id = candidate_evidence_links.evidence_id
             LEFT JOIN prediction_candidates evidence_candidates
                 ON candidate_evidence_links.candidate_id = evidence_candidates.candidate_id
+            LEFT JOIN outcome_evidence_links
+                ON evidence_items.evidence_id = outcome_evidence_links.evidence_id
+            LEFT JOIN outcome_evaluation_evidence_links
+                ON evidence_items.evidence_id = outcome_evaluation_evidence_links.evidence_id
             WHERE direct_tool_runs.run_id = ?
                 OR source_tool_runs.run_id = ?
                 OR artifact_tool_runs.run_id = ?
                 OR evidence_candidates.run_id = ?
+                OR outcome_evidence_links.outcome_id IN (
+                    SELECT outcome_id FROM phase6_outcomes
+                )
+                OR outcome_evaluation_evidence_links.outcome_evaluation_id IN (
+                    SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+                )
+        ),
+        phase6_artifacts AS (
+            SELECT artifact_id FROM prediction_evaluations
+            WHERE artifact_id IS NOT NULL
+                AND (
+                    run_id = ?
+                    OR candidate_id IN (SELECT candidate_id FROM run_candidates)
+                )
+            UNION
+            SELECT artifact_id FROM outcome_artifact_links
+            WHERE outcome_id IN (SELECT outcome_id FROM phase6_outcomes)
+            UNION
+            SELECT artifact_id FROM prediction_outcome_evaluations
+            WHERE artifact_id IS NOT NULL
+                AND outcome_evaluation_id IN (
+                    SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+                )
+            UNION
+            SELECT artifact_id FROM outcome_evaluation_artifact_links
+            WHERE outcome_evaluation_id IN (
+                SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+            )
+            UNION
+            SELECT artifact_id FROM calibration_runs
+            WHERE artifact_id IS NOT NULL
+                AND run_id = ?
         )
         SELECT DISTINCT artifacts.* FROM artifacts
         LEFT JOIN tool_runs
@@ -54,9 +104,21 @@ def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
         WHERE tool_runs.run_id = ?
             OR artifact_candidates.run_id = ?
             OR run_evidence.evidence_id IS NOT NULL
+            OR artifacts.artifact_id IN (SELECT artifact_id FROM phase6_artifacts)
         ORDER BY artifacts.created_at, artifacts.artifact_id
         """,
-        (run_id, run_id, run_id, run_id, run_id, run_id),
+        (
+            run_id,
+            run_id,
+            run_id,
+            run_id,
+            run_id,
+            run_id,
+            run_id,
+            run_id,
+            run_id,
+            run_id,
+        ),
     ).fetchall()
     return tuple(rows)
 
@@ -64,7 +126,21 @@ def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
 def fetch_source_query_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sqlite3.Row, ...]:
     rows = connection.execute(
         """
-        WITH run_evidence AS (
+        WITH run_candidates AS (
+            SELECT candidate_id FROM prediction_candidates
+            WHERE run_id = ?
+        ),
+        phase6_outcomes AS (
+            SELECT outcome_id FROM prediction_outcomes
+            WHERE candidate_id IN (SELECT candidate_id FROM run_candidates)
+        ),
+        phase6_outcome_evaluations AS (
+            SELECT outcome_evaluation_id FROM prediction_outcome_evaluations
+            WHERE run_id = ?
+                OR candidate_id IN (SELECT candidate_id FROM run_candidates)
+                OR outcome_id IN (SELECT outcome_id FROM phase6_outcomes)
+        ),
+        run_evidence AS (
             SELECT DISTINCT evidence_items.evidence_id, evidence_items.source_query_id
             FROM evidence_items
             LEFT JOIN tool_runs direct_tool_runs
@@ -81,10 +157,20 @@ def fetch_source_query_rows(connection: sqlite3.Connection, run_id: str) -> tupl
                 ON evidence_items.evidence_id = candidate_evidence_links.evidence_id
             LEFT JOIN prediction_candidates evidence_candidates
                 ON candidate_evidence_links.candidate_id = evidence_candidates.candidate_id
+            LEFT JOIN outcome_evidence_links
+                ON evidence_items.evidence_id = outcome_evidence_links.evidence_id
+            LEFT JOIN outcome_evaluation_evidence_links
+                ON evidence_items.evidence_id = outcome_evaluation_evidence_links.evidence_id
             WHERE direct_tool_runs.run_id = ?
                 OR source_tool_runs.run_id = ?
                 OR artifact_tool_runs.run_id = ?
                 OR evidence_candidates.run_id = ?
+                OR outcome_evidence_links.outcome_id IN (
+                    SELECT outcome_id FROM phase6_outcomes
+                )
+                OR outcome_evaluation_evidence_links.outcome_evaluation_id IN (
+                    SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+                )
         )
         SELECT DISTINCT source_queries.* FROM source_queries
         LEFT JOIN tool_runs
@@ -95,7 +181,7 @@ def fetch_source_query_rows(connection: sqlite3.Connection, run_id: str) -> tupl
             OR run_evidence.evidence_id IS NOT NULL
         ORDER BY source_queries.retrieved_at, source_queries.source_query_id
         """,
-        (run_id, run_id, run_id, run_id, run_id),
+        (run_id, run_id, run_id, run_id, run_id, run_id, run_id),
     ).fetchall()
     return tuple(rows)
 
@@ -103,6 +189,20 @@ def fetch_source_query_rows(connection: sqlite3.Connection, run_id: str) -> tupl
 def fetch_evidence_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sqlite3.Row, ...]:
     rows = connection.execute(
         """
+        WITH run_candidates AS (
+            SELECT candidate_id FROM prediction_candidates
+            WHERE run_id = ?
+        ),
+        phase6_outcomes AS (
+            SELECT outcome_id FROM prediction_outcomes
+            WHERE candidate_id IN (SELECT candidate_id FROM run_candidates)
+        ),
+        phase6_outcome_evaluations AS (
+            SELECT outcome_evaluation_id FROM prediction_outcome_evaluations
+            WHERE run_id = ?
+                OR candidate_id IN (SELECT candidate_id FROM run_candidates)
+                OR outcome_id IN (SELECT outcome_id FROM phase6_outcomes)
+        )
         SELECT DISTINCT evidence_items.* FROM evidence_items
         LEFT JOIN tool_runs direct_tool_runs
             ON evidence_items.tool_run_id = direct_tool_runs.tool_run_id
@@ -118,13 +218,23 @@ def fetch_evidence_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
             ON evidence_items.evidence_id = candidate_evidence_links.evidence_id
         LEFT JOIN prediction_candidates evidence_candidates
             ON candidate_evidence_links.candidate_id = evidence_candidates.candidate_id
+        LEFT JOIN outcome_evidence_links
+            ON evidence_items.evidence_id = outcome_evidence_links.evidence_id
+        LEFT JOIN outcome_evaluation_evidence_links
+            ON evidence_items.evidence_id = outcome_evaluation_evidence_links.evidence_id
         WHERE direct_tool_runs.run_id = ?
             OR source_tool_runs.run_id = ?
             OR artifact_tool_runs.run_id = ?
             OR evidence_candidates.run_id = ?
+            OR outcome_evidence_links.outcome_id IN (
+                SELECT outcome_id FROM phase6_outcomes
+            )
+            OR outcome_evaluation_evidence_links.outcome_evaluation_id IN (
+                SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+            )
         ORDER BY evidence_items.retrieved_at, evidence_items.evidence_id
         """,
-        (run_id, run_id, run_id, run_id),
+        (run_id, run_id, run_id, run_id, run_id, run_id),
     ).fetchall()
     return tuple(rows)
 
