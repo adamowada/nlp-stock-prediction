@@ -67,6 +67,20 @@ candidates linked to those artifacts, and provider-health references preserve pa
 or assembly-level failures. Material claim traces cover candidate thesis, baseline context, and
 prediction-quality evaluation claims.
 
+## Markdown Product Reports
+
+Markdown reports are the human-facing companion to the JSON payload. They render report metadata,
+provider health, universe resolution, instrument identity and availability, observed source evidence,
+report-authored analysis, baseline context, prediction scenarios, uncertainty, dissent, change
+triggers, prior-outcome reviews, source references, the evidence ledger, and audit artifacts.
+
+Observed source claims are labeled separately from report-authored scenario analysis and labeled
+inference. Candidate sections preserve evidence-for and evidence-against references, uncertainty
+drivers, dissenting evidence, evaluation quality metadata, and prior-outcome review links without
+using recommendation, position sizing, or trade-instruction framing. Structured insufficient-evidence
+reports render their blocking reasons, providers, evidence, artifacts, and metadata instead of
+inventing a fallback scenario.
+
 Run the optional Phase 4 real-Codex smoke after installing the MCP extra:
 
 ```sh

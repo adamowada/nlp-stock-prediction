@@ -421,8 +421,10 @@ DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
     schema_version="markdown-report.v2",
     heading_order=(
         "Prediction Research Report",
+        "Report Metadata",
         "Research Objective",
         "Data Freshness",
+        "Provider Health",
         "Provider Warnings",
         "Instrument Sections",
         "Prediction Scenarios Or Insufficient-Evidence Summary",

@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
 import pytest
 
-from nlp_stock_prediction.contracts import RunConfig
-from nlp_stock_prediction.contracts.report import AuditManifest
+from nlp_stock_prediction.contracts import (
+    Direction,
+    InsufficientEvidenceReport,
+    PredictionStatus,
+    PredictionType,
+    ReportSourceReference,
+    RunConfig,
+)
+from nlp_stock_prediction.contracts.report import AuditManifest, DailyReport
 from nlp_stock_prediction.reporting.fixtures import build_offline_fixture_bundle
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
@@ -19,6 +27,11 @@ RUN_DATE = date(2026, 5, 12)
 def _report_markdown(tmp_path: Path) -> str:
     config = RunConfig(run_date=RUN_DATE, output_dir=tmp_path, offline=True)
     return render_markdown_report(build_offline_fixture_bundle(config).report)
+
+
+def _fixture_report(tmp_path: Path) -> DailyReport:
+    config = RunConfig(run_date=RUN_DATE, output_dir=tmp_path, offline=True)
+    return build_offline_fixture_bundle(config).report
 
 
 @pytest.mark.unit
@@ -107,6 +120,118 @@ def test_candidate_rendering_preserves_context_without_advice_labels(tmp_path: P
     assert "`claim-tsla-headline-sensitivity` analysis" in markdown
     assert "## Report Source References" in markdown
     assert "`source-ref-tsla-news` source_evidence" in markdown
+    assert "Recommendation:" not in markdown
+    assert "Trade instruction:" not in markdown
+
+
+@pytest.mark.unit
+def test_markdown_surfaces_json_report_metadata_provider_health_and_audit(
+    tmp_path: Path,
+) -> None:
+    report = _fixture_report(tmp_path)
+    markdown = render_markdown_report(report)
+    payload = json.loads(render_json_report(report))
+    provider_health = payload["provider_health"][0]
+    audit_manifest = payload["audit_manifest"]
+
+    assert "## Report Metadata" in markdown
+    assert f"- Report schema: `{payload['schema_version']}`" in markdown
+    assert f"- Timezone: `{payload['timezone']}`" in markdown
+    assert "Command args:" in markdown
+    assert "offline=True" in markdown
+    assert "## Provider Health" in markdown
+    assert f"`{provider_health['provider_name']}`: status {provider_health['status']}" in markdown
+    assert f"- Manifest schema: `{audit_manifest['schema_version']}`" in markdown
+    assert "Prediction trace IDs: `prediction-tsla-volatility-context`" in markdown
+    assert "- No audit artifact files listed in manifest." in markdown
+    assert "- Audit manifest unavailable." not in markdown
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("status", "direction", "prediction_type"),
+    (
+        (
+            PredictionStatus.EVIDENCE_SUPPORTED,
+            Direction.MIXED,
+            PredictionType.VOLATILITY,
+        ),
+        (PredictionStatus.CONTRADICTED, Direction.BEARISH, PredictionType.DIRECTIONAL),
+        (PredictionStatus.EVIDENCE_SUPPORTED, Direction.NEUTRAL, PredictionType.NEUTRAL),
+    ),
+)
+def test_markdown_covers_supported_contradicted_and_neutral_candidate_states(
+    tmp_path: Path,
+    status: PredictionStatus,
+    direction: Direction,
+    prediction_type: PredictionType,
+) -> None:
+    report = _fixture_report(tmp_path)
+    candidate = report.prediction_candidates[0].model_copy(
+        update={
+            "status": status,
+            "direction": direction,
+            "prediction_type": prediction_type,
+        }
+    )
+
+    markdown = render_markdown_report(
+        report.model_copy(update={"prediction_candidates": (candidate,)})
+    )
+
+    assert f"Status: {status.value}; direction: {direction.value};" in markdown
+    assert f"type: {prediction_type.value};" in markdown
+    assert "Report-authored scenario:" in markdown
+    assert "Evidence for: `fixture-news-tsla-001` (observed source claims)" in markdown
+    assert "Evidence against: `fixture-market-spy-001` (observed source claims)" in markdown
+    assert "Baseline:" in markdown
+    assert "Dissenting evidence:" in markdown
+    assert "Uncertainties:" in markdown
+    assert "Prior outcome reviews:" in markdown
+    assert "Recommendation:" not in markdown
+    assert "Trade instruction:" not in markdown
+    assert re.search(r"\b(buy|sell)\s+TSLA\b", markdown, flags=re.IGNORECASE) is None
+
+
+@pytest.mark.unit
+def test_markdown_covers_structured_insufficient_evidence_report(tmp_path: Path) -> None:
+    report = _fixture_report(tmp_path)
+    insufficient = InsufficientEvidenceReport(
+        summary="No supported prediction scenario remains after artifact validation.",
+        blocking_reasons=("Required technical package artifact was malformed.",),
+        provider_names=("report-assembly",),
+        evidence=report.instrument_sections[0].evidence,
+        metadata={"excluded_candidate_ids": ["prediction-tsla-volatility-context"]},
+    )
+    sections = tuple(
+        section.model_copy(update={"prediction_candidate_ids": ()})
+        for section in report.instrument_sections
+    )
+    source_references = tuple(
+        reference.model_copy(update={"candidate_ids": ()})
+        if isinstance(reference, ReportSourceReference)
+        else reference
+        for reference in report.source_references
+    )
+    candidate_free_report = report.model_copy(
+        update={
+            "instrument_sections": sections,
+            "prediction_candidates": (),
+            "material_claim_traces": (),
+            "prior_outcome_reviews": (),
+            "source_references": source_references,
+            "insufficient_evidence": insufficient,
+            "insufficient_evidence_summary": insufficient.summary,
+        }
+    )
+
+    markdown = render_markdown_report(candidate_free_report)
+
+    assert "## Prediction Scenarios Or Insufficient-Evidence Summary" in markdown
+    assert "No supported prediction scenario remains after artifact validation." in markdown
+    assert "Required technical package artifact was malformed." in markdown
+    assert "Providers: `report-assembly`" in markdown
+    assert "Metadata: excluded_candidate_ids=['prediction-tsla-volatility-context']" in markdown
     assert "Recommendation:" not in markdown
     assert "Trade instruction:" not in markdown
 
