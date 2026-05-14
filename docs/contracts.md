@@ -221,6 +221,13 @@ unresolved cohorts remain metric-free and carry explicit limitations. The same r
 SQLite through `calibration_runs` and `calibration_slices` so downstream calibration summaries can
 reuse the persisted attribution data.
 
+Walk-forward evaluation is persisted as a `walk_forward_evaluation` audit artifact. It sorts
+eligible outcome evaluations chronologically, excludes rows after the point-in-time cutoff, and
+emits train/test folds with held-out quality metrics, unresolved held-out status counts, provenance,
+and limitations. Fold-level held-out metrics are also stored as `calibration_slices` under a
+`calibration_runs` row so later calibration summaries can reuse the same chronological evaluation
+without recomputing or using lookahead data.
+
 ## Planning State
 
 Active plans belong in the tracked planning SQLite database. Planning contracts include:

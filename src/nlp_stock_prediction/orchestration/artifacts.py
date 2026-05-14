@@ -33,6 +33,7 @@ ArtifactType = Literal[
     "prediction_outcome_evaluation",
     "calibration_summary",
     "signal_family_ablation",
+    "walk_forward_evaluation",
     "audit_manifest",
 ]
 
