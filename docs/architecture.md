@@ -118,6 +118,12 @@ source queries reachable through evidence and candidate links. Phase 2 smoke and
 runs use deterministic run IDs, reject duplicate starts where applicable, and preserve prior
 successful outputs if a later transactional tool retry fails.
 
+Phase 6 evaluation artifacts remain independent audit files, not inline report calculations. When a
+report is rendered for a run with persisted outcome evaluations or calibration runs, the renderer
+adds those artifacts to the audit manifest, surfaces outcome evaluations as prior-outcome reviews,
+and references calibration artifacts as tool artifacts so downstream readers can audit prediction
+quality without treating it as trading performance.
+
 ## ML Signal Discipline
 
 Technical ML sidecars are conservative audit inputs. OHLCV timestamps are normalized across date and

@@ -133,6 +133,18 @@ conservative candidate synthesis, and final Markdown/JSON/audit report rendering
 typed artifacts and SQLite run-graph rows while preserving provider/source provenance. Live providers
 remain opt-in and incremental; deterministic fixtures are the default QA and offline path.
 
+## Current Phase 6 Evaluation And Calibration
+
+Phase 6 can evaluate stored prediction candidates against later outcome evidence, then persist
+signal-family ablations, walk-forward folds, and calibration summaries from those point-in-time
+outcome evaluations. These tools read from the research SQLite run graph and write audit artifacts
+plus `calibration_runs`/`calibration_slices`; they do not use fixture or dummy fallbacks.
+
+Rendered reports now preserve Phase 6 outputs when they exist for the same run. Stored outcome
+evaluations become prior-outcome review entries in Markdown/JSON, and calibration artifacts remain
+separate audit artifacts referenced by the report rather than being collapsed into trading-style
+performance claims.
+
 ## Configuration
 
 Local configuration is documented in [docs/configuration.md](docs/configuration.md).

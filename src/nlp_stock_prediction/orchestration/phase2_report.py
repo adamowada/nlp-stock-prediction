@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.enums import (
     CredentialState,
     ProviderStatus,
+    TimeHorizon,
 )
 from nlp_stock_prediction.contracts.instruments import Instrument
 from nlp_stock_prediction.contracts.provenance import EvidenceReference, ProviderHealth
@@ -21,6 +22,7 @@ from nlp_stock_prediction.contracts.report import (
     InstrumentReportSection,
     InsufficientEvidenceReport,
     MaterialClaimTrace,
+    PredictionCandidate,
     PriorOutcomeReview,
     ReportSourceReference,
 )
@@ -42,6 +44,14 @@ from nlp_stock_prediction.storage.records import (
     ToolRunRecord,
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
+
+PriorOutcomeReviewStatus = Literal[
+    "available",
+    "not_available",
+    "pending",
+    "stale",
+    "unavailable",
+]
 
 
 def render_phase2_prediction_report(
@@ -75,6 +85,32 @@ def render_phase2_prediction_report(
             prefer_evaluated_references=True,
         )
         for candidate in candidates
+    )
+    audit_artifacts = tuple(
+        _audit_artifact_from_record(record, repo_root)
+        for record in store.list_artifacts_for_run(run.run_id)
+    )
+    stored_prior_outcome_reviews = _stored_prior_outcome_reviews(
+        store=store,
+        run_id=run.run_id,
+        candidate_ids=tuple(candidate.candidate_id for candidate in prediction_candidates),
+        evidence_source_ids=tuple(evidence.evidence_id for evidence in evidence_sources),
+        audit_artifact_ids=tuple(artifact.artifact_id for artifact in audit_artifacts),
+    )
+    prior_review_ids_by_candidate = _prior_review_ids_by_candidate(stored_prior_outcome_reviews)
+    prediction_candidates = tuple(
+        _with_prior_outcome_review_ids(
+            candidate,
+            prior_review_ids_by_candidate.get(candidate.candidate_id, ()),
+        )
+        for candidate in prediction_candidates
+    )
+    prior_outcome_reviews = (
+        *stored_prior_outcome_reviews,
+        *_missing_prior_outcome_reviews(
+            prediction_candidates,
+            existing_review_ids=tuple(review.review_id for review in stored_prior_outcome_reviews),
+        ),
     )
     section_refs = tuple(
         EvidenceReference(
@@ -125,20 +161,16 @@ def render_phase2_prediction_report(
         evidence=section_refs,
         data_quality={"codex_search_evidence_count": len(evidence_sources)},
     )
-    audit_artifacts = tuple(
-        _audit_artifact_from_record(record, repo_root)
-        for record in store.list_artifacts_for_run(run.run_id)
-    )
     source_references = _report_source_references(
         evidence_sources=evidence_sources,
         prediction_candidates=prediction_candidates,
         audit_artifacts=audit_artifacts,
+        prior_outcome_reviews=prior_outcome_reviews,
     )
     material_claim_traces = _material_claim_traces(
         prediction_candidates=prediction_candidates,
         source_references=source_references,
     )
-    prior_outcome_reviews = _prior_outcome_reviews(prediction_candidates)
     provider_name = "phase4-fixture-tools" if is_phase4_report else "codex-web-search"
     insufficient_evidence = (
         None
@@ -288,6 +320,7 @@ def _report_source_references(
     evidence_sources: tuple[object, ...],
     prediction_candidates: tuple[object, ...],
     audit_artifacts: tuple[AuditArtifact, ...],
+    prior_outcome_reviews: tuple[PriorOutcomeReview, ...],
 ) -> tuple[ReportSourceReference, ...]:
     references: list[ReportSourceReference] = []
     candidate_ids = tuple(
@@ -311,19 +344,40 @@ def _report_source_references(
             )
         )
     for artifact in audit_artifacts:
-        if artifact.artifact_type not in {"prediction_evaluation", "technical_package"}:
+        if artifact.artifact_type not in {
+            "prediction_evaluation",
+            "technical_package",
+            "calibration_summary",
+            "signal_family_ablation",
+            "walk_forward_evaluation",
+        }:
             continue
+        reference_type = (
+            "prediction_evaluation"
+            if artifact.artifact_type == "prediction_evaluation"
+            else "tool_artifact"
+        )
         references.append(
             ReportSourceReference(
                 reference_id=f"source-ref-{artifact.artifact_id}",
                 label=f"Artifact {artifact.artifact_id}",
-                reference_type=(
-                    "prediction_evaluation"
-                    if artifact.artifact_type == "prediction_evaluation"
-                    else "tool_artifact"
-                ),
+                reference_type=reference_type,
                 artifact_ids=(artifact.artifact_id,),
                 candidate_ids=candidate_ids,
+                metadata={"artifact_type": artifact.artifact_type},
+            )
+        )
+    for review in prior_outcome_reviews:
+        references.append(
+            ReportSourceReference(
+                reference_id=f"source-ref-{review.review_id}",
+                label=f"Prior outcome review {review.review_id}",
+                reference_type="prior_outcome",
+                evidence_ids=tuple(reference.evidence_id for reference in review.outcome_evidence),
+                artifact_ids=review.artifact_ids,
+                candidate_ids=((review.candidate_id,) if review.candidate_id else ()),
+                prior_outcome_review_ids=(review.review_id,),
+                metadata={"status": review.status},
             )
         )
     return tuple(references)
@@ -368,9 +422,144 @@ def _material_claim_traces(
     return tuple(traces)
 
 
-def _prior_outcome_reviews(
-    prediction_candidates: tuple[object, ...],
+def _stored_prior_outcome_reviews(
+    *,
+    store: SQLiteStore,
+    run_id: str,
+    candidate_ids: tuple[str, ...],
+    evidence_source_ids: tuple[str, ...],
+    audit_artifact_ids: tuple[str, ...],
 ) -> tuple[PriorOutcomeReview, ...]:
+    if not candidate_ids:
+        return ()
+    candidate_id_set = set(candidate_ids)
+    evidence_source_id_set = set(evidence_source_ids)
+    audit_artifact_id_set = set(audit_artifact_ids)
+    reviews: list[PriorOutcomeReview] = []
+    for record in store.list_outcome_evaluations_for_run(run_id):
+        if record.candidate_id not in candidate_id_set:
+            continue
+        outcome = store.get_prediction_outcome(record.outcome_id)
+        artifact_ids = _stored_prior_review_artifact_ids(store, record.outcome_evaluation_id)
+        if record.artifact_id is not None:
+            artifact_ids = (record.artifact_id, *artifact_ids)
+        artifact_ids = tuple(
+            artifact_id
+            for artifact_id in dict.fromkeys(artifact_ids)
+            if artifact_id in audit_artifact_id_set
+        )
+        evidence = tuple(
+            EvidenceReference(evidence_id=link.evidence_id)
+            for link in store.list_outcome_evaluation_evidence_links(record.outcome_evaluation_id)
+            if link.evidence_id in evidence_source_id_set
+        )
+        review_status = _prior_review_status(record.status)
+        limitations = record.limitations
+        if review_status != "available" and not limitations:
+            limitations = ("Stored outcome evaluation is not resolved as available.",)
+        if review_status == "available" and not (evidence or artifact_ids):
+            review_status = "not_available"
+            limitations = (
+                "Stored outcome evaluation is missing report-visible evidence and artifacts.",
+            )
+        reviews.append(
+            PriorOutcomeReview(
+                review_id=record.outcome_evaluation_id,
+                status=review_status,
+                summary=_prior_review_summary(record.status, record.quality_score),
+                candidate_id=record.candidate_id,
+                instrument_id=record.instrument_id,
+                reviewed_at=record.evaluated_at,
+                horizon=_review_horizon(outcome.horizon if outcome is not None else None),
+                outcome_evidence=evidence,
+                artifact_ids=artifact_ids,
+                limitations=limitations,
+                metadata={
+                    "outcome_id": record.outcome_id,
+                    "quality_score": record.quality_score,
+                    "baseline_comparison": dict(record.baseline_comparison),
+                    "source": "prediction_outcome_evaluations",
+                },
+            )
+        )
+    return tuple(reviews)
+
+
+def _stored_prior_review_artifact_ids(
+    store: SQLiteStore,
+    outcome_evaluation_id: str,
+) -> tuple[str, ...]:
+    return tuple(
+        link.artifact_id
+        for link in store.list_outcome_evaluation_artifact_links(outcome_evaluation_id)
+    )
+
+
+def _prior_review_status(
+    status: str,
+) -> PriorOutcomeReviewStatus:
+    if status in {"confirmed", "missed", "mixed", "inconclusive"}:
+        return "available"
+    if status == "pending":
+        return "pending"
+    if status == "stale":
+        return "stale"
+    if status in {"unavailable", "not_evaluable"}:
+        return "unavailable"
+    return "not_available"
+
+
+def _prior_review_summary(status: str, quality_score: float | None) -> str:
+    if quality_score is None:
+        return f"Stored outcome evaluation is {status} for this prediction candidate."
+    return (
+        f"Stored outcome evaluation is {status} for this prediction candidate with "
+        f"quality score {quality_score:.2f}."
+    )
+
+
+def _review_horizon(value: str | None) -> TimeHorizon:
+    if value is None:
+        return TimeHorizon.UNKNOWN
+    try:
+        return TimeHorizon(value)
+    except ValueError:
+        return TimeHorizon.UNKNOWN
+
+
+def _prior_review_ids_by_candidate(
+    reviews: tuple[PriorOutcomeReview, ...],
+) -> dict[str, tuple[str, ...]]:
+    grouped: dict[str, list[str]] = {}
+    for review in reviews:
+        if review.candidate_id is None:
+            continue
+        grouped.setdefault(review.candidate_id, []).append(review.review_id)
+    return {
+        candidate_id: tuple(dict.fromkeys(review_ids))
+        for candidate_id, review_ids in grouped.items()
+    }
+
+
+def _with_prior_outcome_review_ids(
+    candidate: PredictionCandidate,
+    review_ids: tuple[str, ...],
+) -> PredictionCandidate:
+    existing = getattr(candidate, "prior_outcome_review_ids", ())
+    if not isinstance(existing, tuple):
+        existing = ()
+    merged = tuple(dict.fromkeys((*existing, *review_ids)))
+    if merged == existing:
+        return candidate
+    return candidate.model_copy(update={"prior_outcome_review_ids": merged})
+
+
+def _missing_prior_outcome_reviews(
+    prediction_candidates: tuple[object, ...],
+    *,
+    existing_review_ids: tuple[str, ...],
+) -> tuple[PriorOutcomeReview, ...]:
+    existing_review_id_set = set(existing_review_ids)
     reviews: list[PriorOutcomeReview] = []
     for candidate in prediction_candidates:
         candidate_id = getattr(candidate, "candidate_id", None)
@@ -379,6 +568,8 @@ def _prior_outcome_reviews(
             continue
         for review_id in prior_ids:
             if not isinstance(review_id, str) or not review_id:
+                continue
+            if review_id in existing_review_id_set:
                 continue
             reviews.append(
                 PriorOutcomeReview(
@@ -425,6 +616,11 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
         "ml_forecast",
         "instrument_universe",
         "prediction_evaluation",
+        "prediction_outcome",
+        "prediction_outcome_evaluation",
+        "calibration_summary",
+        "signal_family_ablation",
+        "walk_forward_evaluation",
         "audit_manifest",
     }:
         raise ValueError(f"unknown artifact type: {artifact_type}")
