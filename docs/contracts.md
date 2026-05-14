@@ -271,13 +271,24 @@ source outcome/artifact provenance. Inputs after the `as_of` cutoff, outside req
 prediction/horizon filters, or missing prediction scores are excluded with explicit limitations.
 Overall, bin-level, and signal-family slices are also stored in `calibration_slices`.
 
+Phase 7 calibration drift checks are persisted as separate `calibration_drift_check` audit
+artifacts and SQLite drift rows. A drift check compares two persisted calibration summaries by
+cohort, prediction type, horizon, bin edges, optional signal family, metrics, and source outcome
+membership under an explicit `as_of` cutoff. Incompatible cohort shape, lookahead summaries, missing
+source artifacts, insufficient resolved history, or conflicting metric movement become explicit
+`not_evaluable`, `insufficient_history`, or `inconclusive` statuses instead of producing
+overconfident deltas. Provider compatibility notes, evidence aging record IDs, artifact freshness
+review IDs, source calibration artifact IDs, source outcome IDs, and source calibration slice IDs are
+preserved as drift provenance. Reports reference the drift artifact through the audit manifest and
+source references; they do not inline recomputed drift math or adjust prediction scores.
+
 Rendered Markdown/JSON reports now integrate persisted Phase 6 outputs without recomputing them.
 Stored `prediction_outcome_evaluations` for rendered candidates become `PriorOutcomeReview`
 records, candidates reference those review IDs, and report source references include the prior
 review trace. Phase 6 audit artifacts (`prediction_outcome`, `prediction_outcome_evaluation`,
-`calibration_summary`, `signal_family_ablation`, and `walk_forward_evaluation`) remain separate
-artifacts but are preserved in the final audit manifest and report source references where they
-support calibration context.
+`calibration_summary`, `calibration_drift_check`, `signal_family_ablation`, and
+`walk_forward_evaluation`) remain separate artifacts but are preserved in the final audit manifest
+and report source references where they support calibration context.
 
 Phase 5 report rendering now populates `PriorOutcomeReview` directly from stored prior JSON report
 artifacts when available. The prior report artifact must resolve through the runtime report index,

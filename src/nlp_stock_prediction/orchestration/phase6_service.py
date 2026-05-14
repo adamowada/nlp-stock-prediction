@@ -28,6 +28,10 @@ from nlp_stock_prediction.evaluation.calibration import (
     PHASE6_CALIBRATION_TOOL_VERSION,
     write_calibration_summary_artifact,
 )
+from nlp_stock_prediction.evaluation.drift import (
+    CalibrationDriftThresholds,
+    write_calibration_drift_check_artifact,
+)
 from nlp_stock_prediction.evaluation.live_outcomes import (
     PHASE7_LIVE_OUTCOME_TOOL_NAME,
     PHASE7_LIVE_OUTCOME_TOOL_VERSION,
@@ -676,10 +680,63 @@ class Phase6Service:
             "limitations": list(result.summary.limitations),
         }
 
+    def phase7_calibration_drift_check(
+        self,
+        *,
+        run_id: str,
+        prior_calibration_id: str,
+        current_calibration_id: str,
+        as_of: str,
+        artifact_dir: str | None = None,
+        signal_family: str | None = None,
+        min_resolved_count: int = 10,
+        watch_delta: float = 0.05,
+        degraded_delta: float = 0.10,
+        improved_delta: float = 0.10,
+    ) -> JsonObject:
+        self._require_run(run_id)
+        result = write_calibration_drift_check_artifact(
+            store=self.store,
+            repo_root=self.repo_root,
+            artifact_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=artifact_dir),
+            run_id=run_id,
+            prior_calibration_id=prior_calibration_id,
+            current_calibration_id=current_calibration_id,
+            as_of=_parse_aware_datetime(as_of, "as_of"),
+            signal_family=(
+                None
+                if signal_family is None or not signal_family.strip()
+                else _single_signal_family(signal_family)
+            ),
+            thresholds=CalibrationDriftThresholds(
+                min_resolved_count=min_resolved_count,
+                watch_delta=watch_delta,
+                degraded_delta=degraded_delta,
+                improved_delta=improved_delta,
+            ),
+        )
+        return {
+            "run_id": run_id,
+            "drift_check_id": result.drift_check_id,
+            "tool_run_id": result.tool_run_id,
+            "artifact_id": result.artifact.artifact_id,
+            "artifact_path": Path(result.artifact.path).as_posix(),
+            "prior_calibration_id": prior_calibration_id,
+            "current_calibration_id": current_calibration_id,
+            "drift_status": result.drift_check.drift_status,
+            "metric_deltas": dict(result.drift_check.metric_deltas),
+            "source_calibration_artifact_ids": list(
+                result.drift_check.source_calibration_artifact_ids
+            ),
+            "source_outcome_evaluation_ids": list(result.drift_check.source_outcome_evaluation_ids),
+            "limitations": list(result.drift_check.limitations),
+        }
+
     def inspect_phase6_run(self, *, run_id: str) -> JsonObject:
         run = self._require_run(run_id)
         outcome_evaluations = self.store.list_outcome_evaluations_for_run(run_id)
         calibration_runs = self.store.list_calibration_runs_for_run(run_id)
+        calibration_drift_checks = self.store.list_calibration_drift_checks_for_run(run_id)
         tool_runs = self.store.list_tool_runs_for_run(run_id)
         registered_tool_names = {tool.tool_name for tool in self.registry.specs()}
         raw_status_counts: dict[str, int] = {}
@@ -691,6 +748,7 @@ class Phase6Service:
             "outcome_evaluation_count": len(outcome_evaluations),
             "outcome_evaluation_status_counts": cast(JsonObject, raw_status_counts),
             "calibration_run_count": len(calibration_runs),
+            "calibration_drift_check_count": len(calibration_drift_checks),
             "calibration_slice_count": sum(
                 len(self.store.list_calibration_slices(record.calibration_id))
                 for record in calibration_runs
@@ -708,6 +766,18 @@ class Phase6Service:
                     "limitations": list(record.limitations),
                 }
                 for record in calibration_runs
+            ],
+            "calibration_drift_checks": [
+                {
+                    "drift_check_id": record.drift_check_id,
+                    "drift_status": record.drift_status,
+                    "artifact_id": record.artifact_id,
+                    "prior_calibration_id": record.prior_calibration_id,
+                    "current_calibration_id": record.current_calibration_id,
+                    "source_calibration_artifact_ids": list(record.source_calibration_artifact_ids),
+                    "limitations": list(record.limitations),
+                }
+                for record in calibration_drift_checks
             ],
         }
 
@@ -793,6 +863,14 @@ def _signal_families(values: Sequence[str] | None) -> tuple[SignalArtifactFamily
             allowed = ", ".join(item.value for item in SignalArtifactFamily)
             raise ValueError(f"families must be one of: {allowed}") from exc
     return tuple(dict.fromkeys(families))
+
+
+def _single_signal_family(value: str) -> SignalArtifactFamily:
+    try:
+        return SignalArtifactFamily(value.strip())
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in SignalArtifactFamily)
+        raise ValueError(f"signal_family must be one of: {allowed}") from exc
 
 
 def _non_empty_unique_strings(values: Sequence[str], field_name: str) -> tuple[str, ...]:

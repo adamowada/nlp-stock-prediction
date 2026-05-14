@@ -210,18 +210,25 @@ without turning calibration into trading-performance claims.
 
 The Phase 7 gate is deterministic unless an individual live test is explicitly opted in. It exercises
 freshness and aging records, live outcome materialization boundaries, cross-run outcome summaries,
-source reliability notes, and provider replacement playbooks from real contract and SQLite records.
+source reliability notes, provider replacement playbooks, and calibration drift checks from real
+contract and SQLite records.
 
 ```sh
 python -m pytest tests/test_phase7_artifact_freshness.py tests/test_phase7_evidence_aging.py
 python -m pytest tests/test_phase7_live_outcome_materialization.py tests/test_phase7_outcome_review_summaries.py
 python -m pytest tests/test_phase7_source_reliability.py tests/test_phase7_provider_playbooks.py tests/test_provider_reliability.py
+python -m pytest tests/test_phase7_calibration_drift.py tests/test_phase6_calibration_summary.py tests/test_phase6_walk_forward_evaluation.py
 ```
 
 The reliability/playbook gate must verify official API evidence, public-scrape limitations, missing
 traceability, provider compatibility, artifact schema/freshness expectations, and visible live
 provider failure behavior. It must not introduce fixture, dummy, smoke, scaffold, secret, or
 fabricated provider fallbacks into product paths.
+
+The calibration-drift gate must verify no-lookahead cutoffs, comparable cohort shape, bin/family
+metric deltas, insufficient-history and inconclusive statuses, drift artifact persistence, SQLite
+round trips, and report-reference preservation without turning calibration into trading-performance
+claims.
 
 ### Cross-Cutting Integrity Gates
 

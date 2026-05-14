@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -182,12 +182,27 @@ def test_rendered_report_surfaces_phase6_outcomes_and_calibration_artifacts(
         created_at=OBSERVED_AT,
         evaluated_at=EVALUATED_AT,
     )
+    prior_calibration = Phase6Service(repo_root=tmp_path).phase6_calibration_summary(
+        run_id=run_id,
+        cohort_id="phase6-evalcal-stage8-msft-swing",
+        as_of=(EVALUATED_AT + timedelta(days=1)).isoformat(),
+        artifact_dir=audit_dir.as_posix(),
+        bin_edges=(0.0, 0.5, 1.0),
+    )
     calibration = Phase6Service(repo_root=tmp_path).phase6_calibration_summary(
         run_id=run_id,
         cohort_id="phase6-evalcal-stage8-msft-swing",
         as_of=AS_OF.isoformat(),
         artifact_dir=audit_dir.as_posix(),
         bin_edges=(0.0, 0.5, 1.0),
+    )
+    drift = Phase6Service(repo_root=tmp_path).phase7_calibration_drift_check(
+        run_id=run_id,
+        prior_calibration_id=str(prior_calibration["calibration_id"]),
+        current_calibration_id=str(calibration["calibration_id"]),
+        as_of=(AS_OF + timedelta(days=1)).isoformat(),
+        artifact_dir=audit_dir.as_posix(),
+        min_resolved_count=1,
     )
 
     rendered = service.render_prediction_report(run_id=run_id, symbol="MSFT")
@@ -218,12 +233,18 @@ def test_rendered_report_surfaces_phase6_outcomes_and_calibration_artifacts(
         _references_artifact(reference, str(calibration["artifact_id"]))
         for reference in source_references
     )
+    assert any(
+        _references_artifact(reference, str(drift["artifact_id"]))
+        for reference in source_references
+    )
     assert {
         "prediction_outcome",
         "prediction_outcome_evaluation",
         "calibration_summary",
+        "calibration_drift_check",
     }.issubset(artifact_types)
     assert "(calibration_summary)" in markdown
+    assert "(calibration_drift_check)" in markdown
     assert "(prediction_outcome_evaluation)" in markdown
     assert "Stored outcome evaluation is confirmed" in markdown
     assert [
