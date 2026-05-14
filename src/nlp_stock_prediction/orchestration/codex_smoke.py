@@ -236,7 +236,7 @@ def verify_sqlite_run(config: CodexSmokeConfig) -> None:
 
     evidence = store.list_evidence_for_run(run_id)
     if not evidence:
-        raise RuntimeError("Codex smoke did not persist search evidence.")
+        raise RuntimeError("Codex smoke did not persist source evidence.")
     candidates = store.list_prediction_candidates_for_run(run_id)
     if not candidates:
         raise RuntimeError("Codex smoke did not persist prediction candidates.")

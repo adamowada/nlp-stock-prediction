@@ -1,4 +1,4 @@
-"""Run the opt-in Phase 2 real Codex MCP smoke test."""
+"""Run the opt-in Phase 4 real Codex MCP smoke test."""
 
 from __future__ import annotations
 

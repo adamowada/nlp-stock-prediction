@@ -61,6 +61,77 @@ from nlp_stock_prediction.storage import (
 RUN_DATE = date(2026, 5, 13)
 STARTED_AT = datetime(2026, 5, 13, 14, 0, tzinfo=UTC)
 COMPLETED_AT = datetime(2026, 5, 13, 14, 5, tzinfo=UTC)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.e2e
+def test_phase4_service_e2e_runs_complete_fixture_backed_tool_suite(
+    tmp_path: Path,
+) -> None:
+    service = Phase4Service(
+        repo_root=tmp_path,
+        fixture_root=REPO_ROOT,
+        database_path=Path("data") / "prediction-research.sqlite3",
+    )
+
+    result = service.run_offline_phase4_flow(
+        run_date=RUN_DATE.isoformat(),
+        output_dir="reports/phase4-full-tool-suite",
+        symbol="TSLA",
+    )
+
+    run_id = str(result["run_id"])
+    report = cast(dict[str, object], result["report"])
+    tool_runs = service.store.list_tool_runs_for_run(run_id)
+    tool_names = {record.tool_name for record in tool_runs}
+    tool_statuses = {record.tool_name: record.status for record in tool_runs}
+    artifact_types = {
+        record.artifact_type for record in service.store.list_artifacts_for_run(run_id)
+    }
+    evidence_providers = {record.provider for record in service.store.list_evidence_for_run(run_id)}
+    candidates = service.store.list_prediction_candidates_for_run(run_id)
+    json_path = Path(str(report["json_path"]))
+    markdown_path = Path(str(report["markdown_path"]))
+    report_payload = json.loads(json_path.read_text(encoding="utf-8"))
+    markdown = markdown_path.read_text(encoding="utf-8")
+
+    assert {
+        "phase4_universe_discovery",
+        "phase4_market_data",
+        "phase4_technical_package",
+        "phase4_social_evidence",
+        "phase4_news_catalyst",
+        "phase4_fundamentals",
+        "phase4_sector_macro",
+        "phase4_prediction_candidate_synthesis",
+        "phase4_prediction_evaluation",
+        "render_prediction_report",
+    }.issubset(tool_names)
+    assert tool_statuses["phase4_social_evidence"] == "successful"
+    assert tool_statuses["phase4_news_catalyst"] == "successful"
+    assert tool_statuses["phase4_fundamentals"] == "successful"
+    assert tool_statuses["phase4_prediction_candidate_synthesis"] == "successful"
+    assert {
+        "instrument_universe",
+        "market_data",
+        "technical_package",
+        "normalized_evidence",
+        "analysis_context",
+        "prediction_input",
+        "prediction_evaluation",
+        "markdown_report",
+        "json_report",
+        "audit_manifest",
+    }.issubset(artifact_types)
+    assert {"reddit", "x-recent-search", "fixture-news", "sec-edgar"}.issubset(evidence_providers)
+    assert candidates
+    assert candidates[0].status == PredictionStatus.EVIDENCE_SUPPORTED.value
+    assert candidates[0].evidence_for
+    assert json_path.parent.name == "tsla"
+    assert markdown_path.parent == json_path.parent
+    assert report_payload["prediction_candidates"][0]["metadata"]["prediction_evaluation"]
+    assert "Recommendation:" not in markdown
+    assert "Trade instruction:" not in markdown
 
 
 @pytest.mark.e2e

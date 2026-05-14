@@ -66,7 +66,7 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
 
 
 @pytest.mark.unit
-def test_codex_smoke_output_verification_requires_search_evidence(tmp_path: Path) -> None:
+def test_codex_smoke_output_verification_requires_source_evidence(tmp_path: Path) -> None:
     smoke = codex_smoke
     config = smoke.CodexSmokeConfig(
         run_date=date(2026, 5, 13),
@@ -257,7 +257,7 @@ def test_codex_smoke_disables_bytecode_writes_for_subprocess(
 
 
 @pytest.mark.codex_smoke
-def test_phase2_real_codex_smoke_runner_is_opt_in() -> None:
+def test_phase4_real_codex_smoke_runner_is_opt_in() -> None:
     if os.environ.get("NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE") != "1":
         pytest.skip("Set NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 to run real Codex smoke.")
     if shutil.which("codex") is None:
@@ -271,7 +271,7 @@ def test_phase2_real_codex_smoke_runner_is_opt_in() -> None:
             "--date",
             "2026-05-13",
             "--output",
-            "reports/phase2-codex-smoke-pytest",
+            "reports/phase4-codex-smoke-pytest",
             "--symbol",
             "TSLA",
             "--repo-root",

@@ -45,13 +45,10 @@ Acceptance:
 
 Goal: make Codex the disciplined prediction research assistant.
 
-Status: initial orchestrator implemented. The deterministic offline `research` command runs through
-dummy tools, and an opt-in real Codex smoke path exposes Phase 2 tools through local MCP, records
-live-search evidence, writes ignored artifacts, and renders Markdown/JSON reports. The research tools
-themselves remain dummy/fixture-backed until Phase 4. The smoke service now rejects duplicate
-deterministic run starts, preserves neutral evidence as insufficient context unless supporting or
-contradictory evidence is present, writes report artifacts into the audit manifest, and removes newly
-written files when a transactional tool step fails.
+Status: initial orchestrator implemented and retained for legacy MCP smoke coverage. The default
+offline `research` command now routes through the Phase 4 fixture-backed tool suite. The Phase 2 MCP
+service remains available for focused orchestration tests that pin deterministic run IDs, duplicate
+run rejection, neutral-evidence handling, audit-manifest report artifacts, and transactional cleanup.
 
 Build:
 
@@ -109,9 +106,9 @@ Goal: convert research capabilities into first-class independent tools.
 
 Status: fixture-backed first-class tools are implemented for universe discovery, market data,
 technical packages, social evidence, news/catalysts, fundamentals, sector/macro context, prediction
-evaluation, and final report rendering. Tool runs write typed artifacts, index SQLite run-graph rows,
-and expose recoverable failures as visible warning/error results. Live provider coverage remains
-opt-in and incremental.
+candidate synthesis, prediction evaluation, and final report rendering. Tool runs write typed
+artifacts, index SQLite run-graph rows, and expose recoverable failures as visible warning/error
+results. Live provider coverage remains opt-in and incremental.
 
 Built:
 
@@ -122,6 +119,7 @@ Built:
 - news/catalyst tool;
 - fundamentals tool;
 - sector/macro tool;
+- conservative prediction candidate synthesis tool;
 - prediction evaluation tool;
 - report tool.
 

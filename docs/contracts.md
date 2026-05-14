@@ -73,8 +73,8 @@ or alias lookup, provider ID lookup, asset-class filtering, latest tradability e
 and watchlist instrument listing.
 
 Target behavior: first-class live universe discovery tools will turn provider/search/watchlist input
-into these contracts. Today, fixture and smoke paths exercise the contracts and storage; they do not
-claim live provider coverage for all asset classes.
+into these contracts. Today, Phase 4 fixture-backed universe discovery and smoke paths exercise the
+contracts and storage; they do not claim live provider coverage for all asset classes.
 
 ## Tool Run
 
