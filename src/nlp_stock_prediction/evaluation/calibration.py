@@ -375,7 +375,8 @@ def write_calibration_summary_artifact(
         ).write_json(
             artifact_id=artifact_id,
             artifact_type="calibration_summary",
-            filename=artifact_filename or f"calibration/summaries/{slug(cohort_id)}.json",
+            filename=artifact_filename
+            or f"calibration/summaries/{slug(cohort_id)}-{artifact_digest[:12]}.json",
             payload=cast(JsonObject, payload.model_dump(mode="json")),
             record_count=1,
             metadata={
@@ -384,6 +385,7 @@ def write_calibration_summary_artifact(
                 "cohort_id": cohort_id,
                 "sample_count": summary.sample_count,
                 "resolved_count": summary.resolved_count,
+                "source_candidate_ids": [item.target.candidate_id for item in eligible],
             },
         )
         calibration_run = CalibrationRunRecord(

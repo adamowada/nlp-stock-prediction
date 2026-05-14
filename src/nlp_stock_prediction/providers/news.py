@@ -281,7 +281,7 @@ class PublicNewsProvider:
                     provenance=source_provenance(
                         provider_name=self.provider_name,
                         source_kind=SourceKind.NEWS_ARTICLE,
-                        retrieval_method=RetrievalMethod.OFFICIAL_API,
+                        retrieval_method=_retrieval_method_for_provider(self.provider_name),
                         fetched_at=fetched_at,
                         observed_at=published_at,
                         source_url=article_url,
@@ -310,6 +310,12 @@ def _optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _retrieval_method_for_provider(provider_name: str) -> RetrievalMethod:
+    if "fixture" in provider_name.lower():
+        return RetrievalMethod.FIXTURE
+    return RetrievalMethod.OFFICIAL_API
 
 
 __all__ = ["PublicNewsProvider", "PublicNewsProviderConfig"]

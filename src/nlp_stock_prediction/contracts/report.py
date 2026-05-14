@@ -203,6 +203,20 @@ class ReportSourceReference(ContractModel):
             or self.prior_outcome_review_ids
         ):
             raise ValueError("report source references require at least one source target")
+        if self.reference_type == "source_evidence" and not self.evidence_ids:
+            raise ValueError("source_evidence references require evidence_ids")
+        if self.reference_type == "tool_artifact" and not self.artifact_ids:
+            raise ValueError("tool_artifact references require artifact_ids")
+        if self.reference_type == "provider_health" and not self.provider_names:
+            raise ValueError("provider_health references require provider_names")
+        if self.reference_type == "prior_outcome" and not self.prior_outcome_review_ids:
+            raise ValueError("prior_outcome references require prior_outcome_review_ids")
+        if self.reference_type == "prediction_evaluation" and not (
+            self.artifact_ids or self.candidate_ids
+        ):
+            raise ValueError(
+                "prediction_evaluation references require artifact_ids or candidate_ids"
+            )
         _validate_report_authored_language(self.label)
         return self
 
@@ -247,6 +261,18 @@ class MaterialClaimTrace(ContractModel):
                 raise ValueError("labeled inference claim traces require rationale")
         elif not has_references:
             raise ValueError("material claim traces require trace references")
+        if self.claim_type == "source_observation" and not (
+            self.evidence or self.source_reference_ids
+        ):
+            raise ValueError("source observation claim traces require evidence references")
+        if self.claim_type == "prior_outcome" and not (
+            self.prior_outcome_review_ids or self.source_reference_ids
+        ):
+            raise ValueError("prior outcome claim traces require prior outcome review references")
+        if self.claim_type == "provider_health" and not (
+            self.provider_names or self.source_reference_ids
+        ):
+            raise ValueError("provider health claim traces require provider references")
         _validate_report_authored_language(self.claim, self.rationale)
         return self
 

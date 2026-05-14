@@ -127,7 +127,12 @@ def test_phase4_service_e2e_runs_complete_fixture_backed_tool_suite(
         "json_report",
         "audit_manifest",
     }.issubset(artifact_types)
-    assert {"reddit", "x-recent-search", "fixture-news", "sec-edgar"}.issubset(evidence_providers)
+    assert {
+        "reddit",
+        "fixture-x-recent-search",
+        "fixture-news",
+        "fixture-sec-edgar",
+    }.issubset(evidence_providers)
     assert candidates
     assert candidates[0].status == PredictionStatus.EVIDENCE_SUPPORTED.value
     assert candidates[0].evidence_for
@@ -470,7 +475,7 @@ def _candidate_record_from_contract(
         run_id=run_id,
         instrument_id=candidate.instrument_id,
         prediction_horizon=candidate.horizon.value,
-        prediction_type="scenario_quality",
+        prediction_type="directional",
         scenario=candidate.thesis,
         status=candidate.status.value,
         confidence=candidate.confidence,

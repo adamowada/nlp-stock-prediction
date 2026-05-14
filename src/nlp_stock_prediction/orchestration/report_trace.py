@@ -192,7 +192,17 @@ def _candidate_ids_for_artifact(
         "signal_family_ablation",
         "walk_forward_evaluation",
     }:
-        return fallback_candidate_ids
+        source_candidate_ids = artifact.metadata.get("source_candidate_ids")
+        if isinstance(source_candidate_ids, list):
+            allowed = set(fallback_candidate_ids)
+            return tuple(
+                dict.fromkeys(
+                    candidate_id
+                    for candidate_id in source_candidate_ids
+                    if isinstance(candidate_id, str) and candidate_id and candidate_id in allowed
+                )
+            )
+        return ()
     candidate_ids: list[str] = []
     for candidate in prediction_candidates:
         candidate_id = getattr(candidate, "candidate_id", None)

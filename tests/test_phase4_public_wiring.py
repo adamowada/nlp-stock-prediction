@@ -6,12 +6,17 @@ from typing import Any, cast
 
 import pytest
 
-from nlp_stock_prediction.contracts import RunConfig
+from nlp_stock_prediction.contracts import EvidenceRequest, RetrievalMethod, RunConfig
+from nlp_stock_prediction.orchestration.phase4_fixture_providers import (
+    Phase4FixtureProviderFactory,
+    _StaticJsonTransport,
+)
 from nlp_stock_prediction.orchestration.phase4_service import (
     Phase4Service,
     build_phase4_tool_registry,
 )
 from nlp_stock_prediction.pipeline import generate_daily_report
+from nlp_stock_prediction.providers._base import ProviderTransportError
 
 
 class _FakeMcpServer:
@@ -107,6 +112,37 @@ def test_offline_pipeline_runs_real_phase4_public_flow(tmp_path: Path) -> None:
     assert payload["prediction_candidates"]
 
 
+@pytest.mark.unit
+def test_phase4_fixture_providers_mark_fixture_provenance() -> None:
+    factory = Phase4FixtureProviderFactory(Path.cwd())
+    request = EvidenceRequest(
+        request_id="fixture-provenance-tsla",
+        run_date="2026-05-11",
+        tickers=("TSLA",),
+        query="TSLA",
+        limit=10,
+    )
+    x_provider = factory.x_provider("TSLA")
+    news_provider = factory.news_providers("TSLA")[0]
+
+    assert x_provider is not None
+    x_result = x_provider.fetch_social_posts(request)
+    news_result = news_provider.fetch_articles(request)
+
+    assert x_result.data is not None
+    assert news_result.data is not None
+    assert x_result.data[0].provenance.retrieval_method == RetrievalMethod.FIXTURE
+    assert news_result.data[0].provenance.retrieval_method == RetrievalMethod.FIXTURE
+
+
+@pytest.mark.unit
+def test_static_fixture_transport_rejects_unregistered_urls() -> None:
+    transport = _StaticJsonTransport({"registered.example/v1": {"ok": True}})
+
+    with pytest.raises(ProviderTransportError, match="No fixture JSON response"):
+        transport.get_json("https://other.example/v1")
+
+
 @pytest.mark.integration
 def test_offline_pipeline_supports_custom_output_and_symbol_isolation(tmp_path: Path) -> None:
     output_dir = tmp_path / "custom-output"
@@ -141,4 +177,17 @@ def test_pipeline_rejects_live_mode_until_production_orchestration_exists(
     with pytest.raises(ValueError, match="live providers are not wired"):
         generate_daily_report(
             RunConfig(run_date="2026-05-11", output_dir=tmp_path / "reports", offline=False)
+        )
+
+
+@pytest.mark.integration
+def test_pipeline_rejects_invalid_fixture_dir(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="fixture_dir"):
+        generate_daily_report(
+            RunConfig(
+                run_date="2026-05-11",
+                output_dir=tmp_path / "reports",
+                fixture_dir=tmp_path / "missing-fixtures",
+                offline=True,
+            )
         )

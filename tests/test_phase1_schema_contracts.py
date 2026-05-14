@@ -281,6 +281,36 @@ def test_report_source_reference_requires_source_target() -> None:
 
 
 @pytest.mark.schema
+def test_report_source_reference_rejects_mismatched_reference_type_targets() -> None:
+    with pytest.raises(ValidationError, match="source_evidence"):
+        ReportSourceReference(
+            reference_id="source-ref-artifact-as-evidence",
+            label="Artifact mislabeled as source evidence.",
+            reference_type="source_evidence",
+            artifact_ids=("artifact-report",),
+        )
+
+    with pytest.raises(ValidationError, match="prior_outcome"):
+        ReportSourceReference(
+            reference_id="source-ref-prior-outcome-without-review",
+            label="Prior outcome without review target.",
+            reference_type="prior_outcome",
+            artifact_ids=("artifact-review",),
+        )
+
+
+@pytest.mark.schema
+def test_material_claim_trace_rejects_mismatched_claim_type_targets() -> None:
+    with pytest.raises(ValidationError, match="source observation"):
+        MaterialClaimTrace(
+            claim_id="claim-source-observation-without-source",
+            claim="A source observation cannot cite only a candidate.",
+            claim_type="source_observation",
+            candidate_ids=("candidate-tsla-1",),
+        )
+
+
+@pytest.mark.schema
 def test_dissenting_evidence_requires_source_or_artifact_reference() -> None:
     with pytest.raises(ValidationError, match="dissenting evidence"):
         DissentingEvidence(summary="Dissent without a trace is not reportable.")

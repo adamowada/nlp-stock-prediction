@@ -497,7 +497,12 @@ def _primary_instrument(
         return instrument_from_record(record)
     discovered = store.find_instruments_by_symbol_or_alias(symbol.upper())
     if discovered:
-        return instrument_from_record(discovered[0])
+        exact = tuple(item for item in discovered if item.symbol.upper() == symbol.upper())
+        if len(exact) == 1:
+            return instrument_from_record(exact[0])
+        if len(discovered) == 1:
+            return instrument_from_record(discovered[0])
+        raise ValueError(f"ambiguous instrument symbol for report rendering: {symbol.upper()}")
     return phase2_instrument(symbol.upper(), fallback_generated_at)
 
 

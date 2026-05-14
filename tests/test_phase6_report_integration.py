@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -18,12 +19,15 @@ from nlp_stock_prediction.contracts import (
     SourceKind,
     TimeHorizon,
 )
+from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.evaluation import (
     build_prediction_evaluation_target,
     write_point_in_time_outcome_evaluation_artifacts,
 )
+from nlp_stock_prediction.orchestration.phase2_report import _primary_instrument
 from nlp_stock_prediction.orchestration.phase4_service import Phase4Service
 from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
+from nlp_stock_prediction.orchestration.report_trace import build_report_trace
 from nlp_stock_prediction.storage import (
     EvidenceRecord,
     InstrumentRecord,
@@ -256,3 +260,78 @@ def _references_artifact(reference: dict[str, object], artifact_id: str) -> bool
         and isinstance(artifact_ids, list)
         and artifact_id in artifact_ids
     )
+
+
+@pytest.mark.unit
+def test_report_trace_limits_cohort_artifacts_to_source_candidates() -> None:
+    trace = build_report_trace(
+        evidence_sources=(),
+        prediction_candidates=(
+            SimpleNamespace(
+                candidate_id="candidate-in-cohort",
+                thesis="Candidate in calibration cohort.",
+                evidence_for=(),
+                evidence_against=(),
+                signal_artifact_ids=(),
+                signal_artifacts=(),
+                prior_outcome_review_ids=(),
+            ),
+            SimpleNamespace(
+                candidate_id="candidate-outside-cohort",
+                thesis="Candidate outside calibration cohort.",
+                evidence_for=(),
+                evidence_against=(),
+                signal_artifact_ids=(),
+                signal_artifacts=(),
+                prior_outcome_review_ids=(),
+            ),
+        ),
+        audit_artifacts=(
+            AuditArtifact(
+                artifact_id="artifact-calibration-cohort",
+                artifact_type="calibration_summary",
+                path="reports/run/audit/calibration.json",
+                created_at=NOW,
+                produced_by="phase6_calibration_summary",
+                sha256="a" * 64,
+                metadata={"source_candidate_ids": ["candidate-in-cohort"]},
+            ),
+        ),
+        prior_outcome_reviews=(),
+    )
+
+    references_by_candidate = {
+        trace.candidate_ids[0]: trace.source_reference_ids for trace in trace.material_claim_traces
+    }
+    assert references_by_candidate["candidate-in-cohort"] == (
+        "source-ref-artifact-calibration-cohort",
+    )
+    assert references_by_candidate["candidate-outside-cohort"] == ()
+
+
+@pytest.mark.unit
+def test_report_primary_instrument_rejects_ambiguous_symbol(tmp_path: Path) -> None:
+    service = Phase4Service(repo_root=tmp_path)
+    service.store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="instrument:equity:us:ai",
+            symbol="AI",
+            asset_class="stock",
+            name="C3.ai",
+        )
+    )
+    service.store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="instrument:crypto:ai-usd",
+            symbol="AI",
+            asset_class="crypto",
+            name="AI token",
+        )
+    )
+
+    with pytest.raises(ValueError, match="ambiguous instrument symbol"):
+        _primary_instrument(
+            service.store,
+            symbol="AI",
+            fallback_generated_at=NOW,
+        )

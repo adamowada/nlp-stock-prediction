@@ -280,7 +280,7 @@ class XRecentSearchProvider:
                     provenance=source_provenance(
                         provider_name=self.provider_name,
                         source_kind=SourceKind.X_POST,
-                        retrieval_method=RetrievalMethod.OFFICIAL_API,
+                        retrieval_method=_retrieval_method_for_provider(self.provider_name),
                         fetched_at=fetched_at,
                         observed_at=created_at,
                         source_url=source_url,
@@ -326,6 +326,12 @@ def _social_score(metrics: dict[object, object]) -> int | None:
             score += value
             found = True
     return score if found else None
+
+
+def _retrieval_method_for_provider(provider_name: str) -> RetrievalMethod:
+    if "fixture" in provider_name.lower():
+        return RetrievalMethod.FIXTURE
+    return RetrievalMethod.OFFICIAL_API
 
 
 def _validate_sort_order(sort_order: str) -> str:

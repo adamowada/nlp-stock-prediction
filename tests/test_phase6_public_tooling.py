@@ -32,11 +32,13 @@ from nlp_stock_prediction.orchestration.phase6_service import (
     build_phase6_tool_registry,
 )
 from nlp_stock_prediction.storage import (
+    ArtifactRecord,
     EvidenceRecord,
     InstrumentRecord,
     PredictionCandidateRecord,
     ResearchRunRecord,
     SQLiteStore,
+    ToolRunRecord,
 )
 
 RUN_ID = "run-phase6-public-tools"
@@ -270,8 +272,8 @@ def test_phase6_registry_exposes_live_evaluation_tool_suite() -> None:
     tool_names = [str(tool["tool_name"]) for tool in tools]
 
     assert tool_names == [
-        "phase6_load_outcome_evaluations",
         "phase6_point_in_time_outcome_evaluation",
+        "phase6_load_outcome_evaluations",
         "phase6_signal_family_ablation",
         "phase6_walk_forward_evaluation",
         "phase6_calibration_summary",
@@ -279,6 +281,19 @@ def test_phase6_registry_exposes_live_evaluation_tool_suite() -> None:
     ]
     assert not any("dummy" in tool_name for tool_name in tool_names)
     assert {str(tool["requires_network"]) for tool in tools} == {"False"}
+
+
+@pytest.mark.unit
+def test_orchestration_facade_lazily_exports_phase6_service() -> None:
+    from nlp_stock_prediction.orchestration import (
+        Phase6Service as ExportedPhase6Service,
+    )
+    from nlp_stock_prediction.orchestration import (
+        build_phase6_tool_registry as exported_registry_factory,
+    )
+
+    assert ExportedPhase6Service is Phase6Service
+    assert exported_registry_factory().as_plan()["tools"]
 
 
 @pytest.mark.unit
@@ -395,6 +410,18 @@ def test_phase6_service_runs_live_tools_from_persisted_outcome_artifacts(
         bin_edges=(0.0, 0.5, 1.0),
         families=("technicals", "news"),
     )
+    service.store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-phase6-report-integration-evidence",
+            run_id=RUN_ID,
+            tool_name="phase6_report_integration_evidence",
+            tool_version="test.v1",
+            status="successful",
+            started_at=NOW,
+            completed_at=NOW,
+            inputs={},
+        )
+    )
     inspection = service.inspect_phase6_run(run_id=RUN_ID)
 
     assert loaded["outcome_evaluation_count"] == 4
@@ -416,6 +443,7 @@ def test_phase6_service_runs_live_tools_from_persisted_outcome_artifacts(
     assert inspection["outcome_evaluation_count"] == 4
     assert inspection["calibration_run_count"] == 3
     assert inspection["calibration_slice_count"] == 8
+    assert inspection["phase6_tool_run_count"] == 7
 
 
 @pytest.mark.unit
@@ -425,3 +453,38 @@ def test_phase6_service_requires_persisted_outcome_artifacts(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="No persisted outcome evaluations"):
         service.phase6_load_outcome_evaluations(run_id=RUN_ID)
+
+
+@pytest.mark.unit
+def test_phase6_inferred_artifact_dir_still_uses_write_policy(tmp_path: Path) -> None:
+    _persist_outcome_sources(tmp_path)
+    service = Phase6Service(repo_root=tmp_path)
+    loaded = service.phase6_load_outcome_evaluations(run_id=RUN_ID)
+    source_artifact_id = str(cast(list[object], loaded["source_artifact_ids"])[0])
+    source_artifact = service.store.get_artifact(source_artifact_id)
+    assert source_artifact is not None
+    bad_audit_dir = tmp_path / "src" / "audit"
+    bad_audit_dir.mkdir(parents=True)
+    bad_artifact_path = bad_audit_dir / Path(source_artifact.path).name
+    original_artifact_path = (
+        source_artifact.path
+        if source_artifact.path.is_absolute()
+        else tmp_path / source_artifact.path
+    )
+    bad_artifact_path.write_bytes(original_artifact_path.read_bytes())
+    service.store.record_artifact(
+        ArtifactRecord(
+            **{
+                **source_artifact.__dict__,
+                "path": bad_artifact_path.relative_to(tmp_path),
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="Research artifact writes are limited"):
+        service.phase6_calibration_summary(
+            run_id=RUN_ID,
+            cohort_id="phase6-evalcal-disallowed-dir",
+            as_of=AS_OF.isoformat(),
+            bin_edges=(0.0, 0.5, 1.0),
+        )

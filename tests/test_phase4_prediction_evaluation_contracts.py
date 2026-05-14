@@ -355,6 +355,66 @@ def test_evaluation_contract_rejects_supported_status_without_source_evidence() 
 
 
 @pytest.mark.unit
+def test_evaluation_contract_rejects_counts_that_drift_from_evidence_references() -> None:
+    support = EvidenceReference(evidence_id="evidence-support")
+
+    with pytest.raises(ValidationError, match="evidence_for"):
+        PredictionEvaluation(
+            evaluation_id="evaluation-count-drift",
+            candidate_id="candidate-invalid",
+            instrument_id="instrument:equity:us:tsla",
+            symbol="TSLA",
+            created_at=NOW,
+            status=PredictionStatus.EVIDENCE_SUPPORTED,
+            score=0.61,
+            baseline_comparison=BaselineComparison(
+                baseline_id="no_directional_edge",
+                baseline_summary="No directional edge baseline.",
+                baseline_score=0.5,
+                candidate_score=0.61,
+                score_delta=0.11,
+                verdict="above_baseline",
+            ),
+            uncertainty=("Counts must summarize the same evidence references.",),
+            evidence_for=(support,),
+            evidence_counts=EvaluationEvidenceCounts(
+                supporting_source_evidence=1,
+                contradicting_source_evidence=0,
+                missing_source_references=0,
+                supporting_reference_ids=("evidence-other",),
+            ),
+        )
+
+
+@pytest.mark.unit
+def test_evaluation_contract_rejects_contradicted_status_without_contradicting_evidence() -> None:
+    with pytest.raises(ValidationError, match="contradicting evidence"):
+        PredictionEvaluation(
+            evaluation_id="evaluation-contradicted-empty",
+            candidate_id="candidate-invalid",
+            instrument_id="instrument:equity:us:tsla",
+            symbol="TSLA",
+            created_at=NOW,
+            status=PredictionStatus.CONTRADICTED,
+            score=0.4,
+            baseline_comparison=BaselineComparison(
+                baseline_id="no_directional_edge",
+                baseline_summary="No directional edge baseline.",
+                baseline_score=0.5,
+                candidate_score=0.4,
+                score_delta=-0.1,
+                verdict="below_baseline",
+            ),
+            uncertainty=("Contradicted status must be source-backed.",),
+            evidence_counts=EvaluationEvidenceCounts(
+                supporting_source_evidence=0,
+                contradicting_source_evidence=0,
+                missing_source_references=0,
+            ),
+        )
+
+
+@pytest.mark.unit
 def test_prediction_outcome_and_outcome_evaluation_accept_observed_result() -> None:
     evidence = EvidenceReference(evidence_id="evidence-outcome-tsla")
     outcome = PredictionOutcome(

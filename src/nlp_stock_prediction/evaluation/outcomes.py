@@ -220,19 +220,25 @@ def evaluate_prediction_outcome(
     """Evaluate an outcome against the frozen prediction target."""
 
     resolved_evaluated_at = aware_utc(evaluated_at, "evaluated_at")
+    if outcome.observed_at is not None and resolved_evaluated_at < outcome.observed_at:
+        raise ValueError("outcome evaluation must not occur before observed_at")
     status = _outcome_evaluation_status(target=target, outcome=outcome)
     quality_score = _quality_score(status)
-    resolved_limitations = limitations
-    if status in {
-        PredictionOutcomeEvaluationStatus.PENDING,
-        PredictionOutcomeEvaluationStatus.STALE,
-        PredictionOutcomeEvaluationStatus.NOT_EVALUABLE,
-    }:
-        resolved_limitations = tuple(
-            dict.fromkeys((*limitations, *outcome.limitations, *target.limitations))
-        )
-        if not resolved_limitations:
-            resolved_limitations = ("Outcome evaluation is not resolved.",)
+    resolved_limitations = tuple(
+        dict.fromkeys((*limitations, *outcome.limitations, *target.limitations))
+    )
+    if (
+        status
+        in {
+            PredictionOutcomeEvaluationStatus.PENDING,
+            PredictionOutcomeEvaluationStatus.STALE,
+            PredictionOutcomeEvaluationStatus.NOT_EVALUABLE,
+        }
+        and not resolved_limitations
+    ):
+        resolved_limitations = ("Outcome evaluation is not resolved.",)
+    if target.baseline_comparison is None and not resolved_limitations:
+        resolved_limitations = ("No stored baseline comparison was available at the cutoff.",)
 
     resolved_evidence = _dedupe_evidence_references((*outcome.outcome_evidence, *evidence))
     resolved_artifact_ids = tuple(dict.fromkeys((*outcome.artifact_ids, *artifact_ids)))
@@ -400,7 +406,8 @@ def write_point_in_time_outcome_evaluation_artifacts(
             filename=outcome_artifact_filename
             or (
                 "prediction-outcomes/"
-                f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}.json"
+                f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}-"
+                f"{artifact_digest[:8]}.json"
             ),
             payload=cast(JsonObject, outcome_payload.model_dump(mode="json")),
             record_count=1,
@@ -456,7 +463,8 @@ def write_point_in_time_outcome_evaluation_artifacts(
             filename=outcome_evaluation_artifact_filename
             or (
                 "prediction-outcome-evaluations/"
-                f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}.json"
+                f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}-"
+                f"{artifact_digest[:8]}.json"
             ),
             payload=cast(JsonObject, review_payload.model_dump(mode="json")),
             record_count=1,
@@ -529,6 +537,12 @@ def _validated_outcome_evidence(
             raise ValueError(
                 f"outcome evidence must be available by evaluated_at: {reference.evidence_id}"
             )
+        if retrieved_at < target.evaluation_window_end or (
+            published_at is not None and published_at < target.evaluation_window_end
+        ):
+            raise ValueError(
+                f"outcome evidence must observe the evaluation window: {reference.evidence_id}"
+            )
         if record.instruments and target.instrument_id not in record.instruments:
             raise ValueError(
                 f"outcome evidence instrument does not match target: {reference.evidence_id}"
@@ -547,6 +561,8 @@ def _validated_market_artifact_ids(
         artifact = store.get_artifact(artifact_id)
         if artifact is None:
             raise ValueError(f"outcome market artifact does not exist: {artifact_id}")
+        if artifact.artifact_type != "market_data":
+            raise ValueError(f"outcome market artifact must be market_data: {artifact_id}")
         if (
             artifact.created_at is not None
             and aware_utc(
@@ -557,6 +573,12 @@ def _validated_market_artifact_ids(
         ):
             raise ValueError(
                 f"outcome market artifact must be available by evaluated_at: {artifact_id}"
+            )
+        if artifact.created_at is None:
+            raise ValueError(f"outcome market artifact requires created_at: {artifact_id}")
+        if aware_utc(artifact.created_at, "artifact.created_at") < target.evaluation_window_end:
+            raise ValueError(
+                f"outcome market artifact must observe the evaluation window: {artifact_id}"
             )
         instrument_id = artifact.metadata.get("instrument_id")
         instrument_ids = artifact.metadata.get("instrument_ids")
@@ -627,7 +649,8 @@ def _eligible_artifacts(
     candidate: PredictionCandidateRecord,
     cutoff: datetime,
 ) -> tuple[tuple[SignalArtifactReference, ...], tuple[str, ...], tuple[str, ...]]:
-    signal_ids = set(candidate.signal_artifacts)
+    signal_ids = tuple(dict.fromkeys(candidate.signal_artifacts))
+    signal_id_set = set(signal_ids)
     signals: list[SignalArtifactReference] = []
     report_artifacts: list[str] = []
     excluded: list[str] = []
@@ -644,7 +667,7 @@ def _eligible_artifacts(
             continue
         if link.relationship in {"prediction_input", "prediction_evaluation"}:
             report_artifacts.append(link.artifact_id)
-        if link.artifact_id in signal_ids or link.relationship == "signal":
+        if link.artifact_id in signal_id_set or link.relationship == "signal":
             artifact_as_of, reason = _artifact_reference_as_of(artifact, cutoff)
             if reason is not None:
                 excluded.append(f"{link.artifact_id} ({reason})")
@@ -868,8 +891,9 @@ def _quality_score(status: PredictionOutcomeEvaluationStatus) -> float | None:
 def _prediction_type(value: str) -> PredictionType:
     try:
         return PredictionType(value)
-    except ValueError:
-        return PredictionType.UNCERTAIN
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in PredictionType)
+        raise ValueError(f"prediction_type must be one of: {allowed}") from exc
 
 
 def _time_horizon(value: str) -> TimeHorizon:

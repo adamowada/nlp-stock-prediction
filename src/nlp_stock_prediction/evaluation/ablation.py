@@ -75,6 +75,10 @@ class SignalFamilyAblationInput:
         if self.target.symbol.upper() != self.outcome_evaluation.symbol.upper():
             raise ValueError("ablation input target and outcome symbol must match")
         outcome = self.outcome_evaluation.outcome
+        if self.target.prediction_type != outcome.prediction_type:
+            raise ValueError("ablation input prediction_type must match target")
+        if self.target.horizon != outcome.horizon:
+            raise ValueError("ablation input horizon must match target")
         if self.target.evaluation_window_start != outcome.evaluation_window_start:
             raise ValueError("ablation input evaluation_window_start must match target")
         if self.target.evaluation_window_end != outcome.evaluation_window_end:
@@ -292,7 +296,9 @@ def write_signal_family_ablation_artifact(
             artifact_id=artifact_id,
             artifact_type="signal_family_ablation",
             filename=artifact_filename
-            or f"calibration/signal-family-ablations/{slug(cohort_id)}.json",
+            or (
+                f"calibration/signal-family-ablations/{slug(cohort_id)}-{artifact_digest[:12]}.json"
+            ),
             payload=cast(JsonObject, payload.model_dump(mode="json")),
             record_count=len(ablations),
             metadata={
@@ -301,6 +307,7 @@ def write_signal_family_ablation_artifact(
                 "cohort_id": cohort_id,
                 "source_outcome_evaluation_count": len(source_outcome_ids),
                 "family_count": len(requested_families),
+                "source_candidate_ids": [item.target.candidate_id for item in eligible_inputs],
             },
         )
         calibration_run = CalibrationRunRecord(

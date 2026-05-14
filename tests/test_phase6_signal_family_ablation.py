@@ -336,6 +336,24 @@ def test_signal_family_ablation_computes_included_vs_excluded_quality() -> None:
 
 
 @pytest.mark.unit
+def test_signal_family_ablation_input_rejects_prediction_type_or_horizon_mismatch() -> None:
+    target = _target("candidate-mismatch", signal_families=(SignalArtifactFamily.TECHNICALS,))
+    evaluation = _resolved_outcome_evaluation(
+        target,
+        status=PredictionOutcomeEvaluationStatus.CONFIRMED,
+        quality_score=1.0,
+    )
+    mismatched_outcome = evaluation.outcome.model_copy(update={"horizon": TimeHorizon.MONTHLY})
+    mismatched_evaluation = evaluation.model_copy(update={"outcome": mismatched_outcome})
+
+    with pytest.raises(ValueError, match="horizon"):
+        SignalFamilyAblationInput(
+            target=target,
+            outcome_evaluation=mismatched_evaluation,
+        )
+
+
+@pytest.mark.unit
 def test_signal_family_ablation_writes_artifact_and_calibration_slices(
     tmp_path: Path,
 ) -> None:

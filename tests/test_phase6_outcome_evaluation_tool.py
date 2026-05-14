@@ -38,6 +38,7 @@ CUTOFF = datetime(2026, 5, 13, 20, 0, tzinfo=UTC)
 WINDOW_START = datetime(2026, 5, 14, 13, 30, tzinfo=UTC)
 WINDOW_END = datetime(2026, 5, 18, 20, 0, tzinfo=UTC)
 OBSERVED_AT = datetime(2026, 5, 18, 20, 5, tzinfo=UTC)
+EVALUATED_AT = datetime(2026, 5, 18, 21, 0, tzinfo=UTC)
 
 
 def _store(tmp_path: Path) -> SQLiteStore:
@@ -469,6 +470,153 @@ def test_observed_outcome_rejects_unavailable_or_unattributed_sources(tmp_path: 
             created_at=OBSERVED_AT,
             evaluated_at=OBSERVED_AT,
         )
+
+
+@pytest.mark.unit
+def test_observed_outcome_rejects_pre_window_evidence_and_non_market_artifacts(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    target = build_prediction_evaluation_target(
+        store=store,
+        run_id=RUN_ID,
+        candidate_id="candidate-msft-swing",
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+    )
+
+    with pytest.raises(ValueError, match="observe the evaluation window"):
+        write_point_in_time_outcome_evaluation_artifacts(
+            store=store,
+            repo_root=tmp_path,
+            artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+            run_id=RUN_ID,
+            target=target,
+            observed_result=PredictionOutcomeResult.SUPPORTED,
+            observed_at=OBSERVED_AT,
+            outcome_evidence=(EvidenceReference(evidence_id="evidence-support"),),
+            created_at=OBSERVED_AT,
+            evaluated_at=EVALUATED_AT,
+        )
+
+    with pytest.raises(ValueError, match="must be market_data"):
+        write_point_in_time_outcome_evaluation_artifacts(
+            store=store,
+            repo_root=tmp_path,
+            artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+            run_id=RUN_ID,
+            target=target,
+            observed_result=PredictionOutcomeResult.SUPPORTED,
+            observed_at=OBSERVED_AT,
+            market_artifact_ids=("artifact-prediction-input",),
+            created_at=OBSERVED_AT,
+            evaluated_at=EVALUATED_AT,
+        )
+
+
+@pytest.mark.unit
+def test_repeated_outcome_writes_keep_distinct_artifact_files_and_replace_links(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    target = build_prediction_evaluation_target(
+        store=store,
+        run_id=RUN_ID,
+        candidate_id="candidate-msft-swing",
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+    )
+    artifact_dir = tmp_path / "reports" / RUN_ID / "audit"
+    first = write_point_in_time_outcome_evaluation_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=artifact_dir,
+        run_id=RUN_ID,
+        target=target,
+        observed_result=PredictionOutcomeResult.SUPPORTED,
+        observed_at=OBSERVED_AT,
+        result_summary="MSFT closed above the comparison baseline.",
+        outcome_evidence=(EvidenceReference(evidence_id="evidence-outcome-observed"),),
+        market_artifact_ids=("artifact-market-observation",),
+        created_at=OBSERVED_AT,
+        evaluated_at=EVALUATED_AT,
+    )
+    second = write_point_in_time_outcome_evaluation_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=artifact_dir,
+        run_id=RUN_ID,
+        target=target,
+        observed_result=PredictionOutcomeResult.SUPPORTED,
+        observed_at=OBSERVED_AT,
+        result_summary="MSFT closed above the comparison baseline.",
+        outcome_evidence=(EvidenceReference(evidence_id="evidence-outcome-observed"),),
+        created_at=OBSERVED_AT,
+        evaluated_at=EVALUATED_AT,
+    )
+    third = write_point_in_time_outcome_evaluation_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=artifact_dir,
+        run_id=RUN_ID,
+        target=target,
+        observed_result=PredictionOutcomeResult.MIXED,
+        observed_at=OBSERVED_AT,
+        result_summary="MSFT evidence was mixed against the comparison baseline.",
+        outcome_evidence=(EvidenceReference(evidence_id="evidence-outcome-observed"),),
+        created_at=OBSERVED_AT,
+        evaluated_at=EVALUATED_AT,
+    )
+
+    assert first.outcome_artifact.path != third.outcome_artifact.path
+    assert Path(first.outcome_artifact.path).exists()
+    assert Path(third.outcome_artifact.path).exists()
+    assert {
+        item.artifact_id for item in store.list_outcome_artifact_links(second.outcome.outcome_id)
+    } == {second.outcome_artifact.artifact_id}
+
+
+@pytest.mark.unit
+def test_resolved_outcome_without_baseline_preserves_target_limitation(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    original = store.get_prediction_candidate("candidate-msft-swing")
+    assert original is not None
+    store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            **{
+                **original.__dict__,
+                "baseline": {},
+            }
+        )
+    )
+    target = build_prediction_evaluation_target(
+        store=store,
+        run_id=RUN_ID,
+        candidate_id="candidate-msft-swing",
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+    )
+
+    result = write_point_in_time_outcome_evaluation_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        target=target,
+        observed_result=PredictionOutcomeResult.SUPPORTED,
+        observed_at=OBSERVED_AT,
+        outcome_evidence=(EvidenceReference(evidence_id="evidence-outcome-observed"),),
+        created_at=OBSERVED_AT,
+        evaluated_at=EVALUATED_AT,
+    )
+
+    assert result.outcome_evaluation.baseline_comparison is None
+    assert any("baseline comparison" in item for item in result.outcome_evaluation.limitations)
 
 
 @pytest.mark.unit

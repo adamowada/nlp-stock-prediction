@@ -207,7 +207,7 @@ def build_phase6_tool_registry() -> Phase6ToolRegistry:
                 tool_id=PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID,
                 tool_name=PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_NAME,
                 tool_version="phase6.persisted-outcome-evaluations.v1",
-                stage="prepare",
+                stage="evaluate",
                 description=(
                     "Load persisted point-in-time outcome-evaluation artifacts for a research "
                     "run without introducing new fixtures or provider calls."
@@ -563,6 +563,7 @@ class Phase6Service:
         outcome_evaluations = self.store.list_outcome_evaluations_for_run(run_id)
         calibration_runs = self.store.list_calibration_runs_for_run(run_id)
         tool_runs = self.store.list_tool_runs_for_run(run_id)
+        registered_tool_names = {tool.tool_name for tool in self.registry.specs()}
         raw_status_counts: dict[str, int] = {}
         for record in outcome_evaluations:
             raw_status_counts[record.status] = raw_status_counts.get(record.status, 0) + 1
@@ -577,7 +578,7 @@ class Phase6Service:
                 for record in calibration_runs
             ),
             "phase6_tool_run_count": len(
-                [record for record in tool_runs if str(record.tool_name).startswith("phase6_")]
+                [record for record in tool_runs if str(record.tool_name) in registered_tool_names]
             ),
             "artifact_count": len(self.store.list_artifacts_for_run(run_id)),
             "calibration_runs": [
@@ -620,7 +621,7 @@ class Phase6Service:
         for source in sources:
             for parent in (source.artifact_path.parent, *source.artifact_path.parents):
                 if parent.name == "audit":
-                    return parent
+                    return self._resolve_write_path(parent)
         return self._resolve_write_path(Path("reports") / run_id / "audit")
 
     def _resolve_write_path(self, path: Path) -> Path:

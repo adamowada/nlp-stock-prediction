@@ -73,7 +73,7 @@ def _fixture_project_root(fixture_dir: Path | None, default: Path) -> Path:
         return resolved
     if resolved.name == "fixtures" and resolved.parent.name == "tests":
         return resolved.parent.parent
-    return default
+    raise ValueError(f"fixture_dir does not point at a fixture tree: {fixture_dir}")
 
 
 def _write_root_for_output(output_dir: Path, project_root: Path) -> Path:

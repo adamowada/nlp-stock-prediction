@@ -86,7 +86,7 @@ def _store(tmp_path: Path) -> SQLiteStore:
             run_id=RUN_ID,
             instrument_id=INSTRUMENT_ID,
             prediction_horizon=TimeHorizon.SWING.value,
-            prediction_type="scenario_quality",
+            prediction_type="directional",
             scenario="TSLA fixture scenario quality depends on attributed evidence.",
             direction=Direction.MIXED.value,
             confidence=0.62,

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.contracts.enums import PredictionType, TimeHorizon
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
     CalibrationRunRecord,
@@ -789,6 +790,16 @@ class SQLiteStore:
         _validate_required(record.instrument_id, "instrument_id")
         _validate_required(record.prediction_horizon, "prediction_horizon")
         _validate_required(record.prediction_type, "prediction_type")
+        _validate_choice(
+            record.prediction_horizon,
+            "prediction_horizon",
+            {item.value for item in TimeHorizon},
+        )
+        _validate_choice(
+            record.prediction_type,
+            "prediction_type",
+            {item.value for item in PredictionType},
+        )
         _validate_required(record.scenario, "scenario")
         _validate_required(record.status, "status")
         _validate_confidence(record.confidence)
@@ -960,10 +971,43 @@ class SQLiteStore:
         _validate_required(record.symbol, "symbol")
         _validate_required(record.prediction_type, "prediction_type")
         _validate_required(record.horizon, "horizon")
+        _validate_choice(
+            record.prediction_type, "prediction_type", {item.value for item in PredictionType}
+        )
+        _validate_choice(record.horizon, "horizon", {item.value for item in TimeHorizon})
         _validate_required(record.status, "status")
         _validate_confidence(record.score)
         with self.connect() as connection:
             _ensure_initialized(connection)
+            candidate = connection.execute(
+                """
+                SELECT run_id, instrument_id FROM prediction_candidates
+                WHERE candidate_id = ?
+                """,
+                (record.candidate_id,),
+            ).fetchone()
+            if candidate is not None:
+                if _row_text(candidate, "instrument_id") != record.instrument_id:
+                    raise ValueError("prediction evaluation candidate/instrument mismatch")
+                candidate_run_id = candidate["run_id"]
+                if (
+                    record.run_id is not None
+                    and candidate_run_id is not None
+                    and str(candidate_run_id) != record.run_id
+                ):
+                    raise ValueError("prediction evaluation run_id must match candidate run_id")
+            instrument = connection.execute(
+                """
+                SELECT symbol FROM instruments
+                WHERE instrument_id = ?
+                """,
+                (record.instrument_id,),
+            ).fetchone()
+            if (
+                instrument is not None
+                and _row_text(instrument, "symbol").upper() != record.symbol.upper()
+            ):
+                raise ValueError("prediction evaluation symbol must match instrument")
             connection.execute(
                 """
                 INSERT INTO prediction_evaluations (
@@ -2499,6 +2543,12 @@ def _ensure_planning_initialized(connection: sqlite3.Connection) -> None:
 def _validate_required(value: str, field_name: str) -> None:
     if not value.strip():
         raise ValueError(f"{field_name} must be non-empty")
+
+
+def _validate_choice(value: str, field_name: str, allowed: set[str]) -> None:
+    if value not in allowed:
+        joined = ", ".join(sorted(allowed))
+        raise ValueError(f"{field_name} must be one of: {joined}")
 
 
 def _validate_relative_artifact_path(path: Path) -> None:

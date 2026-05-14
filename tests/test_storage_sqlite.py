@@ -99,8 +99,8 @@ def _seed_phase6_prediction_graph(store: SQLiteStore) -> None:
             candidate_id="candidate-msft-5d",
             run_id="run-phase6-eval",
             instrument_id="equity:NASDAQ:MSFT",
-            prediction_horizon="5d",
-            prediction_type="direction",
+            prediction_horizon="swing",
+            prediction_type="directional",
             scenario="Evidence supports a bullish five-day scenario.",
             direction="bullish",
             confidence=0.62,
@@ -205,8 +205,8 @@ def test_research_database_initialization_is_idempotent_and_excludes_planning(
             PredictionCandidateRecord(
                 candidate_id="candidate-missing-instrument",
                 instrument_id="missing",
-                prediction_horizon="5d",
-                prediction_type="direction",
+                prediction_horizon="swing",
+                prediction_type="directional",
                 scenario="Missing instrument should fail",
                 status="watchlist",
             )
@@ -509,8 +509,8 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
             candidate_id="candidate-tsla-5d",
             run_id="run-2026-05-13",
             instrument_id="equity:NASDAQ:TSLA",
-            prediction_horizon="5d",
-            prediction_type="direction",
+            prediction_horizon="swing",
+            prediction_type="directional",
             scenario="Evidence leans bullish over the next week.",
             direction="bullish",
             confidence=0.63,
@@ -630,8 +630,8 @@ def test_phase6_evaluation_calibration_records_round_trip_and_extend_run_graph(
         instrument_id="equity:NASDAQ:MSFT",
         symbol="MSFT",
         created_at=_timestamp(),
-        prediction_type="direction",
-        horizon="5d",
+        prediction_type="directional",
+        horizon="swing",
         direction="bullish",
         status="evidence_supported",
         score=0.68,
@@ -648,8 +648,8 @@ def test_phase6_evaluation_calibration_records_round_trip_and_extend_run_graph(
         candidate_id="candidate-msft-5d",
         instrument_id="equity:NASDAQ:MSFT",
         symbol="MSFT",
-        prediction_type="direction",
-        horizon="5d",
+        prediction_type="directional",
+        horizon="swing",
         evaluation_window_start=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
         evaluation_window_end=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
         status="observed",
@@ -679,7 +679,7 @@ def test_phase6_evaluation_calibration_records_round_trip_and_extend_run_graph(
         method_version="phase6-evalcal.v1",
         created_at=datetime(2026, 5, 18, 22, 0, tzinfo=UTC),
         point_in_time_cutoff=datetime(2026, 5, 18, 21, 0, tzinfo=UTC),
-        cohort_query={"prediction_type": "direction", "horizon": "5d"},
+        cohort_query={"prediction_type": "directional", "horizon": "swing"},
         source_outcome_evaluation_ids=("outcome-evaluation-msft-5d",),
         artifact_id="artifact-phase6-calibration",
         limitations=("single resolved record in unit test",),
@@ -826,8 +826,8 @@ def test_phase6_evaluation_calibration_records_round_trip_and_extend_run_graph(
             instrument_id="equity:NASDAQ:MSFT",
             symbol="MSFT",
             created_at=_timestamp(),
-            prediction_type="direction",
-            horizon="5d",
+            prediction_type="directional",
+            horizon="swing",
             status="insufficient_evidence",
             score=0.1,
             artifact_id="artifact-phase6-failed",
@@ -877,8 +877,8 @@ def test_phase6_storage_rejects_incoherent_outcome_evaluation_links(
             candidate_id="candidate-msft-5d",
             instrument_id="equity:NASDAQ:MSFT",
             symbol="MSFT",
-            prediction_type="direction",
-            horizon="5d",
+            prediction_type="directional",
+            horizon="swing",
             evaluation_window_start=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
             evaluation_window_end=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
             status="observed",
@@ -904,6 +904,47 @@ def test_phase6_storage_rejects_incoherent_outcome_evaluation_links(
 
 
 @pytest.mark.unit
+def test_prediction_evaluation_rejects_candidate_run_instrument_and_symbol_drift(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    _seed_phase6_prediction_graph(store)
+
+    with pytest.raises(ValueError, match="candidate/instrument mismatch"):
+        store.record_prediction_evaluation(
+            PredictionEvaluationRecord(
+                evaluation_id="evaluation-msft-wrong-instrument",
+                run_id="run-phase6-eval",
+                candidate_id="candidate-msft-5d",
+                instrument_id="equity:NASDAQ:AAPL",
+                symbol="AAPL",
+                created_at=_timestamp(),
+                prediction_type="directional",
+                horizon="swing",
+                status="insufficient_evidence",
+                score=0.1,
+            )
+        )
+
+    with pytest.raises(ValueError, match="symbol must match instrument"):
+        store.record_prediction_evaluation(
+            PredictionEvaluationRecord(
+                evaluation_id="evaluation-msft-wrong-symbol",
+                run_id="run-phase6-eval",
+                candidate_id="candidate-msft-5d",
+                instrument_id="equity:NASDAQ:MSFT",
+                symbol="AAPL",
+                created_at=_timestamp(),
+                prediction_type="directional",
+                horizon="swing",
+                status="insufficient_evidence",
+                score=0.1,
+            )
+        )
+
+
+@pytest.mark.unit
 def test_calibration_run_rejects_cross_run_outcome_evaluation_sources(
     tmp_path: Path,
 ) -> None:
@@ -924,8 +965,8 @@ def test_calibration_run_rejects_cross_run_outcome_evaluation_sources(
             candidate_id="candidate-other-msft-5d",
             run_id="run-other",
             instrument_id="equity:NASDAQ:MSFT",
-            prediction_horizon="5d",
-            prediction_type="direction",
+            prediction_horizon="swing",
+            prediction_type="directional",
             scenario="Other run candidate.",
             status="evidence_supported",
         )
@@ -936,8 +977,8 @@ def test_calibration_run_rejects_cross_run_outcome_evaluation_sources(
             candidate_id="candidate-other-msft-5d",
             instrument_id="equity:NASDAQ:MSFT",
             symbol="MSFT",
-            prediction_type="direction",
-            horizon="5d",
+            prediction_type="directional",
+            horizon="swing",
             evaluation_window_start=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
             evaluation_window_end=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
             status="observed",
@@ -1434,8 +1475,8 @@ def test_run_scoped_lists_follow_candidate_links_without_tool_runs(tmp_path: Pat
             candidate_id="candidate-link-only",
             run_id="run-link-only",
             instrument_id="etf:NYSEARCA:SPY",
-            prediction_horizon="1d",
-            prediction_type="direction",
+            prediction_horizon="intraday",
+            prediction_type="directional",
             scenario="Candidate link graph should scope evidence.",
             status="low_confidence",
         )
@@ -1629,8 +1670,8 @@ def test_research_database_rejects_bad_confidence_and_naive_datetimes(tmp_path: 
             PredictionCandidateRecord(
                 candidate_id="candidate-bad-confidence",
                 instrument_id="crypto:BTC",
-                prediction_horizon="24h",
-                prediction_type="direction",
+                prediction_horizon="intraday",
+                prediction_type="directional",
                 scenario="Bad confidence should fail.",
                 status="watchlist",
                 confidence=1.5,

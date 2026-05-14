@@ -148,7 +148,9 @@ def _resolved_evaluation(
         evaluation_window_end=WINDOW_END,
         status=PredictionOutcomeStatus.OBSERVED,
         observed_result=(
-            PredictionOutcomeResult.SUPPORTED
+            PredictionOutcomeResult.MIXED
+            if status == PredictionOutcomeEvaluationStatus.MIXED
+            else PredictionOutcomeResult.SUPPORTED
             if quality_score >= 0.5
             else PredictionOutcomeResult.CONTRADICTED
         ),

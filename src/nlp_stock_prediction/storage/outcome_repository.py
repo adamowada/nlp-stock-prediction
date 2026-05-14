@@ -37,21 +37,22 @@ def persist_prediction_outcome_records(
 ) -> None:
     """Persist a Phase 6 outcome, review, and all source links."""
 
-    _persist_outcome(
-        store=store,
-        target=target,
-        outcome=outcome,
-        outcome_artifact=outcome_artifact,
-        market_artifact_ids=market_artifact_ids,
-        created_at=outcome_created_at,
-    )
-    _persist_outcome_evaluation(
-        store=store,
-        target=target,
-        outcome_evaluation=outcome_evaluation,
-        review_artifact=review_artifact,
-        created_at=review_created_at,
-    )
+    with store.transaction():
+        _persist_outcome(
+            store=store,
+            target=target,
+            outcome=outcome,
+            outcome_artifact=outcome_artifact,
+            market_artifact_ids=market_artifact_ids,
+            created_at=outcome_created_at,
+        )
+        _persist_outcome_evaluation(
+            store=store,
+            target=target,
+            outcome_evaluation=outcome_evaluation,
+            review_artifact=review_artifact,
+            created_at=review_created_at,
+        )
 
 
 def _persist_outcome(
@@ -87,6 +88,7 @@ def _persist_outcome(
             },
         )
     )
+    _delete_outcome_links(store, outcome.outcome_id)
     for reference in outcome.outcome_evidence:
         if store.get_evidence(reference.evidence_id) is None:
             raise ValueError(f"outcome evidence does not exist: {reference.evidence_id}")
@@ -157,6 +159,7 @@ def _persist_outcome_evaluation(
             },
         )
     )
+    _delete_outcome_evaluation_links(store, outcome_evaluation.outcome_evaluation_id)
     for reference in outcome_evaluation.evidence:
         if store.get_evidence(reference.evidence_id) is None:
             raise ValueError(f"outcome evaluation evidence does not exist: {reference.evidence_id}")
@@ -190,6 +193,30 @@ def _persist_outcome_evaluation(
             created_at=created_at,
         )
     )
+
+
+def _delete_outcome_links(store: SQLiteStore, outcome_id: str) -> None:
+    with store.connect() as connection:
+        connection.execute(
+            "DELETE FROM outcome_evidence_links WHERE outcome_id = ?",
+            (outcome_id,),
+        )
+        connection.execute(
+            "DELETE FROM outcome_artifact_links WHERE outcome_id = ?",
+            (outcome_id,),
+        )
+
+
+def _delete_outcome_evaluation_links(store: SQLiteStore, outcome_evaluation_id: str) -> None:
+    with store.connect() as connection:
+        connection.execute(
+            "DELETE FROM outcome_evaluation_evidence_links WHERE outcome_evaluation_id = ?",
+            (outcome_evaluation_id,),
+        )
+        connection.execute(
+            "DELETE FROM outcome_evaluation_artifact_links WHERE outcome_evaluation_id = ?",
+            (outcome_evaluation_id,),
+        )
 
 
 __all__ = ["persist_prediction_outcome_records"]

@@ -223,6 +223,70 @@ def test_phase6_outcome_evaluation_payload_rejects_pre_evaluation_artifact_time(
 
 
 @pytest.mark.schema
+def test_phase6_outcome_rejects_fixed_window_observation_before_window_end() -> None:
+    payload = _outcome().model_dump(mode="python")
+    payload["observed_at"] = WINDOW_START
+
+    with pytest.raises(ValidationError, match="window end"):
+        PredictionOutcome.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_phase6_outcome_evaluation_rejects_status_result_mismatch() -> None:
+    outcome = _outcome().model_copy(
+        update={"observed_result": PredictionOutcomeResult.CONTRADICTED}
+    )
+
+    with pytest.raises(ValidationError, match="confirmed outcome evaluations"):
+        PredictionOutcomeEvaluation(
+            outcome_evaluation_id="outcome-evaluation-contradiction",
+            outcome_id=outcome.outcome_id,
+            candidate_id=outcome.candidate_id,
+            instrument_id=outcome.instrument_id,
+            symbol=outcome.symbol,
+            evaluated_at=WINDOW_END + timedelta(minutes=5),
+            status=PredictionOutcomeEvaluationStatus.CONFIRMED,
+            outcome=outcome,
+            quality_score=1.0,
+            baseline_comparison=_baseline(),
+            evidence=(EvidenceReference(evidence_id="evidence-outcome-tsla"),),
+        )
+
+
+@pytest.mark.schema
+def test_phase6_outcome_evaluation_rejects_evaluation_before_observed_at() -> None:
+    outcome = _outcome().model_copy(
+        update={"observed_result": PredictionOutcomeResult.INSUFFICIENT_DATA}
+    )
+
+    with pytest.raises(ValidationError, match="after observed_at"):
+        PredictionOutcomeEvaluation(
+            outcome_evaluation_id="outcome-evaluation-insufficient-early",
+            outcome_id=outcome.outcome_id,
+            candidate_id=outcome.candidate_id,
+            instrument_id=outcome.instrument_id,
+            symbol=outcome.symbol,
+            evaluated_at=WINDOW_END - timedelta(minutes=5),
+            status=PredictionOutcomeEvaluationStatus.NOT_EVALUABLE,
+            outcome=outcome,
+            limitations=("Insufficient attributed provider data to score the outcome.",),
+        )
+
+
+@pytest.mark.schema
+def test_phase6_baseline_comparison_rejects_inconsistent_math() -> None:
+    with pytest.raises(ValidationError, match="score_delta"):
+        BaselineComparison(
+            baseline_id="no_directional_edge",
+            baseline_summary="No directional edge is assumed without source-backed evidence.",
+            baseline_score=0.9,
+            candidate_score=0.1,
+            score_delta=0.8,
+            verdict="above_baseline",
+        )
+
+
+@pytest.mark.schema
 def test_phase6_calibration_summary_accepts_resolved_prediction_quality_metrics() -> None:
     summary = CalibrationSummary(
         calibration_id="calibration-tsla-swing-2026-05",

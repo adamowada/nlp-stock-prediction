@@ -145,6 +145,25 @@ class BaselineComparison(ContractModel):
         "baseline_unavailable",
     ]
 
+    @model_validator(mode="after")
+    def validate_baseline_math(self) -> BaselineComparison:
+        if self.verdict == "baseline_unavailable":
+            if self.score_delta != 0:
+                raise ValueError("baseline_unavailable comparisons require zero score_delta")
+            return self
+        expected_delta = round(self.candidate_score - self.baseline_score, 6)
+        if round(self.score_delta, 6) != expected_delta:
+            raise ValueError("baseline score_delta must equal candidate_score minus baseline_score")
+        if expected_delta > 0.05:
+            expected_verdict = "above_baseline"
+        elif expected_delta < -0.05:
+            expected_verdict = "below_baseline"
+        else:
+            expected_verdict = "near_baseline"
+        if self.verdict != expected_verdict:
+            raise ValueError("baseline verdict must match score_delta")
+        return self
+
 
 class PredictionEvaluationTarget(ContractModel):
     """Frozen point-in-time target used by outcome evaluation and calibration."""
@@ -245,6 +264,19 @@ class PredictionEvaluation(ContractModel):
         typed_ids = tuple(reference.artifact_id for reference in self.signal_artifacts)
         if len(set(typed_ids)) != len(typed_ids):
             raise ValueError("prediction evaluation signal artifact references must be unique")
+        supporting_ids = tuple(reference.evidence_id for reference in self.evidence_for)
+        contradicting_ids = tuple(reference.evidence_id for reference in self.evidence_against)
+        if self.evidence_counts.supporting_reference_ids != supporting_ids:
+            raise ValueError("prediction evaluation supporting counts must match evidence_for")
+        if self.evidence_counts.contradicting_reference_ids != contradicting_ids:
+            raise ValueError(
+                "prediction evaluation contradicting counts must match evidence_against"
+            )
+        if (
+            self.status == PredictionStatus.CONTRADICTED
+            and self.evidence_counts.contradicting_source_evidence == 0
+        ):
+            raise ValueError("contradicted evaluations require contradicting evidence")
         return self
 
 
@@ -281,6 +313,10 @@ class PredictionOutcome(ContractModel):
             if self.observed_result is None or self.observed_at is None:
                 raise ValueError(
                     "observed prediction outcomes require observed_result and observed_at"
+                )
+            if self.observed_at < self.evaluation_window_end:
+                raise ValueError(
+                    "fixed-window prediction outcomes cannot resolve before window end"
                 )
             if not (self.outcome_evidence or self.artifact_ids):
                 raise ValueError("observed prediction outcomes require evidence or artifacts")
@@ -347,7 +383,13 @@ class PredictionOutcomeEvaluation(ContractModel):
                 or self.outcome.artifact_ids
             ):
                 raise ValueError("resolved outcome evaluations require evidence or artifacts")
+            _validate_outcome_evaluation_result_alignment(self.status, self.outcome)
         else:
+            if (
+                self.outcome.observed_at is not None
+                and self.evaluated_at < self.outcome.observed_at
+            ):
+                raise ValueError("outcome evaluations must occur after observed_at")
             if not self.limitations:
                 raise ValueError("unresolved outcome evaluations require limitations")
         return self
@@ -370,8 +412,11 @@ class PredictionOutcomeArtifactPayload(ContractModel):
     @model_validator(mode="after")
     def validate_outcome_payload(self) -> PredictionOutcomeArtifactPayload:
         _validate_target_outcome_alignment(self.target, self.outcome)
-        if self.created_at < self.outcome.evaluation_window_start:
-            raise ValueError("outcome artifact cannot be created before the evaluation window")
+        if (
+            self.outcome.status == PredictionOutcomeStatus.OBSERVED
+            and self.created_at < self.outcome.evaluation_window_end
+        ):
+            raise ValueError("outcome artifact cannot be created before the evaluation window ends")
         _validate_unique("outcome source_evidence_ids", self.source_evidence_ids)
         _validate_unique("outcome market_artifact_ids", self.market_artifact_ids)
         _validate_unique("outcome outcome_artifact_ids", self.outcome_artifact_ids)
@@ -610,6 +655,30 @@ def _validate_target_outcome_alignment(
 def _validate_unique(label: str, values: tuple[object, ...]) -> None:
     if len(set(values)) != len(values):
         raise ValueError(f"{label} must be unique")
+
+
+def _validate_outcome_evaluation_result_alignment(
+    status: PredictionOutcomeEvaluationStatus,
+    outcome: PredictionOutcome,
+) -> None:
+    result = outcome.observed_result
+    if status == PredictionOutcomeEvaluationStatus.CONFIRMED and result not in {
+        PredictionOutcomeResult.SUPPORTED,
+        PredictionOutcomeResult.NEUTRAL,
+    }:
+        raise ValueError("confirmed outcome evaluations require a supported or neutral result")
+    if status == PredictionOutcomeEvaluationStatus.MISSED and result not in {
+        PredictionOutcomeResult.NOT_SUPPORTED,
+        PredictionOutcomeResult.CONTRADICTED,
+    }:
+        raise ValueError(
+            "missed outcome evaluations require a not-supported or contradicted result"
+        )
+    if status == PredictionOutcomeEvaluationStatus.MIXED and result not in {
+        PredictionOutcomeResult.MIXED,
+        PredictionOutcomeResult.NEUTRAL,
+    }:
+        raise ValueError("mixed outcome evaluations require a mixed or neutral result")
 
 
 def _has_calibration_metrics(summary: CalibrationSummary) -> bool:

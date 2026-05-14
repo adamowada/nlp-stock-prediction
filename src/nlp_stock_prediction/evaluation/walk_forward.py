@@ -387,7 +387,10 @@ def write_walk_forward_evaluation_artifact(
             artifact_id=artifact_id,
             artifact_type="walk_forward_evaluation",
             filename=artifact_filename
-            or f"calibration/walk-forward-evaluations/{slug(cohort_id)}.json",
+            or (
+                "calibration/walk-forward-evaluations/"
+                f"{slug(cohort_id)}-{artifact_digest[:12]}.json"
+            ),
             payload=cast(JsonObject, payload.model_dump(mode="json")),
             record_count=len(folds),
             metadata={
@@ -396,6 +399,7 @@ def write_walk_forward_evaluation_artifact(
                 "cohort_id": cohort_id,
                 "fold_count": len(folds),
                 "sample_count": len(eligible),
+                "source_candidate_ids": [item.candidate_id for item in eligible],
             },
         )
         calibration_run = CalibrationRunRecord(
