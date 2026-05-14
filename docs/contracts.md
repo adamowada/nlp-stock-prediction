@@ -228,6 +228,13 @@ and limitations. Fold-level held-out metrics are also stored as `calibration_sli
 `calibration_runs` row so later calibration summaries can reuse the same chronological evaluation
 without recomputing or using lookahead data.
 
+Calibration summaries are persisted as `calibration_summary` audit artifacts. A summary records
+scoreable point-in-time outcome evaluations, reliability bins, Brier score, log loss, accuracy,
+expected calibration error, a no-skill baseline comparison, signal-family calibration summaries, and
+source outcome/artifact provenance. Inputs after the `as_of` cutoff, outside requested
+prediction/horizon filters, or missing prediction scores are excluded with explicit limitations.
+Overall, bin-level, and signal-family slices are also stored in `calibration_slices`.
+
 ## Planning State
 
 Active plans belong in the tracked planning SQLite database. Planning contracts include:
