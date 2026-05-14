@@ -8,6 +8,10 @@ from pathlib import Path
 
 from nlp_stock_prediction.contracts import JsonObject, RunConfig
 from nlp_stock_prediction.orchestration.artifacts import ArtifactWriter
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    DUMMY_SMOKE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 
 
 def deterministic_generated_at(run_date: date) -> datetime:
@@ -57,6 +61,7 @@ class RunContext:
                 base_dir=audit_dir,
                 created_at=resolved_generated_at,
                 produced_by=produced_by,
+                default_metadata=report_data_mode_metadata(DUMMY_SMOKE_REPORT_DATA_MODE),
             ),
         )
 
@@ -70,6 +75,7 @@ def _command_args(config: RunConfig) -> JsonObject:
         "offline": config.offline,
         "source_mode": config.source_mode,
         "live_providers": config.live_providers,
+        **report_data_mode_metadata(DUMMY_SMOKE_REPORT_DATA_MODE),
     }
 
 

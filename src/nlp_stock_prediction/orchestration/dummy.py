@@ -42,6 +42,10 @@ from nlp_stock_prediction.orchestration.dummy_fixtures import (
     dummy_instrument_universe,
 )
 from nlp_stock_prediction.orchestration.phase3_universe import phase3_universe_artifact_payload
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    DUMMY_SMOKE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationState,
     StagedExecutor,
@@ -448,6 +452,7 @@ def generate_dummy_report_bundle(config: RunConfig) -> ReportBundle:
                     path=markdown_path,
                     created_at=context.generated_at,
                     produced_by="dummy.report-bundle",
+                    metadata=report_data_mode_metadata(DUMMY_SMOKE_REPORT_DATA_MODE),
                 ),
                 _file_audit_artifact(
                     artifact_id="report-json",
@@ -455,6 +460,7 @@ def generate_dummy_report_bundle(config: RunConfig) -> ReportBundle:
                     path=json_path,
                     created_at=context.generated_at,
                     produced_by="dummy.report-bundle",
+                    metadata=report_data_mode_metadata(DUMMY_SMOKE_REPORT_DATA_MODE),
                 ),
             )
         }
@@ -482,6 +488,7 @@ def _file_audit_artifact(
     path: Path,
     created_at: datetime,
     produced_by: str,
+    metadata: JsonObject | None = None,
 ) -> AuditArtifact:
     return AuditArtifact(
         artifact_id=artifact_id,
@@ -490,6 +497,7 @@ def _file_audit_artifact(
         created_at=created_at,
         produced_by=produced_by,
         sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        metadata={} if metadata is None else metadata,
     )
 
 

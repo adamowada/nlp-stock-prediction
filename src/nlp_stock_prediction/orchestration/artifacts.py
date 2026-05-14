@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -40,6 +40,7 @@ class ArtifactWriter:
     base_dir: Path
     created_at: datetime
     produced_by: str
+    default_metadata: JsonObject = field(default_factory=dict)
 
     def write_json(
         self,
@@ -58,7 +59,7 @@ class ArtifactWriter:
             filename=filename,
             content=content,
             record_count=record_count,
-            metadata=metadata,
+            metadata=_merge_metadata(self.default_metadata, metadata),
         )
 
     def write_text(
@@ -77,7 +78,7 @@ class ArtifactWriter:
             filename=filename,
             content=content.encode("utf-8"),
             record_count=record_count,
-            metadata=metadata,
+            metadata=_merge_metadata(self.default_metadata, metadata),
         )
 
     def _write_bytes(
@@ -128,6 +129,7 @@ class ArtifactIndex:
     writer: ArtifactWriter
     tool_run_id: str | None
     schema_version: str
+    default_metadata: JsonObject = field(default_factory=dict)
 
     @classmethod
     def for_directory(
@@ -140,6 +142,7 @@ class ArtifactIndex:
         produced_by: str,
         tool_run_id: str | None,
         schema_version: str,
+        default_metadata: JsonObject | None = None,
     ) -> ArtifactIndex:
         resolved_repo_root = repo_root.resolve()
         resolved_base_dir = base_dir.resolve()
@@ -156,9 +159,11 @@ class ArtifactIndex:
                 base_dir=resolved_base_dir,
                 created_at=created_at,
                 produced_by=produced_by,
+                default_metadata={} if default_metadata is None else default_metadata,
             ),
             tool_run_id=tool_run_id,
             schema_version=schema_version,
+            default_metadata={} if default_metadata is None else default_metadata,
         )
 
     def write_json(
@@ -177,7 +182,7 @@ class ArtifactIndex:
             filename=filename,
             payload=payload,
             record_count=record_count,
-            metadata=metadata,
+            metadata=_merge_metadata(self.default_metadata, metadata),
         )
         self._record_artifact(artifact)
         return artifact
@@ -198,7 +203,7 @@ class ArtifactIndex:
             filename=filename,
             content=content,
             record_count=record_count,
-            metadata=metadata,
+            metadata=_merge_metadata(self.default_metadata, metadata),
         )
         self._record_artifact(artifact)
         return artifact
@@ -222,6 +227,12 @@ class ArtifactIndex:
                 record_count=artifact.record_count,
             )
         )
+
+
+def _merge_metadata(default_metadata: JsonObject, metadata: JsonObject | None) -> JsonObject:
+    if not default_metadata and metadata is None:
+        return {}
+    return {**default_metadata, **({} if metadata is None else metadata)}
 
 
 @dataclass(frozen=True)

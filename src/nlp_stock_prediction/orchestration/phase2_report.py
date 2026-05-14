@@ -34,6 +34,15 @@ from nlp_stock_prediction.orchestration.phase2_common import (
 )
 from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
 from nlp_stock_prediction.orchestration.report_candidates import prediction_candidate_from_record
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    CODEX_SMOKE_REPORT_DATA_MODE,
+    LIVE_REPORT_DATA_MODE,
+    OFFLINE_FIXTURE_REPORT_DATA_MODE,
+    ReportDataMode,
+    enforce_live_report_input_boundary,
+    report_data_mode_from_run,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.reporting.json import render_json_report
 from nlp_stock_prediction.reporting.markdown import render_markdown_report
 from nlp_stock_prediction.storage.records import (
@@ -61,9 +70,18 @@ def render_phase2_prediction_report(
     produced_by: str = "render_prediction_report",
     artifact_schema_version: str = "phase2-report.v1",
     insufficient_evidence_summary: str | None = None,
+    report_data_mode: ReportDataMode | None = None,
 ) -> JsonObject:
     now = utc_now()
     is_phase4_report = artifact_schema_version.startswith("phase4")
+    resolved_report_data_mode = report_data_mode or report_data_mode_from_run(
+        run,
+        default=(
+            OFFLINE_FIXTURE_REPORT_DATA_MODE if is_phase4_report else CODEX_SMOKE_REPORT_DATA_MODE
+        ),
+    )
+    enforce_live_report_input_boundary(store=store, run=run)
+    mode_metadata = report_data_mode_metadata(resolved_report_data_mode)
     evidence_records = store.list_evidence_for_run(run.run_id)
     evidence_sources = tuple(source_evidence_from_record(record) for record in evidence_records)
     instrument = _primary_instrument(store, symbol=symbol, fallback_generated_at=now)
@@ -84,7 +102,19 @@ def render_phase2_prediction_report(
         )
         for record in evidence_sources[:5]
     )
-    if is_phase4_report:
+    if resolved_report_data_mode == LIVE_REPORT_DATA_MODE:
+        observed_discussion_summary = "Live provider research evidence was assembled from storage."
+        analysis_summary = (
+            "Live report rendering consumes stored provider evidence, signal artifacts, "
+            "prediction candidates, and prediction-quality evaluations."
+        )
+        universe_summary = f"Live provider research universe for {symbol.upper()}"
+        freshness_summary = (
+            "Live provider evidence is present for this run."
+            if evidence_sources
+            else "Live report rendering found no stored provider evidence for this run."
+        )
+    elif is_phase4_report:
         observed_discussion_summary = (
             "Phase 4 fixture-backed research tools imported evidence and context."
         )
@@ -139,7 +169,9 @@ def render_phase2_prediction_report(
         source_references=source_references,
     )
     prior_outcome_reviews = _prior_outcome_reviews(prediction_candidates)
-    provider_name = "phase4-fixture-tools" if is_phase4_report else "codex-web-search"
+    provider_name = _provider_name_for_mode(
+        resolved_report_data_mode,
+    )
     insufficient_evidence = (
         None
         if prediction_candidates
@@ -168,7 +200,7 @@ def render_phase2_prediction_report(
         timezone="UTC",
         objective=run.objective,
         universe=universe_summary,
-        command_args={"run_id": run.run_id, "symbol": symbol.upper()},
+        command_args={"run_id": run.run_id, "symbol": symbol.upper(), **mode_metadata},
         instruments=(instrument,),
         data_freshness=DataFreshnessSummary(
             as_of=now,
@@ -199,7 +231,7 @@ def render_phase2_prediction_report(
             schema_version="audit-manifest.v2",
             created_at=now,
             artifacts=audit_artifacts,
-            command_args={"run_id": run.run_id, "symbol": symbol.upper()},
+            command_args={"run_id": run.run_id, "symbol": symbol.upper(), **mode_metadata},
             prediction_trace_ids=tuple(
                 candidate.candidate_id for candidate in prediction_candidates
             ),
@@ -219,7 +251,7 @@ def render_phase2_prediction_report(
                 status=tool_status,
                 started_at=now,
                 completed_at=now,
-                inputs={"symbol": symbol},
+                inputs={"symbol": symbol, **mode_metadata},
                 warnings=tool_warnings,
             )
         )
@@ -237,14 +269,14 @@ def render_phase2_prediction_report(
         artifact_type="markdown_report",
         filename=paths.report_path.name,
         content=render_markdown_report(report),
-        metadata={"run_id": run.run_id},
+        metadata={"run_id": run.run_id, **mode_metadata},
     )
     json_artifact = report_index.write_text(
         artifact_id=f"artifact-report-json-{stable_digest(run.run_id)}",
         artifact_type="json_report",
         filename=paths.json_path.name,
         content=render_json_report(report),
-        metadata={"run_id": run.run_id},
+        metadata={"run_id": run.run_id, **mode_metadata},
     )
     final_manifest = manifest.model_copy(
         update={"artifacts": (*manifest.artifacts, markdown_artifact, json_artifact)}
@@ -262,7 +294,7 @@ def render_phase2_prediction_report(
         artifact_type="audit_manifest",
         filename=paths.audit_manifest_path.name,
         payload=cast(JsonObject, final_manifest.model_dump(mode="json")),
-        metadata={"run_id": run.run_id},
+        metadata={"run_id": run.run_id, **mode_metadata},
     )
     store.upsert_research_run(
         ResearchRunRecord(
@@ -272,7 +304,7 @@ def render_phase2_prediction_report(
             status="completed",
             started_at=run.started_at,
             completed_at=now,
-            metadata=run.metadata,
+            metadata={**run.metadata, **mode_metadata},
         )
     )
     return {
@@ -280,7 +312,20 @@ def render_phase2_prediction_report(
         "markdown_path": paths.report_path.as_posix(),
         "json_path": paths.json_path.as_posix(),
         "audit_manifest_path": paths.audit_manifest_path.as_posix(),
+        **mode_metadata,
     }
+
+
+def _provider_name_for_mode(
+    report_data_mode: ReportDataMode,
+) -> str:
+    if report_data_mode == LIVE_REPORT_DATA_MODE:
+        return "live-providers"
+    if report_data_mode == OFFLINE_FIXTURE_REPORT_DATA_MODE:
+        return "phase4-fixture-tools"
+    if report_data_mode == CODEX_SMOKE_REPORT_DATA_MODE:
+        return "codex-web-search"
+    return "dummy-smoke-tools"
 
 
 def _report_source_references(

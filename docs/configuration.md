@@ -28,6 +28,26 @@ python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output
 
 Reports are written under `<output>/<YYYY-MM-DD>/<symbol-slug>/`.
 
+## Report Data Modes
+
+Report assembly records a machine-checkable `report_data_mode` in run metadata, report
+`command_args`, audit manifest `command_args`, tool-run inputs, and report artifact metadata.
+
+Implemented modes:
+
+- `offline_fixture`: the current `research --offline` Phase 4 path. It uses deterministic fixture
+  providers and is allowed only when the caller explicitly requests offline mode.
+- `dummy_smoke`: the legacy deterministic dummy orchestration path. It is structural validation only
+  and refuses non-offline configs.
+- `codex_smoke`: the optional Codex smoke path that may include live Codex search evidence but still
+  uses smoke-only structural tools.
+- `live`: reserved for real live-provider report assembly. Live report assembly refuses stored
+  fixture, dummy, or smoke inputs. If a live run has no admissible stored evidence or candidates, the
+  report renders structured insufficient evidence rather than falling back to fixtures or dummy data.
+
+The public `research` CLI remains offline-only today. Direct non-offline pipeline calls fail with a
+visible error instead of silently routing to fixture or dummy data.
+
 Run the optional Phase 4 real-Codex smoke after installing the MCP extra:
 
 ```sh

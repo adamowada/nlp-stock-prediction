@@ -58,6 +58,19 @@ from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
     Phase4UniverseDiscoveryTool,
     Phase4UniverseDiscoveryToolResult,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    CODEX_SMOKE_REPORT_DATA_MODE,
+    DUMMY_SMOKE_REPORT_DATA_MODE,
+    LIVE_REPORT_DATA_MODE,
+    OFFLINE_FIXTURE_REPORT_DATA_MODE,
+    REPORT_DATA_MODE_KEY,
+    ReportDataMode,
+    ReportInputBoundaryViolation,
+    enforce_live_report_input_boundary,
+    find_non_live_report_input_violations,
+    report_data_mode_from_run,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationExecutionError,
     OrchestrationState,
@@ -73,9 +86,14 @@ from nlp_stock_prediction.orchestration.tools import (
 )
 
 __all__ = [
+    "CODEX_SMOKE_REPORT_DATA_MODE",
     "DEFAULT_STAGE_ORDER",
     "DUMMY_ORCHESTRATION_DISABLED_MESSAGE",
+    "DUMMY_SMOKE_REPORT_DATA_MODE",
+    "LIVE_REPORT_DATA_MODE",
+    "OFFLINE_FIXTURE_REPORT_DATA_MODE",
     "PHASE4_STAGE_ORDER",
+    "REPORT_DATA_MODE_KEY",
     "ArtifactFileTransaction",
     "ArtifactIndex",
     "ArtifactType",
@@ -103,6 +121,8 @@ __all__ = [
     "Phase4UniverseDiscoveryTool",
     "Phase4UniverseDiscoveryToolResult",
     "ReportBundle",
+    "ReportDataMode",
+    "ReportInputBoundaryViolation",
     "RunContext",
     "StagedExecutionResult",
     "StagedExecutor",
@@ -114,9 +134,13 @@ __all__ = [
     "build_dummy_tool_registry",
     "build_phase4_tool_registry",
     "deterministic_generated_at",
+    "enforce_live_report_input_boundary",
     "execute_phase4_tool",
+    "find_non_live_report_input_violations",
     "generate_dummy_report_bundle",
     "phase4_research_tool_plan",
+    "report_data_mode_from_run",
+    "report_data_mode_metadata",
     "run_phase4_fundamentals_tool",
     "run_phase4_news_catalyst_tool",
     "run_phase4_sector_macro_tool",

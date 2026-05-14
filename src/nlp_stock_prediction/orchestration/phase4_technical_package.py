@@ -52,6 +52,9 @@ from nlp_stock_prediction.orchestration.phase4_market_data import (
     load_phase4_market_data_artifact,
     sanitize_market_data_provider_result,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    report_data_mode_metadata_for_run_id,
+)
 from nlp_stock_prediction.providers._base import provider_warning
 from nlp_stock_prediction.storage.records import ToolRunRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
@@ -166,11 +169,13 @@ class Phase4TechnicalPackageTool:
         generated_at = self.now()
         tool_run_id = _technical_package_tool_run_id(run_id, normalized_symbol)
         artifact_id = _technical_package_artifact_id(run_id, normalized_symbol)
+        mode_metadata = report_data_mode_metadata_for_run_id(self.store, run_id)
         started_inputs: JsonObject = {
             "symbol": normalized_symbol,
             "instrument_id": instrument_id,
             "market_data_input": str(market_data),
             "timesfm_sidecar_present": timesfm_sidecar is not None,
+            **mode_metadata,
         }
         with safe_phase4_tool_execution(
             store=self.store,
@@ -300,6 +305,7 @@ class Phase4TechnicalPackageTool:
                     else None
                 ),
                 "timesfm_sidecar_present": timesfm_bundle.signal is not None,
+                **mode_metadata,
             }
             self.store.record_tool_run(
                 ToolRunRecord(
@@ -322,6 +328,7 @@ class Phase4TechnicalPackageTool:
                 produced_by=PHASE4_TECHNICAL_PACKAGE_TOOL_NAME,
                 tool_run_id=tool_run_id,
                 schema_version=PHASE4_TECHNICAL_PACKAGE_SCHEMA_VERSION,
+                default_metadata=mode_metadata,
             ).write_json(
                 artifact_id=artifact_id,
                 artifact_type="technical_package",

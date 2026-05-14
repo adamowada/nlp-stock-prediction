@@ -69,6 +69,15 @@ from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
 from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
     Phase4UniverseDiscoveryTool,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    OFFLINE_FIXTURE_REPORT_DATA_MODE,
+    REPORT_DATA_MODE_KEY,
+    ReportDataMode,
+    normalize_report_data_mode,
+    report_data_mode_from_run,
+    report_data_mode_metadata,
+    report_data_mode_metadata_from_run,
+)
 from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
 from nlp_stock_prediction.storage.records import (
@@ -259,6 +268,10 @@ class Phase4ToolRunContext:
         produced_by: str | None = None,
         schema_version: str = "phase4-tool-artifact.v1",
     ) -> ArtifactIndex:
+        mode = self.inputs.get(REPORT_DATA_MODE_KEY)
+        default_metadata = (
+            report_data_mode_metadata(normalize_report_data_mode(mode)) if mode is not None else {}
+        )
         return ArtifactIndex.for_directory(
             store=self.store,
             repo_root=self.repo_root,
@@ -267,6 +280,7 @@ class Phase4ToolRunContext:
             produced_by=produced_by or self.tool.tool_name,
             tool_run_id=self.tool_run_id,
             schema_version=schema_version,
+            default_metadata=default_metadata,
         )
 
 
@@ -593,6 +607,7 @@ class Phase4Service:
         output_dir: str,
         symbol: str,
         objective: str | None = None,
+        report_data_mode: ReportDataMode = OFFLINE_FIXTURE_REPORT_DATA_MODE,
     ) -> JsonObject:
         parsed_date = date.fromisoformat(run_date)
         normalized_symbol = symbol.strip().upper()
@@ -603,6 +618,7 @@ class Phase4Service:
             raise ValueError(f"research run already exists: {run_id}")
         paths = self._paths(parsed_date, output_dir, symbol=normalized_symbol)
         now = utc_now()
+        mode_metadata = report_data_mode_metadata(report_data_mode)
         self.store.upsert_research_run(
             ResearchRunRecord(
                 run_id=run_id,
@@ -616,6 +632,7 @@ class Phase4Service:
                     "output_dir": paths.output_dir.as_posix(),
                     "phase": "phase4_runtime_report",
                     "stage_order": list(PHASE4_STAGE_ORDER),
+                    **mode_metadata,
                 },
             )
         )
@@ -627,6 +644,7 @@ class Phase4Service:
             "run_dir": paths.run_dir.as_posix(),
             "audit_dir": paths.audit_dir.as_posix(),
             "database_path": self._resolve_write_path(self.database_path).as_posix(),
+            **mode_metadata,
         }
 
     def list_research_tool_plan(self) -> JsonObject:
@@ -682,6 +700,7 @@ class Phase4Service:
             symbol=normalized_symbol,
             instrument_id=self._instrument_id(normalized_symbol),
             source_url=fixture_path,
+            options=report_data_mode_metadata_from_run(run),
         )
         return {
             "run_id": run_id,
@@ -843,9 +862,16 @@ class Phase4Service:
                 output_dir=output_dir,
                 symbol=normalized_symbol,
                 objective=f"Phase 4 fixture-backed prediction research for {normalized_symbol}",
+                report_data_mode=OFFLINE_FIXTURE_REPORT_DATA_MODE,
             )
             run_id = str(started["run_id"])
             normalized_symbol = str(started["symbol"])
+        else:
+            existing_mode = report_data_mode_from_run(existing_run)
+            if existing_mode != OFFLINE_FIXTURE_REPORT_DATA_MODE:
+                raise ValueError(
+                    "offline Phase 4 flow requires an offline_fixture report_data_mode"
+                )
         self.phase4_universe_discovery(run_id=run_id, symbol=normalized_symbol)
         self.phase4_market_data(run_id=run_id, symbol=normalized_symbol)
         self.phase4_technical_package(run_id=run_id, symbol=normalized_symbol)
@@ -895,6 +921,7 @@ class Phase4Service:
     def render_prediction_report(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)
         normalized_symbol = self._validated_symbol(run, symbol)
+        report_data_mode = report_data_mode_from_run(run)
         candidates = self.store.list_prediction_candidates_for_run(run_id)
         warnings = () if candidates else (MISSING_CANDIDATE_WARNING,)
         status: Phase4ToolRunStatus = "successful" if candidates else "empty"
@@ -915,6 +942,7 @@ class Phase4Service:
                 produced_by=context.tool.tool_name,
                 artifact_schema_version="phase4-report.v1",
                 insufficient_evidence_summary=MISSING_CANDIDATE_WARNING,
+                report_data_mode=report_data_mode,
             )
             artifact_ids = (
                 f"artifact-report-md-{stable_digest(run.run_id)}",
@@ -926,14 +954,22 @@ class Phase4Service:
                 payload=result,
                 artifact_ids=artifact_ids,
                 warnings=warnings,
-                metadata={"candidate_count": len(candidates), "final_only": True},
+                metadata={
+                    "candidate_count": len(candidates),
+                    "final_only": True,
+                    **report_data_mode_metadata(report_data_mode),
+                },
             )
 
         return self._execute_symbol_tool(
             run_id=run_id,
             symbol=normalized_symbol,
             tool_id=PHASE4_REPORT_TOOL_ID,
-            inputs={"symbol": normalized_symbol, "candidate_count": len(candidates)},
+            inputs={
+                "symbol": normalized_symbol,
+                "candidate_count": len(candidates),
+                **report_data_mode_metadata(report_data_mode),
+            },
             action=action,
         ).payload
 
@@ -1105,7 +1141,11 @@ class Phase4Service:
             paths=paths,
             run_id=run_id,
             tool=self.registry.get(tool_id),
-            inputs={**inputs, "symbol": normalized_symbol},
+            inputs={
+                **inputs,
+                "symbol": normalized_symbol,
+                **report_data_mode_metadata_from_run(run),
+            },
             action=action,
         )
 
@@ -1155,11 +1195,13 @@ class Phase4Service:
             command_args={
                 "phase": "phase4",
                 "output_dir": paths.output_dir.as_posix(),
+                **report_data_mode_metadata_from_run(run),
             },
             artifact_writer=ArtifactWriter(
                 base_dir=paths.audit_dir,
                 created_at=generated_at,
                 produced_by=PHASE4_UNIVERSE_TOOL_NAME,
+                default_metadata=report_data_mode_metadata_from_run(run),
             ),
         )
 

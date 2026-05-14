@@ -27,6 +27,9 @@ from nlp_stock_prediction.instruments.registry import InstrumentRegistry, instru
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.context import RunContext
 from nlp_stock_prediction.orchestration.phase4_execution import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    report_data_mode_metadata_for_run_id,
+)
 from nlp_stock_prediction.storage.records import (
     InstrumentRecord,
     SourceQueryRecord,
@@ -119,9 +122,11 @@ class Phase4UniverseDiscoveryTool:
         retrieved_at = context.generated_at
         tool_run_id = _tool_run_id(context.run_id, validated.request_id)
         artifact_id = _artifact_id(context.run_id, validated.request_id)
+        mode_metadata = report_data_mode_metadata_for_run_id(store, context.run_id)
         inputs: JsonObject = {
             "request": cast(JsonObject, validated.model_dump(mode="json")),
             "provider": self.provider.provider_name,
+            **mode_metadata,
         }
         with safe_phase4_tool_execution(
             store=store,
@@ -181,6 +186,7 @@ class Phase4UniverseDiscoveryTool:
                 inputs={
                     "request": cast(JsonObject, validated.model_dump(mode="json")),
                     "provider": self.provider.provider_name,
+                    **mode_metadata,
                 },
                 warnings=warnings,
             )
@@ -209,6 +215,7 @@ class Phase4UniverseDiscoveryTool:
                 produced_by=PHASE4_TOOL_NAME,
                 tool_run_id=tool_run_id,
                 schema_version=PHASE4_UNIVERSE_SCHEMA_VERSION,
+                default_metadata=mode_metadata,
             ).write_json(
                 artifact_id=artifact_id,
                 artifact_type="instrument_universe",
