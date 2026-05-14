@@ -15,10 +15,14 @@ from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.enums import PredictionType, TimeHorizon
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
+    CalibrationDriftCheckRecord,
     CalibrationRunRecord,
     CalibrationSliceRecord,
+    CalibrationSourceOutcomeEvaluationLinkRecord,
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
+    EvaluationAttemptRecord,
+    EvaluationDataMode,
     EvidenceRecord,
     InstrumentRecord,
     InstrumentTradabilityEvidenceRecord,
@@ -58,7 +62,7 @@ from nlp_stock_prediction.storage.run_graph import (
     fetch_tool_run_rows,
 )
 
-CURRENT_RESEARCH_SCHEMA_VERSION = 7
+CURRENT_RESEARCH_SCHEMA_VERSION = 8
 CURRENT_PLANNING_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = CURRENT_RESEARCH_SCHEMA_VERSION
 DEFAULT_RESEARCH_DATABASE_PATH = Path("data/prediction-research.sqlite3")
@@ -861,27 +865,53 @@ class SQLiteStore:
             _ensure_initialized(connection)
             connection.execute(
                 """
-                DELETE FROM calibration_runs
+                DELETE FROM calibration_drift_checks
                 WHERE tool_run_id = ?
+                   OR evaluation_attempt_id IN (
+                        SELECT evaluation_attempt_id FROM evaluation_attempts
+                        WHERE tool_run_id = ?
+                   )
                    OR artifact_id IN (
                         SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
                    )
+                """,
+                (tool_run_id, tool_run_id, tool_run_id),
+            )
+            connection.execute(
+                """
+                DELETE FROM calibration_runs
+                WHERE tool_run_id = ?
+                   OR evaluation_attempt_id IN (
+                        SELECT evaluation_attempt_id FROM evaluation_attempts
+                        WHERE tool_run_id = ?
+                   )
+                   OR artifact_id IN (
+                        SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                   )
+                """,
+                (tool_run_id, tool_run_id, tool_run_id),
+            )
+            connection.execute(
+                """
+                DELETE FROM prediction_evaluations
+                WHERE evaluation_attempt_id IN (
+                    SELECT evaluation_attempt_id FROM evaluation_attempts
+                    WHERE tool_run_id = ?
+                )
+                   OR artifact_id IN (
+                    SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
+                )
                 """,
                 (tool_run_id, tool_run_id),
             )
             connection.execute(
                 """
-                DELETE FROM prediction_evaluations
-                WHERE artifact_id IN (
-                    SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
-                )
-                """,
-                (tool_run_id,),
-            )
-            connection.execute(
-                """
                 DELETE FROM prediction_outcome_evaluations
-                WHERE artifact_id IN (
+                WHERE evaluation_attempt_id IN (
+                    SELECT evaluation_attempt_id FROM evaluation_attempts
+                    WHERE tool_run_id = ?
+                )
+                   OR artifact_id IN (
                     SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
                 )
                    OR outcome_evaluation_id IN (
@@ -889,10 +919,10 @@ class SQLiteStore:
                         FROM outcome_evaluation_artifact_links
                         WHERE artifact_id IN (
                             SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
-                        )
+                       )
                    )
                 """,
-                (tool_run_id, tool_run_id),
+                (tool_run_id, tool_run_id, tool_run_id),
             )
             connection.execute(
                 """
@@ -909,14 +939,18 @@ class SQLiteStore:
             connection.execute(
                 """
                 DELETE FROM prediction_outcomes
-                WHERE outcome_id IN (
+                WHERE evaluation_attempt_id IN (
+                    SELECT evaluation_attempt_id FROM evaluation_attempts
+                    WHERE tool_run_id = ?
+                )
+                   OR outcome_id IN (
                     SELECT outcome_id FROM outcome_artifact_links
                     WHERE artifact_id IN (
                         SELECT artifact_id FROM artifacts WHERE tool_run_id = ?
                     )
                 )
                 """,
-                (tool_run_id,),
+                (tool_run_id, tool_run_id),
             )
             connection.execute(
                 """
@@ -959,6 +993,10 @@ class SQLiteStore:
             )
             connection.execute("DELETE FROM source_queries WHERE tool_run_id = ?", (tool_run_id,))
             connection.execute("DELETE FROM artifacts WHERE tool_run_id = ?", (tool_run_id,))
+            connection.execute(
+                "DELETE FROM evaluation_attempts WHERE tool_run_id = ?",
+                (tool_run_id,),
+            )
             connection.execute("DELETE FROM tool_runs WHERE tool_run_id = ?", (tool_run_id,))
 
     def upsert_prediction_candidate(self, record: PredictionCandidateRecord) -> None:
@@ -1140,6 +1178,97 @@ class SQLiteStore:
             ).fetchall()
         return tuple(_candidate_artifact_link_from_row(row) for row in rows)
 
+    def record_evaluation_attempt(self, record: EvaluationAttemptRecord) -> None:
+        _validate_required(record.evaluation_attempt_id, "evaluation_attempt_id")
+        _validate_required(record.run_id, "run_id")
+        _validate_required(record.attempt_kind, "attempt_kind")
+        _validate_required(record.subject_id, "subject_id")
+        _validate_required(record.status, "status")
+        _validate_live_data_modes(record.data_mode, record.provider_mode)
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            _validate_evaluation_attempt_subjects(connection, record)
+            _validate_evaluation_attempt_identity_update(connection, record)
+            connection.execute(
+                """
+                INSERT INTO evaluation_attempts (
+                    evaluation_attempt_id, run_id, source_run_id, tool_run_id,
+                    attempt_kind, subject_id, candidate_id, outcome_id, calibration_id,
+                    instrument_id, symbol, status, started_at, completed_at,
+                    data_mode, provider_mode, metadata_json, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(evaluation_attempt_id) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    source_run_id = excluded.source_run_id,
+                    tool_run_id = excluded.tool_run_id,
+                    attempt_kind = excluded.attempt_kind,
+                    subject_id = excluded.subject_id,
+                    candidate_id = excluded.candidate_id,
+                    outcome_id = excluded.outcome_id,
+                    calibration_id = excluded.calibration_id,
+                    instrument_id = excluded.instrument_id,
+                    symbol = excluded.symbol,
+                    status = excluded.status,
+                    started_at = excluded.started_at,
+                    completed_at = excluded.completed_at,
+                    data_mode = excluded.data_mode,
+                    provider_mode = excluded.provider_mode,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record.evaluation_attempt_id,
+                    record.run_id,
+                    record.source_run_id,
+                    record.tool_run_id,
+                    record.attempt_kind,
+                    record.subject_id,
+                    record.candidate_id,
+                    record.outcome_id,
+                    record.calibration_id,
+                    record.instrument_id,
+                    record.symbol,
+                    record.status,
+                    _format_datetime(record.started_at),
+                    _format_optional_datetime(record.completed_at),
+                    record.data_mode,
+                    record.provider_mode,
+                    _dump_json(record.metadata),
+                    _format_datetime(_utc_now()),
+                    _format_datetime(_utc_now()),
+                ),
+            )
+
+    def get_evaluation_attempt(self, evaluation_attempt_id: str) -> EvaluationAttemptRecord | None:
+        _validate_required(evaluation_attempt_id, "evaluation_attempt_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                """
+                SELECT * FROM evaluation_attempts
+                WHERE evaluation_attempt_id = ?
+                """,
+                (evaluation_attempt_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _evaluation_attempt_from_row(row)
+
+    def list_evaluation_attempts_for_run(self, run_id: str) -> tuple[EvaluationAttemptRecord, ...]:
+        _validate_required(run_id, "run_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM evaluation_attempts
+                WHERE run_id = ?
+                ORDER BY started_at, evaluation_attempt_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return tuple(_evaluation_attempt_from_row(row) for row in rows)
+
     def record_prediction_evaluation(self, record: PredictionEvaluationRecord) -> None:
         _validate_required(record.evaluation_id, "evaluation_id")
         _validate_required(record.candidate_id, "candidate_id")
@@ -1153,8 +1282,21 @@ class SQLiteStore:
         _validate_choice(record.horizon, "horizon", {item.value for item in TimeHorizon})
         _validate_required(record.status, "status")
         _validate_confidence(record.score)
+        _validate_live_data_modes(record.data_mode, record.provider_mode)
         with self.connect() as connection:
             _ensure_initialized(connection)
+            attempt = _validate_evaluation_attempt_alignment(
+                connection,
+                evaluation_attempt_id=record.evaluation_attempt_id,
+                run_id=record.run_id,
+                candidate_id=record.candidate_id,
+                outcome_id=None,
+                calibration_id=None,
+                instrument_id=record.instrument_id,
+                symbol=record.symbol,
+                allowed_kinds={"prediction_evaluation"},
+                record_label="prediction evaluation",
+            )
             candidate = connection.execute(
                 """
                 SELECT run_id, instrument_id FROM prediction_candidates
@@ -1170,6 +1312,11 @@ class SQLiteStore:
                     record.run_id is not None
                     and candidate_run_id is not None
                     and str(candidate_run_id) != record.run_id
+                    and not _attempt_bridges_source_run(
+                        attempt,
+                        source_run_id=str(candidate_run_id),
+                        evaluation_run_id=record.run_id,
+                    )
                 ):
                     raise ValueError("prediction evaluation run_id must match candidate run_id")
             instrument = connection.execute(
@@ -1190,9 +1337,9 @@ class SQLiteStore:
                     evaluation_id, run_id, candidate_id, instrument_id, symbol, created_at,
                     prediction_type, horizon, direction, status, score,
                     baseline_comparison_json, evidence_counts_json, signal_counts_json,
-                    artifact_id, metadata_json
+                    artifact_id, evaluation_attempt_id, data_mode, provider_mode, metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(evaluation_id) DO UPDATE SET
                     run_id = excluded.run_id,
                     candidate_id = excluded.candidate_id,
@@ -1208,6 +1355,9 @@ class SQLiteStore:
                     evidence_counts_json = excluded.evidence_counts_json,
                     signal_counts_json = excluded.signal_counts_json,
                     artifact_id = excluded.artifact_id,
+                    evaluation_attempt_id = excluded.evaluation_attempt_id,
+                    data_mode = excluded.data_mode,
+                    provider_mode = excluded.provider_mode,
                     metadata_json = excluded.metadata_json
                 """,
                 (
@@ -1226,6 +1376,9 @@ class SQLiteStore:
                     _dump_json(record.evidence_counts),
                     _dump_json(record.signal_counts),
                     record.artifact_id,
+                    record.evaluation_attempt_id,
+                    record.data_mode,
+                    record.provider_mode,
                     _dump_json(record.metadata),
                 ),
             )
@@ -1282,11 +1435,24 @@ class SQLiteStore:
         _validate_required(record.prediction_type, "prediction_type")
         _validate_required(record.horizon, "horizon")
         _validate_required(record.status, "status")
+        _validate_live_data_modes(record.data_mode, record.provider_mode)
         if record.evaluation_window_end <= record.evaluation_window_start:
             raise ValueError("prediction outcome evaluation window end must be after start")
         now = _utc_now()
         with self.connect() as connection:
             _ensure_initialized(connection)
+            _validate_evaluation_attempt_alignment(
+                connection,
+                evaluation_attempt_id=record.evaluation_attempt_id,
+                run_id=None,
+                candidate_id=record.candidate_id,
+                outcome_id=record.outcome_id,
+                calibration_id=None,
+                instrument_id=record.instrument_id,
+                symbol=record.symbol,
+                allowed_kinds={"outcome_materialization", "outcome_evaluation"},
+                record_label="prediction outcome",
+            )
             candidate = connection.execute(
                 """
                 SELECT instrument_id FROM prediction_candidates
@@ -1305,9 +1471,10 @@ class SQLiteStore:
                     outcome_id, candidate_id, instrument_id, symbol, prediction_type, horizon,
                     evaluation_window_start, evaluation_window_end, status, observed_result,
                     observed_at, result_summary, result_value, baseline_value, limitations_json,
-                    metadata_json, created_at, updated_at
+                    evaluation_attempt_id, data_mode, provider_mode, metadata_json,
+                    created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(outcome_id) DO UPDATE SET
                     candidate_id = excluded.candidate_id,
                     instrument_id = excluded.instrument_id,
@@ -1323,6 +1490,9 @@ class SQLiteStore:
                     result_value = excluded.result_value,
                     baseline_value = excluded.baseline_value,
                     limitations_json = excluded.limitations_json,
+                    evaluation_attempt_id = excluded.evaluation_attempt_id,
+                    data_mode = excluded.data_mode,
+                    provider_mode = excluded.provider_mode,
                     metadata_json = excluded.metadata_json,
                     updated_at = excluded.updated_at
                 """,
@@ -1342,6 +1512,9 @@ class SQLiteStore:
                     record.result_value,
                     record.baseline_value,
                     _dump_json_array(record.limitations),
+                    record.evaluation_attempt_id,
+                    record.data_mode,
+                    record.provider_mode,
                     _dump_json(record.metadata),
                     _format_datetime(now),
                     _format_datetime(now),
@@ -1459,6 +1632,23 @@ class SQLiteStore:
     def upsert_prediction_outcome_evaluation(
         self, record: PredictionOutcomeEvaluationRecord
     ) -> None:
+        self._write_prediction_outcome_evaluation(
+            record,
+            allow_update=record.evaluation_attempt_id is None,
+        )
+
+    def append_prediction_outcome_evaluation(
+        self, record: PredictionOutcomeEvaluationRecord
+    ) -> None:
+        _validate_required(record.evaluation_attempt_id or "", "evaluation_attempt_id")
+        self._write_prediction_outcome_evaluation(record, allow_update=False)
+
+    def _write_prediction_outcome_evaluation(
+        self,
+        record: PredictionOutcomeEvaluationRecord,
+        *,
+        allow_update: bool,
+    ) -> None:
         _validate_required(record.outcome_evaluation_id, "outcome_evaluation_id")
         _validate_required(record.outcome_id, "outcome_id")
         _validate_required(record.candidate_id, "candidate_id")
@@ -1466,9 +1656,35 @@ class SQLiteStore:
         _validate_required(record.symbol, "symbol")
         _validate_required(record.status, "status")
         _validate_confidence(record.quality_score)
+        _validate_live_data_modes(record.data_mode, record.provider_mode)
         now = _utc_now()
         with self.connect() as connection:
             _ensure_initialized(connection)
+            if not allow_update:
+                existing = connection.execute(
+                    """
+                    SELECT outcome_evaluation_id FROM prediction_outcome_evaluations
+                    WHERE outcome_evaluation_id = ?
+                    """,
+                    (record.outcome_evaluation_id,),
+                ).fetchone()
+                if existing is not None:
+                    raise ValueError(
+                        "prediction outcome evaluation already exists: "
+                        f"{record.outcome_evaluation_id}"
+                    )
+            attempt = _validate_evaluation_attempt_alignment(
+                connection,
+                evaluation_attempt_id=record.evaluation_attempt_id,
+                run_id=record.run_id,
+                candidate_id=record.candidate_id,
+                outcome_id=record.outcome_id,
+                calibration_id=None,
+                instrument_id=record.instrument_id,
+                symbol=record.symbol,
+                allowed_kinds={"outcome_evaluation"},
+                record_label="prediction outcome evaluation",
+            )
             outcome = connection.execute(
                 """
                 SELECT candidate_id, instrument_id, symbol FROM prediction_outcomes
@@ -1499,16 +1715,23 @@ class SQLiteStore:
                     record.run_id is not None
                     and candidate_run_id is not None
                     and str(candidate_run_id) != record.run_id
+                    and not _attempt_bridges_source_run(
+                        attempt,
+                        source_run_id=str(candidate_run_id),
+                        evaluation_run_id=record.run_id,
+                    )
                 ):
                     raise ValueError("outcome evaluation run_id must match candidate run_id")
-            connection.execute(
-                """
+            insert_sql = """
                 INSERT INTO prediction_outcome_evaluations (
                     outcome_evaluation_id, run_id, outcome_id, candidate_id, instrument_id,
                     symbol, evaluated_at, status, quality_score, baseline_comparison_json,
-                    artifact_id, limitations_json, metadata_json, created_at, updated_at
+                    artifact_id, limitations_json, evaluation_attempt_id,
+                    data_mode, provider_mode, metadata_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
+            update_sql = """
                 ON CONFLICT(outcome_evaluation_id) DO UPDATE SET
                     run_id = excluded.run_id,
                     outcome_id = excluded.outcome_id,
@@ -1521,9 +1744,14 @@ class SQLiteStore:
                     baseline_comparison_json = excluded.baseline_comparison_json,
                     artifact_id = excluded.artifact_id,
                     limitations_json = excluded.limitations_json,
+                    evaluation_attempt_id = excluded.evaluation_attempt_id,
+                    data_mode = excluded.data_mode,
+                    provider_mode = excluded.provider_mode,
                     metadata_json = excluded.metadata_json,
                     updated_at = excluded.updated_at
-                """,
+                """
+            connection.execute(
+                insert_sql + (update_sql if allow_update else ""),
                 (
                     record.outcome_evaluation_id,
                     record.run_id,
@@ -1537,6 +1765,9 @@ class SQLiteStore:
                     _dump_json(record.baseline_comparison),
                     record.artifact_id,
                     _dump_json_array(record.limitations),
+                    record.evaluation_attempt_id,
+                    record.data_mode,
+                    record.provider_mode,
                     _dump_json(record.metadata),
                     _format_datetime(now),
                     _format_datetime(now),
@@ -1684,8 +1915,21 @@ class SQLiteStore:
         _validate_required(record.calibration_id, "calibration_id")
         _validate_required(record.run_id, "run_id")
         _validate_required(record.method_version, "method_version")
+        _validate_live_data_modes(record.data_mode, record.provider_mode)
         with self.connect() as connection:
             _ensure_initialized(connection)
+            _validate_evaluation_attempt_alignment(
+                connection,
+                evaluation_attempt_id=record.evaluation_attempt_id,
+                run_id=record.run_id,
+                candidate_id=None,
+                outcome_id=None,
+                calibration_id=record.calibration_id,
+                instrument_id=None,
+                symbol=None,
+                allowed_kinds={"calibration_summary"},
+                record_label="calibration run",
+            )
             if record.source_outcome_evaluation_ids:
                 placeholders = ",".join("?" for _ in record.source_outcome_evaluation_ids)
                 rows = connection.execute(
@@ -1719,15 +1963,17 @@ class SQLiteStore:
             connection.execute(
                 """
                 INSERT INTO calibration_runs (
-                    calibration_id, run_id, tool_run_id, method_version, created_at,
+                    calibration_id, run_id, tool_run_id, evaluation_attempt_id,
+                    method_version, created_at,
                     point_in_time_cutoff, cohort_query_json,
                     source_outcome_evaluation_ids_json, artifact_id, limitations_json,
-                    metadata_json
+                    data_mode, provider_mode, metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(calibration_id) DO UPDATE SET
                     run_id = excluded.run_id,
                     tool_run_id = excluded.tool_run_id,
+                    evaluation_attempt_id = excluded.evaluation_attempt_id,
                     method_version = excluded.method_version,
                     created_at = excluded.created_at,
                     point_in_time_cutoff = excluded.point_in_time_cutoff,
@@ -1736,12 +1982,15 @@ class SQLiteStore:
                         excluded.source_outcome_evaluation_ids_json,
                     artifact_id = excluded.artifact_id,
                     limitations_json = excluded.limitations_json,
+                    data_mode = excluded.data_mode,
+                    provider_mode = excluded.provider_mode,
                     metadata_json = excluded.metadata_json
                 """,
                 (
                     record.calibration_id,
                     record.run_id,
                     record.tool_run_id,
+                    record.evaluation_attempt_id,
                     record.method_version,
                     _format_datetime(record.created_at),
                     _format_datetime(record.point_in_time_cutoff),
@@ -1749,9 +1998,59 @@ class SQLiteStore:
                     _dump_json_array(record.source_outcome_evaluation_ids),
                     record.artifact_id,
                     _dump_json_array(record.limitations),
+                    record.data_mode,
+                    record.provider_mode,
                     _dump_json(record.metadata),
                 ),
             )
+            _sync_calibration_source_links(connection, record)
+
+    def link_calibration_source_outcome_evaluation(
+        self, record: CalibrationSourceOutcomeEvaluationLinkRecord
+    ) -> None:
+        _validate_required(record.calibration_id, "calibration_id")
+        _validate_required(record.outcome_evaluation_id, "outcome_evaluation_id")
+        _validate_required(record.relationship, "relationship")
+        created_at = record.created_at or _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            _validate_calibration_source_link(connection, record.calibration_id, record)
+            connection.execute(
+                """
+                INSERT INTO calibration_source_outcome_evaluation_links (
+                    calibration_id, outcome_evaluation_id, relationship,
+                    metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(calibration_id, outcome_evaluation_id, relationship)
+                DO UPDATE SET
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    record.calibration_id,
+                    record.outcome_evaluation_id,
+                    record.relationship,
+                    _dump_json(record.metadata),
+                    _format_datetime(created_at),
+                ),
+            )
+
+    def list_calibration_source_outcome_evaluation_links(
+        self, calibration_id: str
+    ) -> tuple[CalibrationSourceOutcomeEvaluationLinkRecord, ...]:
+        _validate_required(calibration_id, "calibration_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM calibration_source_outcome_evaluation_links
+                WHERE calibration_id = ?
+                ORDER BY relationship, outcome_evaluation_id
+                """,
+                (calibration_id,),
+            ).fetchall()
+        return tuple(_calibration_source_outcome_evaluation_link_from_row(row) for row in rows)
 
     def delete_calibration_slices(self, calibration_id: str) -> None:
         _validate_required(calibration_id, "calibration_id")
@@ -1868,6 +2167,118 @@ class SQLiteStore:
                 (calibration_id,),
             ).fetchall()
         return tuple(_calibration_slice_from_row(row) for row in rows)
+
+    def record_calibration_drift_check(self, record: CalibrationDriftCheckRecord) -> None:
+        _validate_required(record.drift_check_id, "drift_check_id")
+        _validate_required(record.run_id, "run_id")
+        _validate_required(record.drift_status, "drift_status")
+        _validate_live_data_modes(record.data_mode, record.provider_mode)
+        if record.as_of < record.created_at:
+            raise ValueError("calibration drift as_of must not be before created_at")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            _validate_evaluation_attempt_alignment(
+                connection,
+                evaluation_attempt_id=record.evaluation_attempt_id,
+                run_id=record.run_id,
+                candidate_id=None,
+                outcome_id=None,
+                calibration_id=record.current_calibration_id,
+                instrument_id=None,
+                symbol=None,
+                allowed_kinds={"calibration_summary", "calibration_drift_check"},
+                record_label="calibration drift check",
+            )
+            connection.execute(
+                """
+                INSERT INTO calibration_drift_checks (
+                    drift_check_id, evaluation_attempt_id, run_id, tool_run_id,
+                    created_at, as_of, prior_calibration_id, current_calibration_id,
+                    prediction_type, horizon, signal_family, drift_status,
+                    metric_deltas_json, source_calibration_artifact_ids_json,
+                    source_outcome_evaluation_ids_json, artifact_id, limitations_json,
+                    data_mode, provider_mode, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(drift_check_id) DO UPDATE SET
+                    evaluation_attempt_id = excluded.evaluation_attempt_id,
+                    run_id = excluded.run_id,
+                    tool_run_id = excluded.tool_run_id,
+                    created_at = excluded.created_at,
+                    as_of = excluded.as_of,
+                    prior_calibration_id = excluded.prior_calibration_id,
+                    current_calibration_id = excluded.current_calibration_id,
+                    prediction_type = excluded.prediction_type,
+                    horizon = excluded.horizon,
+                    signal_family = excluded.signal_family,
+                    drift_status = excluded.drift_status,
+                    metric_deltas_json = excluded.metric_deltas_json,
+                    source_calibration_artifact_ids_json =
+                        excluded.source_calibration_artifact_ids_json,
+                    source_outcome_evaluation_ids_json =
+                        excluded.source_outcome_evaluation_ids_json,
+                    artifact_id = excluded.artifact_id,
+                    limitations_json = excluded.limitations_json,
+                    data_mode = excluded.data_mode,
+                    provider_mode = excluded.provider_mode,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    record.drift_check_id,
+                    record.evaluation_attempt_id,
+                    record.run_id,
+                    record.tool_run_id,
+                    _format_datetime(record.created_at),
+                    _format_datetime(record.as_of),
+                    record.prior_calibration_id,
+                    record.current_calibration_id,
+                    record.prediction_type,
+                    record.horizon,
+                    record.signal_family,
+                    record.drift_status,
+                    _dump_json(record.metric_deltas),
+                    _dump_json_array(record.source_calibration_artifact_ids),
+                    _dump_json_array(record.source_outcome_evaluation_ids),
+                    record.artifact_id,
+                    _dump_json_array(record.limitations),
+                    record.data_mode,
+                    record.provider_mode,
+                    _dump_json(record.metadata),
+                ),
+            )
+
+    def get_calibration_drift_check(
+        self, drift_check_id: str
+    ) -> CalibrationDriftCheckRecord | None:
+        _validate_required(drift_check_id, "drift_check_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                """
+                SELECT * FROM calibration_drift_checks
+                WHERE drift_check_id = ?
+                """,
+                (drift_check_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _calibration_drift_check_from_row(row)
+
+    def list_calibration_drift_checks_for_run(
+        self, run_id: str
+    ) -> tuple[CalibrationDriftCheckRecord, ...]:
+        _validate_required(run_id, "run_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = connection.execute(
+                """
+                SELECT * FROM calibration_drift_checks
+                WHERE run_id = ?
+                ORDER BY as_of, drift_check_id
+                """,
+                (run_id,),
+            ).fetchall()
+        return tuple(_calibration_drift_check_from_row(row) for row in rows)
 
     def _sync_candidate_links(
         self,
@@ -2437,6 +2848,72 @@ def _migrate_research_schema_v7(connection: sqlite3.Connection) -> None:
     connection.executescript(_RESEARCH_REPORT_INDEX_SCHEMA_SQL)
 
 
+def _migrate_research_schema_v8(connection: sqlite3.Connection) -> None:
+    connection.executescript(_RESEARCH_EVALUATION_SCHEMA_SQL)
+    column_migrations = {
+        "prediction_evaluations": {
+            "evaluation_attempt_id": (
+                "TEXT REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL"
+            ),
+            "data_mode": "TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live')",
+            "provider_mode": "TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live')",
+        },
+        "prediction_outcomes": {
+            "evaluation_attempt_id": (
+                "TEXT REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL"
+            ),
+            "data_mode": "TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live')",
+            "provider_mode": "TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live')",
+        },
+        "prediction_outcome_evaluations": {
+            "evaluation_attempt_id": (
+                "TEXT REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL"
+            ),
+            "data_mode": "TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live')",
+            "provider_mode": "TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live')",
+        },
+        "calibration_runs": {
+            "evaluation_attempt_id": (
+                "TEXT REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL"
+            ),
+            "data_mode": "TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live')",
+            "provider_mode": "TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live')",
+        },
+    }
+    for table_name, migrations in column_migrations.items():
+        columns = _table_columns(connection, table_name)
+        for column, definition in migrations.items():
+            if column not in columns:
+                connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}")
+    connection.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_prediction_evaluations_attempt_id
+        ON prediction_evaluations(evaluation_attempt_id);
+        CREATE INDEX IF NOT EXISTS idx_prediction_outcomes_attempt_id
+        ON prediction_outcomes(evaluation_attempt_id);
+        CREATE INDEX IF NOT EXISTS idx_prediction_outcome_evaluations_attempt_id
+        ON prediction_outcome_evaluations(evaluation_attempt_id);
+        CREATE INDEX IF NOT EXISTS idx_calibration_runs_attempt_id
+        ON calibration_runs(evaluation_attempt_id);
+
+        INSERT OR IGNORE INTO calibration_source_outcome_evaluation_links (
+            calibration_id, outcome_evaluation_id, relationship, metadata_json, created_at
+        )
+        SELECT
+            calibration_runs.calibration_id,
+            source.value,
+            'source_outcome_evaluation',
+            '{}',
+            calibration_runs.created_at
+        FROM calibration_runs,
+             json_each(calibration_runs.source_outcome_evaluation_ids_json) AS source
+        INNER JOIN prediction_outcome_evaluations
+            ON prediction_outcome_evaluations.outcome_evaluation_id = source.value
+        WHERE source.value IS NOT NULL;
+        """
+    )
+
+
 _RESEARCH_MIGRATION_STEPS = (
     _SchemaMigrationStep(1, "initial_research_schema", _noop_migration),
     _SchemaMigrationStep(2, "phase2_research_graph_schema", _noop_migration),
@@ -2445,6 +2922,11 @@ _RESEARCH_MIGRATION_STEPS = (
     _SchemaMigrationStep(5, "artifact_audit_provenance_schema_v5", _migrate_research_schema_v5),
     _SchemaMigrationStep(6, "phase5_phase6_runtime_schema_v6", _migrate_research_schema_v6),
     _SchemaMigrationStep(7, "phase5_phase6_schema_reconciliation_v7", _migrate_research_schema_v7),
+    _SchemaMigrationStep(
+        8,
+        "phase7_evaluation_hardening_persistence_v8",
+        _migrate_research_schema_v8,
+    ),
 )
 
 
@@ -2693,9 +3175,14 @@ def _normalize_lookup(value: str) -> str:
 _SAFE_SQL_TABLE_NAMES = frozenset(
     {
         "artifacts",
+        "calibration_drift_checks",
+        "calibration_runs",
+        "calibration_slices",
+        "calibration_source_outcome_evaluation_links",
         "candidate_artifact_links",
         "candidate_evidence_links",
         "evidence_items",
+        "evaluation_attempts",
         "instrument_aliases",
         "instrument_data_availability",
         "instrument_provider_ids",
@@ -2710,6 +3197,9 @@ _SAFE_SQL_TABLE_NAMES = frozenset(
         "planning_progress",
         "plans",
         "prediction_candidates",
+        "prediction_evaluations",
+        "prediction_outcome_evaluations",
+        "prediction_outcomes",
         "report_artifact_index",
         "research_runs",
         "schema_migrations",
@@ -2866,6 +3356,277 @@ def _validate_report_artifact_type(value: str) -> None:
         raise ValueError(f"report artifact_type must be one of: {allowed}")
 
 
+def _validate_live_data_modes(data_mode: str, provider_mode: str) -> None:
+    _validate_live_data_mode(data_mode, "data_mode")
+    _validate_live_data_mode(provider_mode, "provider_mode")
+
+
+def _validate_live_data_mode(value: str, field_name: str) -> None:
+    _validate_required(value, field_name)
+    if value != "live":
+        raise ValueError(f"{field_name} must be live")
+
+
+def _validate_evaluation_attempt_subjects(
+    connection: sqlite3.Connection,
+    record: EvaluationAttemptRecord,
+) -> None:
+    if record.candidate_id is not None:
+        candidate = connection.execute(
+            """
+            SELECT run_id, instrument_id FROM prediction_candidates
+            WHERE candidate_id = ?
+            """,
+            (record.candidate_id,),
+        ).fetchone()
+        if candidate is not None:
+            if (
+                record.source_run_id is not None
+                and candidate["run_id"] is not None
+                and str(candidate["run_id"]) != record.source_run_id
+            ):
+                raise ValueError("evaluation attempt source_run_id must match candidate run_id")
+            if (
+                record.instrument_id is not None
+                and _row_text(candidate, "instrument_id") != record.instrument_id
+            ):
+                raise ValueError("evaluation attempt instrument_id must match candidate")
+    if record.instrument_id is not None and record.symbol is not None:
+        _validate_instrument_symbol(connection, record.instrument_id, record.symbol)
+    if record.outcome_id is not None:
+        outcome = connection.execute(
+            """
+            SELECT candidate_id, instrument_id, symbol FROM prediction_outcomes
+            WHERE outcome_id = ?
+            """,
+            (record.outcome_id,),
+        ).fetchone()
+        if outcome is not None:
+            if (
+                record.candidate_id is not None
+                and _row_text(outcome, "candidate_id") != record.candidate_id
+            ):
+                raise ValueError("evaluation attempt candidate_id must match outcome")
+            if (
+                record.instrument_id is not None
+                and _row_text(outcome, "instrument_id") != record.instrument_id
+            ):
+                raise ValueError("evaluation attempt instrument_id must match outcome")
+            if record.symbol is not None and _row_text(outcome, "symbol").upper() != (
+                record.symbol.upper()
+            ):
+                raise ValueError("evaluation attempt symbol must match outcome")
+
+
+def _validate_evaluation_attempt_identity_update(
+    connection: sqlite3.Connection,
+    record: EvaluationAttemptRecord,
+) -> None:
+    existing = connection.execute(
+        """
+        SELECT * FROM evaluation_attempts
+        WHERE evaluation_attempt_id = ?
+        """,
+        (record.evaluation_attempt_id,),
+    ).fetchone()
+    if existing is None:
+        return
+    identity_values = {
+        "run_id": record.run_id,
+        "source_run_id": record.source_run_id,
+        "tool_run_id": record.tool_run_id,
+        "attempt_kind": record.attempt_kind,
+        "subject_id": record.subject_id,
+        "candidate_id": record.candidate_id,
+        "outcome_id": record.outcome_id,
+        "calibration_id": record.calibration_id,
+        "instrument_id": record.instrument_id,
+        "symbol": record.symbol,
+        "started_at": _format_datetime(record.started_at),
+        "data_mode": record.data_mode,
+        "provider_mode": record.provider_mode,
+    }
+    changed = [
+        column
+        for column, expected in identity_values.items()
+        if cast(str | None, existing[column]) != expected
+    ]
+    if changed:
+        raise ValueError("evaluation attempt identity fields are immutable: " + ", ".join(changed))
+
+
+def _validate_instrument_symbol(
+    connection: sqlite3.Connection,
+    instrument_id: str,
+    symbol: str,
+) -> None:
+    instrument = connection.execute(
+        """
+        SELECT symbol FROM instruments
+        WHERE instrument_id = ?
+        """,
+        (instrument_id,),
+    ).fetchone()
+    if instrument is not None and _row_text(instrument, "symbol").upper() != symbol.upper():
+        raise ValueError("record symbol must match instrument")
+
+
+def _validate_evaluation_attempt_alignment(
+    connection: sqlite3.Connection,
+    *,
+    evaluation_attempt_id: str | None,
+    run_id: str | None,
+    candidate_id: str | None,
+    outcome_id: str | None,
+    calibration_id: str | None,
+    instrument_id: str | None,
+    symbol: str | None,
+    allowed_kinds: set[str],
+    record_label: str,
+) -> sqlite3.Row | None:
+    if evaluation_attempt_id is None:
+        return None
+    attempt = connection.execute(
+        """
+        SELECT * FROM evaluation_attempts
+        WHERE evaluation_attempt_id = ?
+        """,
+        (evaluation_attempt_id,),
+    ).fetchone()
+    if attempt is None:
+        raise ValueError(
+            f"{record_label} evaluation_attempt_id does not exist: {evaluation_attempt_id}"
+        )
+    if _row_text(attempt, "attempt_kind") not in allowed_kinds:
+        allowed = ", ".join(sorted(allowed_kinds))
+        raise ValueError(f"{record_label} attempt_kind must be one of: {allowed}")
+    if run_id is not None and _row_text(attempt, "run_id") != run_id:
+        raise ValueError(f"{record_label} run_id must match evaluation attempt")
+    if (
+        candidate_id is not None
+        and attempt["candidate_id"] is not None
+        and _row_text(attempt, "candidate_id") != candidate_id
+    ):
+        raise ValueError(f"{record_label} candidate_id must match evaluation attempt")
+    if (
+        outcome_id is not None
+        and attempt["outcome_id"] is not None
+        and _row_text(attempt, "outcome_id") != outcome_id
+    ):
+        raise ValueError(f"{record_label} outcome_id must match evaluation attempt")
+    if (
+        calibration_id is not None
+        and attempt["calibration_id"] is not None
+        and _row_text(attempt, "calibration_id") != calibration_id
+    ):
+        raise ValueError(f"{record_label} calibration_id must match evaluation attempt")
+    if (
+        instrument_id is not None
+        and attempt["instrument_id"] is not None
+        and _row_text(attempt, "instrument_id") != instrument_id
+    ):
+        raise ValueError(f"{record_label} instrument_id must match evaluation attempt")
+    if (
+        symbol is not None
+        and attempt["symbol"] is not None
+        and _row_text(attempt, "symbol").upper() != symbol.upper()
+    ):
+        raise ValueError(f"{record_label} symbol must match evaluation attempt")
+    subject_ids = tuple(
+        item for item in (outcome_id, calibration_id, candidate_id, instrument_id) if item
+    )
+    if subject_ids and _row_text(attempt, "subject_id") not in subject_ids:
+        raise ValueError(f"{record_label} subject_id must match evaluation attempt")
+    return cast(sqlite3.Row, attempt)
+
+
+def _attempt_bridges_source_run(
+    attempt: sqlite3.Row | None,
+    *,
+    source_run_id: str,
+    evaluation_run_id: str,
+) -> bool:
+    if attempt is None:
+        return False
+    return (
+        _row_text(attempt, "run_id") == evaluation_run_id
+        and _row_optional_text(attempt, "source_run_id") == source_run_id
+    )
+
+
+def _validate_calibration_source_link(
+    connection: sqlite3.Connection,
+    calibration_id: str,
+    record: CalibrationSourceOutcomeEvaluationLinkRecord,
+) -> None:
+    calibration = connection.execute(
+        """
+        SELECT run_id FROM calibration_runs
+        WHERE calibration_id = ?
+        """,
+        (calibration_id,),
+    ).fetchone()
+    if calibration is None:
+        raise ValueError(f"calibration run does not exist: {calibration_id}")
+    outcome_evaluation = connection.execute(
+        """
+        SELECT run_id FROM prediction_outcome_evaluations
+        WHERE outcome_evaluation_id = ?
+        """,
+        (record.outcome_evaluation_id,),
+    ).fetchone()
+    if outcome_evaluation is None:
+        raise ValueError(
+            f"calibration source outcome evaluation does not exist: {record.outcome_evaluation_id}"
+        )
+    if outcome_evaluation["run_id"] is not None and _row_text(
+        outcome_evaluation, "run_id"
+    ) != _row_text(calibration, "run_id"):
+        raise ValueError("calibration source outcome evaluation must match calibration run_id")
+
+
+def _sync_calibration_source_links(
+    connection: sqlite3.Connection,
+    record: CalibrationRunRecord,
+) -> None:
+    connection.execute(
+        """
+        DELETE FROM calibration_source_outcome_evaluation_links
+        WHERE calibration_id = ?
+          AND relationship = 'source_outcome_evaluation'
+        """,
+        (record.calibration_id,),
+    )
+    for outcome_evaluation_id in dict.fromkeys(record.source_outcome_evaluation_ids):
+        link = CalibrationSourceOutcomeEvaluationLinkRecord(
+            calibration_id=record.calibration_id,
+            outcome_evaluation_id=outcome_evaluation_id,
+            relationship="source_outcome_evaluation",
+            created_at=record.created_at,
+        )
+        _validate_calibration_source_link(connection, record.calibration_id, link)
+        connection.execute(
+            """
+            INSERT INTO calibration_source_outcome_evaluation_links (
+                calibration_id, outcome_evaluation_id, relationship,
+                metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(calibration_id, outcome_evaluation_id, relationship)
+            DO UPDATE SET
+                metadata_json = excluded.metadata_json,
+                created_at = excluded.created_at
+            """,
+            (
+                link.calibration_id,
+                link.outcome_evaluation_id,
+                link.relationship,
+                _dump_json(link.metadata),
+                _format_datetime(link.created_at or record.created_at),
+            ),
+        )
+
+
 def _utc_now() -> datetime:
     return datetime.now(tz=UTC)
 
@@ -2988,6 +3749,12 @@ def _row_optional_float(row: sqlite3.Row, column: str) -> float | None:
 
 def _row_optional_int(row: sqlite3.Row, column: str) -> int | None:
     return cast(int | None, row[column])
+
+
+def _row_live_data_mode(row: sqlite3.Row, column: str) -> EvaluationDataMode:
+    value = _row_text(row, column)
+    _validate_live_data_mode(value, column)
+    return cast(EvaluationDataMode, value)
 
 
 def _instrument_from_row(row: sqlite3.Row) -> InstrumentRecord:
@@ -3179,10 +3946,33 @@ def _candidate_artifact_link_from_row(row: sqlite3.Row) -> CandidateArtifactLink
     )
 
 
+def _evaluation_attempt_from_row(row: sqlite3.Row) -> EvaluationAttemptRecord:
+    return EvaluationAttemptRecord(
+        evaluation_attempt_id=_row_text(row, "evaluation_attempt_id"),
+        run_id=_row_text(row, "run_id"),
+        source_run_id=_row_optional_text(row, "source_run_id"),
+        tool_run_id=_row_optional_text(row, "tool_run_id"),
+        attempt_kind=_row_text(row, "attempt_kind"),
+        subject_id=_row_text(row, "subject_id"),
+        candidate_id=_row_optional_text(row, "candidate_id"),
+        outcome_id=_row_optional_text(row, "outcome_id"),
+        calibration_id=_row_optional_text(row, "calibration_id"),
+        instrument_id=_row_optional_text(row, "instrument_id"),
+        symbol=_row_optional_text(row, "symbol"),
+        status=_row_text(row, "status"),
+        started_at=_parse_datetime(_row_text(row, "started_at")),
+        completed_at=_parse_optional_datetime(_row_optional_text(row, "completed_at")),
+        data_mode=_row_live_data_mode(row, "data_mode"),
+        provider_mode=_row_live_data_mode(row, "provider_mode"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+    )
+
+
 def _prediction_evaluation_from_row(row: sqlite3.Row) -> PredictionEvaluationRecord:
     return PredictionEvaluationRecord(
         evaluation_id=_row_text(row, "evaluation_id"),
         run_id=_row_optional_text(row, "run_id"),
+        evaluation_attempt_id=_row_optional_text(row, "evaluation_attempt_id"),
         candidate_id=_row_text(row, "candidate_id"),
         instrument_id=_row_text(row, "instrument_id"),
         symbol=_row_text(row, "symbol"),
@@ -3196,6 +3986,8 @@ def _prediction_evaluation_from_row(row: sqlite3.Row) -> PredictionEvaluationRec
         evidence_counts=_load_json_object(_row_text(row, "evidence_counts_json")),
         signal_counts=_load_json_object(_row_text(row, "signal_counts_json")),
         artifact_id=_row_optional_text(row, "artifact_id"),
+        data_mode=_row_live_data_mode(row, "data_mode"),
+        provider_mode=_row_live_data_mode(row, "provider_mode"),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
     )
 
@@ -3208,6 +4000,7 @@ def _prediction_outcome_from_row(row: sqlite3.Row) -> PredictionOutcomeRecord:
         symbol=_row_text(row, "symbol"),
         prediction_type=_row_text(row, "prediction_type"),
         horizon=_row_text(row, "horizon"),
+        evaluation_attempt_id=_row_optional_text(row, "evaluation_attempt_id"),
         evaluation_window_start=_parse_datetime(_row_text(row, "evaluation_window_start")),
         evaluation_window_end=_parse_datetime(_row_text(row, "evaluation_window_end")),
         status=_row_text(row, "status"),
@@ -3217,6 +4010,8 @@ def _prediction_outcome_from_row(row: sqlite3.Row) -> PredictionOutcomeRecord:
         result_value=_row_optional_float(row, "result_value"),
         baseline_value=_row_optional_float(row, "baseline_value"),
         limitations=_load_string_tuple(_row_text(row, "limitations_json")),
+        data_mode=_row_live_data_mode(row, "data_mode"),
+        provider_mode=_row_live_data_mode(row, "provider_mode"),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
     )
 
@@ -3227,6 +4022,7 @@ def _prediction_outcome_evaluation_from_row(
     return PredictionOutcomeEvaluationRecord(
         outcome_evaluation_id=_row_text(row, "outcome_evaluation_id"),
         run_id=_row_optional_text(row, "run_id"),
+        evaluation_attempt_id=_row_optional_text(row, "evaluation_attempt_id"),
         outcome_id=_row_text(row, "outcome_id"),
         candidate_id=_row_text(row, "candidate_id"),
         instrument_id=_row_text(row, "instrument_id"),
@@ -3237,6 +4033,8 @@ def _prediction_outcome_evaluation_from_row(
         baseline_comparison=_load_json_object(_row_text(row, "baseline_comparison_json")),
         artifact_id=_row_optional_text(row, "artifact_id"),
         limitations=_load_string_tuple(_row_text(row, "limitations_json")),
+        data_mode=_row_live_data_mode(row, "data_mode"),
+        provider_mode=_row_live_data_mode(row, "provider_mode"),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
     )
 
@@ -3285,11 +4083,24 @@ def _outcome_evaluation_artifact_link_from_row(
     )
 
 
+def _calibration_source_outcome_evaluation_link_from_row(
+    row: sqlite3.Row,
+) -> CalibrationSourceOutcomeEvaluationLinkRecord:
+    return CalibrationSourceOutcomeEvaluationLinkRecord(
+        calibration_id=_row_text(row, "calibration_id"),
+        outcome_evaluation_id=_row_text(row, "outcome_evaluation_id"),
+        relationship=_row_text(row, "relationship"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+    )
+
+
 def _calibration_run_from_row(row: sqlite3.Row) -> CalibrationRunRecord:
     return CalibrationRunRecord(
         calibration_id=_row_text(row, "calibration_id"),
         run_id=_row_text(row, "run_id"),
         tool_run_id=_row_optional_text(row, "tool_run_id"),
+        evaluation_attempt_id=_row_optional_text(row, "evaluation_attempt_id"),
         method_version=_row_text(row, "method_version"),
         created_at=_parse_datetime(_row_text(row, "created_at")),
         point_in_time_cutoff=_parse_datetime(_row_text(row, "point_in_time_cutoff")),
@@ -3299,6 +4110,37 @@ def _calibration_run_from_row(row: sqlite3.Row) -> CalibrationRunRecord:
         ),
         artifact_id=_row_optional_text(row, "artifact_id"),
         limitations=_load_string_tuple(_row_text(row, "limitations_json")),
+        data_mode=_row_live_data_mode(row, "data_mode"),
+        provider_mode=_row_live_data_mode(row, "provider_mode"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+    )
+
+
+def _calibration_drift_check_from_row(row: sqlite3.Row) -> CalibrationDriftCheckRecord:
+    return CalibrationDriftCheckRecord(
+        drift_check_id=_row_text(row, "drift_check_id"),
+        evaluation_attempt_id=_row_optional_text(row, "evaluation_attempt_id"),
+        run_id=_row_text(row, "run_id"),
+        tool_run_id=_row_optional_text(row, "tool_run_id"),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+        as_of=_parse_datetime(_row_text(row, "as_of")),
+        prior_calibration_id=_row_optional_text(row, "prior_calibration_id"),
+        current_calibration_id=_row_optional_text(row, "current_calibration_id"),
+        prediction_type=_row_optional_text(row, "prediction_type"),
+        horizon=_row_optional_text(row, "horizon"),
+        signal_family=_row_optional_text(row, "signal_family"),
+        drift_status=_row_text(row, "drift_status"),
+        metric_deltas=_load_json_object(_row_text(row, "metric_deltas_json")),
+        source_calibration_artifact_ids=_load_string_tuple(
+            _row_text(row, "source_calibration_artifact_ids_json")
+        ),
+        source_outcome_evaluation_ids=_load_string_tuple(
+            _row_text(row, "source_outcome_evaluation_ids_json")
+        ),
+        artifact_id=_row_optional_text(row, "artifact_id"),
+        limitations=_load_string_tuple(_row_text(row, "limitations_json")),
+        data_mode=_row_live_data_mode(row, "data_mode"),
+        provider_mode=_row_live_data_mode(row, "provider_mode"),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
     )
 
@@ -3668,9 +4510,42 @@ ON watchlist_items(instrument_id);
 """
 
 _RESEARCH_EVALUATION_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS evaluation_attempts (
+    evaluation_attempt_id TEXT PRIMARY KEY CHECK(length(evaluation_attempt_id) > 0),
+    run_id TEXT NOT NULL REFERENCES research_runs(run_id) ON DELETE CASCADE,
+    source_run_id TEXT REFERENCES research_runs(run_id) ON DELETE SET NULL,
+    tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+    attempt_kind TEXT NOT NULL CHECK(length(attempt_kind) > 0),
+    subject_id TEXT NOT NULL CHECK(length(subject_id) > 0),
+    candidate_id TEXT REFERENCES prediction_candidates(candidate_id) ON DELETE SET NULL,
+    outcome_id TEXT REFERENCES prediction_outcomes(outcome_id) ON DELETE SET NULL,
+    calibration_id TEXT,
+    instrument_id TEXT REFERENCES instruments(instrument_id) ON DELETE SET NULL,
+    symbol TEXT,
+    status TEXT NOT NULL CHECK(length(status) > 0),
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    data_mode TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live'),
+    provider_mode TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live'),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluation_attempts_run_id
+ON evaluation_attempts(run_id);
+CREATE INDEX IF NOT EXISTS idx_evaluation_attempts_source_run_id
+ON evaluation_attempts(source_run_id);
+CREATE INDEX IF NOT EXISTS idx_evaluation_attempts_tool_run_id
+ON evaluation_attempts(tool_run_id);
+CREATE INDEX IF NOT EXISTS idx_evaluation_attempts_subject
+ON evaluation_attempts(attempt_kind, subject_id);
+
 CREATE TABLE IF NOT EXISTS prediction_evaluations (
     evaluation_id TEXT PRIMARY KEY CHECK(length(evaluation_id) > 0),
     run_id TEXT REFERENCES research_runs(run_id) ON DELETE SET NULL,
+    evaluation_attempt_id TEXT
+        REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL,
     candidate_id TEXT NOT NULL REFERENCES prediction_candidates(candidate_id) ON DELETE CASCADE,
     instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
     symbol TEXT NOT NULL CHECK(length(symbol) > 0),
@@ -3684,6 +4559,8 @@ CREATE TABLE IF NOT EXISTS prediction_evaluations (
     evidence_counts_json TEXT NOT NULL DEFAULT '{}',
     signal_counts_json TEXT NOT NULL DEFAULT '{}',
     artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+    data_mode TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live'),
+    provider_mode TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live'),
     metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 
@@ -3698,6 +4575,8 @@ ON prediction_evaluations(created_at);
 
 CREATE TABLE IF NOT EXISTS prediction_outcomes (
     outcome_id TEXT PRIMARY KEY CHECK(length(outcome_id) > 0),
+    evaluation_attempt_id TEXT
+        REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL,
     candidate_id TEXT NOT NULL REFERENCES prediction_candidates(candidate_id) ON DELETE CASCADE,
     instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
     symbol TEXT NOT NULL CHECK(length(symbol) > 0),
@@ -3712,6 +4591,8 @@ CREATE TABLE IF NOT EXISTS prediction_outcomes (
     result_value REAL,
     baseline_value REAL,
     limitations_json TEXT NOT NULL DEFAULT '[]',
+    data_mode TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live'),
+    provider_mode TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live'),
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -3730,6 +4611,8 @@ ON prediction_outcomes(evaluation_window_start, evaluation_window_end);
 CREATE TABLE IF NOT EXISTS prediction_outcome_evaluations (
     outcome_evaluation_id TEXT PRIMARY KEY CHECK(length(outcome_evaluation_id) > 0),
     run_id TEXT REFERENCES research_runs(run_id) ON DELETE SET NULL,
+    evaluation_attempt_id TEXT
+        REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL,
     outcome_id TEXT NOT NULL REFERENCES prediction_outcomes(outcome_id) ON DELETE CASCADE,
     candidate_id TEXT NOT NULL REFERENCES prediction_candidates(candidate_id) ON DELETE CASCADE,
     instrument_id TEXT NOT NULL REFERENCES instruments(instrument_id) ON DELETE RESTRICT,
@@ -3743,6 +4626,8 @@ CREATE TABLE IF NOT EXISTS prediction_outcome_evaluations (
     baseline_comparison_json TEXT NOT NULL DEFAULT '{}',
     artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
     limitations_json TEXT NOT NULL DEFAULT '[]',
+    data_mode TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live'),
+    provider_mode TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live'),
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -3811,6 +4696,8 @@ CREATE TABLE IF NOT EXISTS calibration_runs (
     calibration_id TEXT PRIMARY KEY CHECK(length(calibration_id) > 0),
     run_id TEXT NOT NULL REFERENCES research_runs(run_id) ON DELETE CASCADE,
     tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+    evaluation_attempt_id TEXT
+        REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL,
     method_version TEXT NOT NULL CHECK(length(method_version) > 0),
     created_at TEXT NOT NULL,
     point_in_time_cutoff TEXT NOT NULL,
@@ -3818,6 +4705,8 @@ CREATE TABLE IF NOT EXISTS calibration_runs (
     source_outcome_evaluation_ids_json TEXT NOT NULL DEFAULT '[]',
     artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
     limitations_json TEXT NOT NULL DEFAULT '[]',
+    data_mode TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live'),
+    provider_mode TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live'),
     metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 
@@ -3827,6 +4716,19 @@ CREATE INDEX IF NOT EXISTS idx_calibration_runs_tool_run_id
 ON calibration_runs(tool_run_id);
 CREATE INDEX IF NOT EXISTS idx_calibration_runs_artifact_id
 ON calibration_runs(artifact_id);
+
+CREATE TABLE IF NOT EXISTS calibration_source_outcome_evaluation_links (
+    calibration_id TEXT NOT NULL REFERENCES calibration_runs(calibration_id) ON DELETE CASCADE,
+    outcome_evaluation_id TEXT NOT NULL
+        REFERENCES prediction_outcome_evaluations(outcome_evaluation_id) ON DELETE CASCADE,
+    relationship TEXT NOT NULL CHECK(length(relationship) > 0),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(calibration_id, outcome_evaluation_id, relationship)
+);
+
+CREATE INDEX IF NOT EXISTS idx_calibration_source_links_outcome_evaluation
+ON calibration_source_outcome_evaluation_links(outcome_evaluation_id);
 
 CREATE TABLE IF NOT EXISTS calibration_slices (
     slice_id TEXT PRIMARY KEY CHECK(length(slice_id) > 0),
@@ -3858,6 +4760,40 @@ CREATE INDEX IF NOT EXISTS idx_calibration_slices_calibration_id
 ON calibration_slices(calibration_id);
 CREATE INDEX IF NOT EXISTS idx_calibration_slices_family
 ON calibration_slices(signal_family);
+
+CREATE TABLE IF NOT EXISTS calibration_drift_checks (
+    drift_check_id TEXT PRIMARY KEY CHECK(length(drift_check_id) > 0),
+    evaluation_attempt_id TEXT
+        REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL,
+    run_id TEXT NOT NULL REFERENCES research_runs(run_id) ON DELETE CASCADE,
+    tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    as_of TEXT NOT NULL,
+    prior_calibration_id TEXT,
+    current_calibration_id TEXT,
+    prediction_type TEXT,
+    horizon TEXT,
+    signal_family TEXT,
+    drift_status TEXT NOT NULL CHECK(length(drift_status) > 0),
+    metric_deltas_json TEXT NOT NULL DEFAULT '{}',
+    source_calibration_artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+    source_outcome_evaluation_ids_json TEXT NOT NULL DEFAULT '[]',
+    artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+    limitations_json TEXT NOT NULL DEFAULT '[]',
+    data_mode TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live'),
+    provider_mode TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live'),
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    CHECK(as_of >= created_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_calibration_drift_checks_run_id
+ON calibration_drift_checks(run_id);
+CREATE INDEX IF NOT EXISTS idx_calibration_drift_checks_attempt_id
+ON calibration_drift_checks(evaluation_attempt_id);
+CREATE INDEX IF NOT EXISTS idx_calibration_drift_checks_tool_run_id
+ON calibration_drift_checks(tool_run_id);
+CREATE INDEX IF NOT EXISTS idx_calibration_drift_checks_artifact_id
+ON calibration_drift_checks(artifact_id);
 """
 
 _RESEARCH_REPORT_INDEX_SCHEMA_SQL = """
@@ -3992,10 +4928,14 @@ __all__ = [
     "DEFAULT_PLANNING_DATABASE_PATH",
     "DEFAULT_RESEARCH_DATABASE_PATH",
     "ArtifactRecord",
+    "CalibrationDriftCheckRecord",
     "CalibrationRunRecord",
     "CalibrationSliceRecord",
+    "CalibrationSourceOutcomeEvaluationLinkRecord",
     "CandidateArtifactLinkRecord",
     "CandidateEvidenceLinkRecord",
+    "EvaluationAttemptRecord",
+    "EvaluationDataMode",
     "EvidenceRecord",
     "InstrumentRecord",
     "InstrumentTradabilityEvidenceRecord",
