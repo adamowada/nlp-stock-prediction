@@ -196,27 +196,26 @@ class ReportSourceReference(ContractModel):
 
     @model_validator(mode="after")
     def validate_reference_targets(self) -> ReportSourceReference:
-        if not (
+        has_source_target = bool(
             self.evidence_ids
             or self.artifact_ids
             or self.provider_names
             or self.prior_outcome_review_ids
-        ):
+        )
+        if not has_source_target:
             raise ValueError("report source references require at least one source target")
         if self.reference_type == "source_evidence" and not self.evidence_ids:
             raise ValueError("source_evidence references require evidence_ids")
         if self.reference_type == "tool_artifact" and not self.artifact_ids:
             raise ValueError("tool_artifact references require artifact_ids")
-        if self.reference_type == "provider_health" and not self.provider_names:
-            raise ValueError("provider_health references require provider_names")
+        if self.reference_type == "prediction_evaluation" and not self.artifact_ids:
+            raise ValueError("prediction_evaluation references require artifact_ids")
         if self.reference_type == "prior_outcome" and not self.prior_outcome_review_ids:
             raise ValueError("prior_outcome references require prior_outcome_review_ids")
-        if self.reference_type == "prediction_evaluation" and not (
-            self.artifact_ids or self.candidate_ids
-        ):
-            raise ValueError(
-                "prediction_evaluation references require artifact_ids or candidate_ids"
-            )
+        if self.reference_type == "provider_health" and not self.provider_names:
+            raise ValueError("provider_health references require provider_names")
+        if self.reference_type == "instrument_resolution" and not self.artifact_ids:
+            raise ValueError("instrument_resolution references require artifact_ids")
         _validate_report_authored_language(self.label)
         return self
 
@@ -273,6 +272,14 @@ class MaterialClaimTrace(ContractModel):
             self.provider_names or self.source_reference_ids
         ):
             raise ValueError("provider health claim traces require provider references")
+        if self.claim_type == "prediction_evaluation" and not (
+            self.candidate_ids or self.artifact_ids or self.source_reference_ids
+        ):
+            raise ValueError(
+                "prediction_evaluation claim traces require candidate, artifact, or source refs"
+            )
+        if self.claim_type == "baseline" and not self.candidate_ids:
+            raise ValueError("baseline claim traces require candidate_ids")
         _validate_report_authored_language(self.claim, self.rationale)
         return self
 
@@ -307,6 +314,15 @@ class PredictionCandidate(ContractModel):
     def validate_evidence_shape(self) -> PredictionCandidate:
         if self.status == PredictionStatus.EVIDENCE_SUPPORTED and not self.evidence_for:
             raise ValueError("evidence-supported predictions require evidence_for")
+        if self.status == PredictionStatus.EVIDENCE_SUPPORTED and not (
+            self.uncertainties or self.uncertainty_drivers
+        ):
+            raise ValueError("evidence-supported predictions require uncertainty context")
+        if self.status == PredictionStatus.CONTRADICTED and not (
+            self.evidence_against
+            or any(dissent.impact == "contradicts" for dissent in self.dissenting_evidence)
+        ):
+            raise ValueError("contradicted predictions require opposing evidence")
         if self.status in {
             PredictionStatus.CONTRADICTED,
             PredictionStatus.INSUFFICIENT_EVIDENCE,
@@ -336,6 +352,12 @@ class PredictionCandidate(ContractModel):
         typed_signal_ids = tuple(reference.artifact_id for reference in self.signal_artifacts)
         if len(set(typed_signal_ids)) != len(typed_signal_ids):
             raise ValueError("prediction candidate signal artifact references must be unique")
+        if len(set(self.signal_artifact_ids)) != len(self.signal_artifact_ids):
+            raise ValueError("prediction candidate signal_artifact_ids must be unique")
+        if typed_signal_ids and self.signal_artifact_ids != typed_signal_ids:
+            raise ValueError(
+                "prediction candidate signal_artifact_ids must match typed signal_artifacts"
+            )
         _validate_report_authored_language(
             self.thesis,
             self.baseline,
@@ -371,6 +393,10 @@ class InstrumentReportSection(ContractModel):
             self.observed_discussion_summary,
             self.social_news_summary,
             self.analysis_summary,
+            *_analysis_component_report_text(self.technical_analysis),
+            *_analysis_component_report_text(self.fundamental_analysis),
+            *_analysis_component_report_text(self.sector_context),
+            *_analysis_component_report_text(self.macro_context),
         )
         return self
 
@@ -415,12 +441,27 @@ class AuditManifest(ContractModel):
     schema_version: NonEmptyStr
     created_at: AwareDatetime
     artifacts: tuple[AuditArtifact, ...] = Field(default_factory=tuple)
+    provider_health: tuple[ProviderHealth, ...] = Field(default_factory=tuple)
     provider_run_ids: tuple[str, ...] = Field(default_factory=tuple)
     model_versions: JsonObject = Field(default_factory=dict)
     prompt_versions: JsonObject = Field(default_factory=dict)
     config_hash: str | None = None
     command_args: JsonObject = Field(default_factory=dict)
     prediction_trace_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+    @model_validator(mode="after")
+    def validate_manifest_uniqueness(self) -> AuditManifest:
+        artifact_ids = tuple(artifact.artifact_id for artifact in self.artifacts)
+        if len(set(artifact_ids)) != len(artifact_ids):
+            raise ValueError("audit manifest artifact ids must be unique")
+        provider_names = tuple(health.provider_name for health in self.provider_health)
+        if len(set(provider_names)) != len(provider_names):
+            raise ValueError("audit manifest provider_health provider names must be unique")
+        if len(set(self.provider_run_ids)) != len(self.provider_run_ids):
+            raise ValueError("audit manifest provider_run_ids must be unique")
+        if len(set(self.prediction_trace_ids)) != len(self.prediction_trace_ids):
+            raise ValueError("audit manifest prediction_trace_ids must be unique")
+        return self
 
 
 class MarkdownReportOutline(ContractModel):
@@ -448,13 +489,51 @@ class MarkdownReportOutline(ContractModel):
         return self
 
 
+class JsonReportSectionContract(ContractModel):
+    """Machine-readable mapping from a product report section to JSON fields."""
+
+    heading: NonEmptyStr
+    json_pointers: tuple[NonEmptyStr, ...]
+    material: bool = True
+
+    @model_validator(mode="after")
+    def validate_json_pointers(self) -> JsonReportSectionContract:
+        if not self.json_pointers:
+            raise ValueError("JSON report section contracts require pointers")
+        for pointer in self.json_pointers:
+            if not pointer.startswith("/"):
+                raise ValueError("JSON report section pointers must be absolute JSON pointers")
+        return self
+
+
+class JsonReportContract(ContractModel):
+    """Stable JSON report contract aligned to the product Markdown outline."""
+
+    schema_version: NonEmptyStr
+    report_schema_version: NonEmptyStr
+    markdown_outline_schema_version: NonEmptyStr
+    material_sections: tuple[JsonReportSectionContract, ...]
+
+    @model_validator(mode="after")
+    def validate_material_sections(self) -> JsonReportContract:
+        headings = tuple(section.heading for section in self.material_sections)
+        if len(set(headings)) != len(headings):
+            raise ValueError("JSON report section headings must be unique")
+        if not all(section.material for section in self.material_sections):
+            raise ValueError("default JSON report contract only carries material sections")
+        return self
+
+
 DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
     schema_version="markdown-report.v2",
     heading_order=(
         "Prediction Research Report",
+        "Report Metadata",
         "Research Objective",
         "Data Freshness",
+        "Provider Health",
         "Provider Warnings",
+        "Universe Resolution",
         "Instrument Sections",
         "Prediction Scenarios Or Insufficient-Evidence Summary",
         "Prior-Outcome Review",
@@ -478,6 +557,77 @@ DEFAULT_MARKDOWN_REPORT_OUTLINE = MarkdownReportOutline(
         "Report Source References",
     ),
     required_footer_headings=("Audit Artifacts",),
+)
+
+DEFAULT_JSON_REPORT_CONTRACT = JsonReportContract(
+    schema_version="json-report-contract.v1",
+    report_schema_version="daily-report.v2",
+    markdown_outline_schema_version=DEFAULT_MARKDOWN_REPORT_OUTLINE.schema_version,
+    material_sections=(
+        JsonReportSectionContract(
+            heading="Report Metadata",
+            json_pointers=(
+                "/schema_version",
+                "/run_id",
+                "/report_date",
+                "/generated_at",
+                "/timezone",
+                "/command_args",
+            ),
+        ),
+        JsonReportSectionContract(
+            heading="Research Objective",
+            json_pointers=("/objective", "/universe"),
+        ),
+        JsonReportSectionContract(
+            heading="Data Freshness",
+            json_pointers=("/data_freshness",),
+        ),
+        JsonReportSectionContract(
+            heading="Provider Health",
+            json_pointers=("/provider_health",),
+        ),
+        JsonReportSectionContract(
+            heading="Provider Warnings",
+            json_pointers=("/provider_health",),
+        ),
+        JsonReportSectionContract(
+            heading="Universe Resolution",
+            json_pointers=("/instrument_resolutions",),
+        ),
+        JsonReportSectionContract(
+            heading="Instrument Sections",
+            json_pointers=("/instruments", "/instrument_sections"),
+        ),
+        JsonReportSectionContract(
+            heading="Prediction Scenarios Or Insufficient-Evidence Summary",
+            json_pointers=(
+                "/prediction_candidates",
+                "/insufficient_evidence",
+                "/insufficient_evidence_summary",
+            ),
+        ),
+        JsonReportSectionContract(
+            heading="Prior-Outcome Review",
+            json_pointers=("/prior_outcome_reviews",),
+        ),
+        JsonReportSectionContract(
+            heading="Material Claim Traceability",
+            json_pointers=("/material_claim_traces",),
+        ),
+        JsonReportSectionContract(
+            heading="Report Source References",
+            json_pointers=("/source_references",),
+        ),
+        JsonReportSectionContract(
+            heading="Evidence Ledger",
+            json_pointers=("/evidence_sources",),
+        ),
+        JsonReportSectionContract(
+            heading="Audit Artifacts",
+            json_pointers=("/audit_manifest",),
+        ),
+    ),
 )
 
 
@@ -575,6 +725,11 @@ class DailyReport(ContractModel):
         claim_trace_ids = tuple(trace.claim_id for trace in self.material_claim_traces)
         if len(set(claim_trace_ids)) != len(claim_trace_ids):
             raise ValueError("material claim trace ids must be unique")
+        if (
+            isinstance(self.audit_manifest, AuditManifest)
+            and self.audit_manifest.run_id != self.run_id
+        ):
+            raise ValueError("audit manifest run_id must match report run_id")
 
         cited_evidence_ids: set[str] = set()
         related_instrument_evidence_ids: set[str] = set()
@@ -614,6 +769,7 @@ class DailyReport(ContractModel):
             if candidate.symbol != symbol_by_instrument_id[candidate.instrument_id]:
                 raise ValueError("prediction candidate symbol must match report instrument symbol")
             _validate_candidate_evaluation_metadata(candidate)
+            referenced_artifact_ids.update(_candidate_evaluation_artifact_ids(candidate))
             if section_references.get(candidate.candidate_id) != candidate.instrument_id:
                 raise ValueError(
                     "instrument section prediction_candidate_ids must match candidate instrument_id"
@@ -696,10 +852,54 @@ class DailyReport(ContractModel):
                     "report evidence_sources must include related instrument evidence_ids"
                 )
             raise ValueError("report evidence_sources must include every cited evidence_id")
+        if referenced_artifact_ids and not isinstance(self.audit_manifest, AuditManifest):
+            raise ValueError("report audit manifest must include every cited artifact_id")
         if referenced_artifact_ids.difference(artifact_ids):
             raise ValueError("report audit artifacts must include every cited artifact_id")
         _validate_evidence_references_against_sources(self, evidence_by_id)
         return self
+
+
+def _analysis_component_report_text(
+    component: TechnicalAnalysis | FundamentalAnalysis | SectorContext | MacroContext | None,
+) -> tuple[str | None, ...]:
+    if component is None:
+        return ()
+    values: list[str | None] = [component.summary, *component.assumptions]
+    if isinstance(component, TechnicalAnalysis):
+        values.extend(
+            (
+                component.trend,
+                component.volume_summary,
+                component.volatility_summary,
+                component.gap_summary,
+                component.candlestick_summary,
+            )
+        )
+        if component.ml_signal is not None:
+            values.extend(str(item) for item in component.ml_signal.warning_ids)
+    if isinstance(component, FundamentalAnalysis):
+        values.extend(
+            (
+                component.valuation_summary,
+                component.profitability_summary,
+                component.growth_summary,
+                component.balance_sheet_risk,
+                component.earnings_timing,
+                *component.notable_filings,
+            )
+        )
+        if component.agent_signal is not None:
+            values.extend(
+                (
+                    component.agent_signal.summary,
+                    *component.agent_signal.contradictions,
+                    *component.agent_signal.warning_ids,
+                )
+            )
+    if isinstance(component, MacroContext):
+        values.extend((*component.supportive_factors, *component.conflicting_factors))
+    return tuple(values)
 
 
 def _analysis_evidence_ids(
@@ -769,12 +969,30 @@ def _iter_report_evidence_references(report: DailyReport) -> tuple[EvidenceRefer
 _TRADING_INSTRUCTION_PATTERNS = (
     r"\b(buy|sell)\s+(?!or\b|instruction\b|guidance\b|language\b)"
     r"(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"\b(purchase|acquire|accumulate)\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"\bload\s+up\s+on\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"\b(trim|liquidate|cover)\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"\breduce\s+exposure\s+(to|in)\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
     r"\b(buy|sell|short)\s+the\s+(stock|shares?|coin|token|etf|contract|instrument)\b",
-    r"\b(should|must|need to|time to)\s+(buy|sell|short|go long|go short)\b",
+    r"\b(purchase|acquire|accumulate|load\s+up\s+on)\s+the\s+"
+    r"(stock|shares?|coin|token|etf|contract|instrument)\b",
+    r"\b(trim|reduce|liquidate|cover)\s+(your|the|a|an|their|our)?\s*"
+    r"(position|exposure|stake)\b",
+    r"\b(should|must|need to|time to)\s+"
+    r"(buy|sell|short|go long|go short|purchase|acquire|accumulate|trim|liquidate)\b",
+    r"\b(should|must|need to|time to)\s+reduce\s+(position|exposure|stake)\b",
     r"\b(you|we|investors?|traders?)\s+"
-    r"(should|must|need to|ought to)\s+(buy|sell|short|go long|go short|enter|exit)\b",
-    r"\b(recommend|recommendation|advice)\s+(to\s+)?(buy|sell|short|go long|go short)\b",
-    r"\brecommendation\s*:\s*(buy|sell|short|hold)\b",
+    r"(should|must|need to|ought to)\s+"
+    r"(buy|sell|short|go long|go short|enter|exit|purchase|acquire|accumulate|trim|liquidate)\b",
+    r"\b(you|we|investors?|traders?)\s+"
+    r"(should|must|need to|ought to)\s+reduce\s+(position|exposure|stake)\b",
+    r"\b(recommend|recommendation|advice)\s+(to\s+)?"
+    r"(buy|sell|short|go long|go short|purchase|acquire|accumulate|trim|liquidate)\b",
+    r"\b(recommend|recommendation|advice)\s+(to\s+)?"
+    r"reduce\s+(position|exposure|stake)\b",
+    r"\brecommendation\s*:\s*"
+    r"(buy|sell|short|hold|purchase|acquire|accumulate|trim|liquidate)\b",
+    r"\brecommendation\s*:\s*reduce\s+(position|exposure|stake)\b",
     r"\b(go|stay)\s+(long|short)\b",
     r"\b(enter|exit|open|close)\s+(a\s+)?(long|short\s+)?position\b",
     r"\b(set|use)\s+(a\s+)?stop[-\s]?loss\b",
@@ -814,7 +1032,16 @@ def _validate_candidate_evaluation_metadata(candidate: PredictionCandidate) -> N
         raise ValueError("prediction evaluation symbol must match candidate symbol")
 
 
+def _candidate_evaluation_artifact_ids(candidate: PredictionCandidate) -> tuple[str, ...]:
+    metadata = candidate.metadata.get("prediction_evaluation")
+    if not isinstance(metadata, dict):
+        return ()
+    artifact_id = metadata.get("artifact_id")
+    return (artifact_id,) if isinstance(artifact_id, str) and artifact_id else ()
+
+
 __all__ = [
+    "DEFAULT_JSON_REPORT_CONTRACT",
     "DEFAULT_MARKDOWN_REPORT_OUTLINE",
     "AuditArtifact",
     "AuditManifest",
@@ -823,6 +1050,8 @@ __all__ = [
     "DissentingEvidence",
     "InstrumentReportSection",
     "InsufficientEvidenceReport",
+    "JsonReportContract",
+    "JsonReportSectionContract",
     "MarkdownReportOutline",
     "MaterialClaimTrace",
     "PredictionCandidate",

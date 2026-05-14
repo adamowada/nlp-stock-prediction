@@ -17,13 +17,20 @@ from nlp_stock_prediction.contracts import (
     FundamentalsRequest,
     MacroRequest,
     MarketDataRequest,
+    ProviderResult,
     ProviderStatus,
     RetrievalMethod,
     SourceKind,
     TimeHorizon,
     WarningCode,
 )
-from nlp_stock_prediction.providers._base import JsonResponse, ProviderCache, ProviderTransportError
+from nlp_stock_prediction.providers._base import (
+    JsonResponse,
+    MalformedProviderResponse,
+    ProviderCache,
+    ProviderTransportError,
+)
+from nlp_stock_prediction.providers.execution import ProviderExecutionContext
 from nlp_stock_prediction.providers.fred import FredMacroProvider
 from nlp_stock_prediction.providers.market import (
     AlphaVantageFundamentalsProvider,
@@ -43,6 +50,29 @@ def _fixture(*parts: str) -> dict[str, Any]:
         dict[str, Any],
         json.loads((FIXTURE_ROOT.joinpath(*parts)).read_text(encoding="utf-8")),
     )
+
+
+@pytest.mark.unit
+def test_provider_execution_context_preserves_fetch_identity_on_rate_limit() -> None:
+    request = MarketDataRequest(
+        request_id="provider-execution-rate-limit",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result: ProviderResult[object] = ProviderExecutionContext(
+        provider_name="fixture-provider",
+        request=request,
+        fetched_at=FETCHED_AT,
+        credential_state=CredentialState.CONFIGURED,
+        raw_snapshot_id="raw-fixture-provider",
+        cache_key="cache-fixture-provider",
+    ).rate_limited("fixture provider quota exhausted")
+
+    assert result.status == ProviderStatus.RATE_LIMITED
+    assert result.raw_snapshot_id == "raw-fixture-provider"
+    assert result.cache_key == "cache-fixture-provider"
+    assert result.warnings[0].raw_snapshot_id == "raw-fixture-provider"
 
 
 @dataclass
@@ -70,6 +100,25 @@ class _FakeJsonTransport:
 @dataclass
 class _FailingJsonTransport:
     error: ProviderTransportError
+    calls: list[str] = field(default_factory=list)
+    headers: list[Mapping[str, str] | None] = field(default_factory=list)
+
+    def get_json(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float = 10.0,
+    ) -> JsonResponse:
+        del timeout
+        self.calls.append(url)
+        self.headers.append(headers)
+        raise self.error
+
+
+@dataclass
+class _MalformedJsonTransport:
+    error: MalformedProviderResponse
     calls: list[str] = field(default_factory=list)
     headers: list[Mapping[str, str] | None] = field(default_factory=list)
 
@@ -194,6 +243,49 @@ def test_x_provider_returns_unconfigured_warning_without_credentials() -> None:
 
 
 @pytest.mark.contract
+def test_x_provider_returns_empty_without_query_or_ticker() -> None:
+    transport = _FakeJsonTransport({})
+    provider = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="x-empty-query-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=(),
+    )
+
+    result = provider.fetch_social_posts(request)
+
+    assert result.status == ProviderStatus.EMPTY
+    assert result.warnings[0].code == WarningCode.NO_DATA
+    assert transport.calls == []
+
+
+@pytest.mark.contract
+def test_x_provider_treats_no_result_meta_as_empty() -> None:
+    transport = _FakeJsonTransport(
+        {"tweets/search/recent": JsonResponse(payload={"meta": {"result_count": 0}})}
+    )
+    provider = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="x-no-results-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_social_posts(request)
+
+    assert result.status == ProviderStatus.EMPTY
+    assert result.warnings[0].code == WarningCode.NO_DATA
+
+
+@pytest.mark.contract
 def test_public_news_provider_uses_configured_mapping_and_normalizes_articles() -> None:
     config = PublicNewsProviderConfig(
         provider_name="fixture-news",
@@ -232,6 +324,42 @@ def test_public_news_provider_uses_configured_mapping_and_normalizes_articles() 
     assert article.provenance.provider_metadata["source_name"] == "Example Markets"
     assert "search=TSLA" in transport.calls[0]
     assert "token=fixture-key" in transport.calls[0]
+
+
+@pytest.mark.contract
+def test_public_news_provider_redacts_api_key_from_source_query_metadata() -> None:
+    config = PublicNewsProviderConfig(
+        provider_name="fixture-news",
+        endpoint="https://news.example.invalid/v1/search",
+        api_key_param="apiKey",
+        query_param="search",
+    )
+    transport = _FakeJsonTransport(
+        {"news.example.invalid/v1/search": JsonResponse(payload=_fixture("news", "tsla.json"))}
+    )
+    provider = PublicNewsProvider(
+        config=config,
+        api_key="super-secret-news-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-redaction-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+        query="TSLA",
+        limit=3,
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.OK
+    assert result.data is not None
+    source_query_url = result.data[0].provenance.provider_metadata["source_query_url"]
+    assert isinstance(source_query_url, str)
+    assert "super-secret-news-key" not in source_query_url
+    assert "apiKey=REDACTED" in source_query_url
+    assert "super-secret-news-key" in transport.calls[0]
 
 
 @pytest.mark.contract
@@ -429,6 +557,60 @@ def test_public_news_provider_maps_upstream_unavailable_transport_failure() -> N
 
 
 @pytest.mark.contract
+def test_public_news_provider_maps_timeout_transport_failure() -> None:
+    transport = _FailingJsonTransport(
+        ProviderTransportError(
+            "fixture news timed out",
+            retryable=True,
+            error_type="timeout",
+        )
+    )
+    provider = PublicNewsProvider(
+        config=PublicNewsProviderConfig(provider_name="fixture-news"),
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-timeout-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.FAILED
+    assert result.warnings[0].code == WarningCode.TIMEOUT
+    assert result.warnings[0].provider_error_type == "timeout"
+    assert result.health.status == ProviderStatus.FAILED
+
+
+@pytest.mark.contract
+def test_public_news_provider_maps_malformed_transport_without_snapshot() -> None:
+    transport = _MalformedJsonTransport(MalformedProviderResponse("provider returned invalid JSON"))
+    provider = PublicNewsProvider(
+        config=PublicNewsProviderConfig(provider_name="fixture-news"),
+        api_key="fixture-key",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = EvidenceRequest(
+        request_id="news-malformed-json-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.MALFORMED
+    assert result.data is None
+    assert result.raw_snapshot_id is None
+    assert result.cache_key is not None
+    assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
+    assert len(transport.calls) == 1
+
+
+@pytest.mark.contract
 def test_alpha_vantage_daily_candles_map_and_reuse_cache(tmp_path: Path) -> None:
     transport = _FakeJsonTransport(
         {
@@ -532,6 +714,8 @@ def test_alpha_vantage_daily_candles_reports_malformed_volume() -> None:
 
     assert result.status == ProviderStatus.MALFORMED
     assert result.data is None
+    assert result.raw_snapshot_id is not None
+    assert result.cache_key is not None
     assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
     assert "invalid OHLCV" in result.warnings[0].message
 
@@ -772,7 +956,7 @@ def test_fred_macro_provider_returns_warning_result_when_all_mapping_fails() -> 
 
     result = provider.fetch_macro(request)
 
-    assert result.status == ProviderStatus.FAILED
+    assert result.status == ProviderStatus.MALFORMED
     assert result.data is None
     assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
     assert result.warnings[0].metadata["series_id"] == "UNRATE"

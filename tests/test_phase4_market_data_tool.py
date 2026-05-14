@@ -25,6 +25,10 @@ from nlp_stock_prediction.orchestration.phase4_market_data import (
     Phase4MarketDataTool,
     load_phase4_market_data_artifact,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    OFFLINE_FIXTURE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.providers._base import provider_result
 from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
 from nlp_stock_prediction.providers.market import AlphaVantageMarketDataProvider
@@ -50,7 +54,10 @@ def _store(tmp_path: Path, run_id: str = RUN_ID) -> SQLiteStore:
             objective="exercise Phase 4 market data tool",
             status="running",
             started_at=NOW,
-            metadata={"run_date": RUN_DATE.isoformat()},
+            metadata={
+                "run_date": RUN_DATE.isoformat(),
+                **report_data_mode_metadata(OFFLINE_FIXTURE_REPORT_DATA_MODE),
+            },
         )
     )
     return store
@@ -180,7 +187,10 @@ def test_phase4_market_data_rolls_back_file_and_rows_when_artifact_index_fails(
             objective="exercise Phase 4 market data rollback",
             status="running",
             started_at=NOW,
-            metadata={"run_date": RUN_DATE.isoformat()},
+            metadata={
+                "run_date": RUN_DATE.isoformat(),
+                **report_data_mode_metadata(OFFLINE_FIXTURE_REPORT_DATA_MODE),
+            },
         )
     )
     artifact_dir = tmp_path / "reports" / RUN_DATE.isoformat() / "audit"

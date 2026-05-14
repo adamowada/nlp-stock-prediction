@@ -17,6 +17,10 @@ from nlp_stock_prediction.orchestration.phase2_common import (
 from nlp_stock_prediction.orchestration.phase3_universe import (
     Phase3FixtureUniverseTool,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    DUMMY_SMOKE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.storage.records import ToolRunRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
@@ -56,7 +60,11 @@ def run_phase2_dummy_universe_tool(
                 status=tool_status,
                 started_at=now,
                 completed_at=now,
-                inputs={"symbol": symbol, "universe_id": universe.request_id},
+                inputs={
+                    "symbol": symbol,
+                    "universe_id": universe.request_id,
+                    **report_data_mode_metadata(DUMMY_SMOKE_REPORT_DATA_MODE),
+                },
                 warnings=universe.warnings,
             )
         )
@@ -68,6 +76,7 @@ def run_phase2_dummy_universe_tool(
         produced_by=tool_name,
         tool_run_id=resolved_tool_run_id,
         schema_version="phase3.instrument-universe.v1",
+        default_metadata=report_data_mode_metadata(DUMMY_SMOKE_REPORT_DATA_MODE),
     ).write_json(
         artifact_id=artifact_id,
         artifact_type="instrument_universe",
@@ -133,7 +142,10 @@ def run_phase2_dummy_analysis_tool(
                 status=tool_status,
                 started_at=now,
                 completed_at=now,
-                inputs={"symbol": symbol},
+                inputs={
+                    "symbol": symbol,
+                    **report_data_mode_metadata(DUMMY_SMOKE_REPORT_DATA_MODE),
+                },
             )
         )
     ArtifactIndex.for_directory(
@@ -144,6 +156,7 @@ def run_phase2_dummy_analysis_tool(
         produced_by=tool_name,
         tool_run_id=resolved_tool_run_id,
         schema_version="dummy-analysis.v1",
+        default_metadata=report_data_mode_metadata(DUMMY_SMOKE_REPORT_DATA_MODE),
     ).write_json(
         artifact_id=artifact_id,
         artifact_type="analysis_context",

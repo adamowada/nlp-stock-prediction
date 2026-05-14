@@ -26,7 +26,96 @@ Generate the deterministic offline report:
 python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --offline
 ```
 
+Generate a guarded live-provider report:
+
+```sh
+python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --live
+```
+
 Reports are written under `<output>/<YYYY-MM-DD>/<symbol-slug>/`.
+
+## Report Data Modes
+
+Report assembly records a machine-checkable `report_data_mode` in run metadata, report
+`command_args`, audit manifest `command_args`, tool-run inputs, and report artifact metadata.
+
+Implemented modes:
+
+- `offline_fixture`: the `research --offline` Phase 4 path. It uses deterministic fixture
+  providers and is allowed only when the caller explicitly requests offline mode.
+- `dummy_smoke`: the legacy deterministic dummy orchestration path. It is structural validation only
+  and refuses non-offline configs.
+- `codex_smoke`: the optional Codex smoke path that may include live Codex search evidence but still
+  uses smoke-only structural tools.
+- `live`: the guarded `research --live` Phase 4 path. It uses live provider adapters and public
+  source adapters only, records missing credentials or upstream failures as tool/provider warnings,
+  and refuses stored fixture, dummy, or smoke inputs. If a live run has no admissible stored evidence
+  or candidates, the report renders structured insufficient evidence rather than falling back to
+  fixtures or dummy data.
+
+Direct non-offline pipeline calls still fail unless `source_mode="live"` or `live_providers=True` is
+set, so callers cannot accidentally route live requests to fixture or dummy data.
+
+## Report Assembly Source Of Truth
+
+Phase 5 report assembly reads from the stored research SQLite run graph and persisted artifacts. The
+renderer uses stored evidence, prediction candidates, candidate-evidence links, candidate-artifact
+links, tool runs, artifact paths, and artifact hashes as the report source of truth. It does not
+synthesize replacement candidates or fixture fallback data during final report rendering.
+
+Candidate claims are emitted only when their required stored evidence and artifacts are available and
+valid. Missing linked evidence, missing required artifacts, hash mismatches, or malformed typed
+artifacts exclude the affected candidate and surface as structured insufficient evidence when no
+candidate remains usable. Audit manifests preserve artifact ids, paths, hashes, validation status,
+whether an artifact was required for assembly, and provider-health snapshots for visible failure
+diagnostics.
+
+Report source references are candidate-specific where the run graph supplies the relationship:
+source evidence references point to the candidates that cite them, artifact references point to the
+candidates linked to those artifacts, and provider-health references preserve partial, empty, failed,
+or assembly-level failures. Material claim traces cover candidate thesis, baseline context, and
+prediction-quality evaluation claims.
+
+## Markdown Product Reports
+
+Markdown reports are the human-facing companion to the JSON payload. They render report metadata,
+provider health, universe resolution, instrument identity and availability, observed source evidence,
+report-authored analysis, baseline context, prediction scenarios, uncertainty, dissent, change
+triggers, prior-outcome reviews, source references, the evidence ledger, and audit artifacts.
+
+Observed source claims are labeled separately from report-authored scenario analysis and labeled
+inference. Candidate sections preserve evidence-for and evidence-against references, uncertainty
+drivers, dissenting evidence, evaluation quality metadata, and prior-outcome review links without
+using recommendation, position sizing, or trade-instruction framing. Structured insufficient-evidence
+reports render their blocking reasons, providers, evidence, artifacts, and metadata instead of
+inventing a fallback scenario.
+
+## JSON Reports And Runtime Index
+
+JSON reports keep the top-level `DailyReport` payload shape and are validated against
+`json-report-contract.v1` before they are written. The contract maps every material Markdown product
+section to stable JSON fields, including report metadata, data freshness, provider health and
+warnings, instrument sections, prediction scenarios or structured insufficient evidence,
+prior-outcome reviews, material claim traces, source references, the evidence ledger, and audit
+artifacts.
+
+Final Markdown, JSON, and audit-manifest files are also recorded in the research database
+`report_artifact_index`. The index stores paths, hashes, artifact schema version, report schema
+version, report date, instrument identity, report data mode, tool run id, and source run timestamps.
+It does not store report bodies or raw provider payloads; those remain file-backed artifacts under
+ignored output directories.
+
+## Prior Outcome Review
+
+Report rendering loads the latest indexed prior JSON report for the same instrument, or an explicit
+prior report artifact recorded in run metadata. Prior report files are read from disk and checked
+against the stored hash before they can source a `PriorOutcomeReview`. If no prior report exists,
+the candidate receives an explicit `not_available` review. Missing, malformed, or stale prior
+artifacts are represented as unavailable or stale limitations rather than synthesized history.
+
+When a prior report is usable, the current report records follow-up evidence as the outcome context,
+links the prior JSON artifact in the current audit manifest, and adds change triggers for supporting
+or contradictory evidence, outcome data, baseline changes, and provider refreshes where applicable.
 
 Run the optional Phase 4 real-Codex smoke after installing the MCP extra:
 
@@ -72,9 +161,11 @@ Generated payloads are local working state by default. Keep `artifacts/`, `repor
 should be deleted or archived outside the repository rather than treated as source artifacts.
 
 The SQLite foundation is implemented in `nlp_stock_prediction.storage`. The planning database is
-`plans/planning.sqlite3` and is tracked in git. The research database is
-`data/prediction-research.sqlite3` and is generated local state ignored by git. Create or verify both
-with:
+`plans/planning.sqlite3` and is tracked in git. The default service research database is
+`data/prediction-research.sqlite3` and is generated local state ignored by git. The CLI `research`
+command writes isolated runtime databases named
+`data/phase4-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3` so separate report
+invocations do not silently share stored evidence. Create or verify the default databases with:
 
 ```python
 from pathlib import Path
@@ -101,9 +192,12 @@ Expected variable families:
 ```text
 OPENAI_API_KEY
 NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE
+NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY
+NLP_STOCK_PREDICTION_FRED_API_KEY
 NLP_STOCK_PREDICTION_X_BEARER_TOKEN
 NLP_STOCK_PREDICTION_LIVE_USER_AGENT
 NLP_STOCK_PREDICTION_SEC_USER_AGENT
+NLP_STOCK_PREDICTION_SEC_CIK_MAP
 NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT
 NEWS_* provider keys
 MARKET_DATA_* provider keys
@@ -112,7 +206,10 @@ NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL
 NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT
 ```
 
-Provider-specific names should be documented when a provider is implemented.
+`NLP_STOCK_PREDICTION_SEC_CIK_MAP` accepts comma-separated `SYMBOL=CIK` entries for SEC EDGAR
+lookups. The live path also honors `ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`,
+`FRED_API_KEY`, and `X_BEARER_TOKEN` as fallback names. Missing optional credentials are surfaced in
+the run graph and final report instead of being replaced with fixture data.
 
 ## Internet Search
 
@@ -132,9 +229,10 @@ regular reports.
 
 ## Instrument Universe
 
-The implemented Phase 3 universe layer is contract and storage infrastructure. It does not introduce
-a new CLI command or a live universe provider. The current command surface remains the offline
-`research` command and the legacy-named optional Phase 4 Codex smoke runner above.
+The implemented Phase 3 universe layer is contract and storage infrastructure. The live `research`
+path materializes requested symbols as live-mode instrument identities, then relies on provider
+artifacts and warnings to establish actual data availability. The legacy-named optional Phase 4
+Codex smoke runner remains separate from the live-provider CLI path.
 
 The target universe is retail-accessible instruments, including:
 

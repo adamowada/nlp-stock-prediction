@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from nlp_stock_prediction.contracts.enums import (
     CredentialState,
@@ -31,7 +32,6 @@ from nlp_stock_prediction.providers._base import (
     find_ticker_matches,
     first_ticker,
     freshness_status,
-    malformed_result,
     missing_credentials_result,
     parse_optional_provider_datetime,
     provider_health,
@@ -43,7 +43,7 @@ from nlp_stock_prediction.providers._base import (
     utc_now,
 )
 from nlp_stock_prediction.providers.execution import (
-    evidence_result_from_records,
+    ProviderExecutionContext,
     partial_item_warning,
 )
 
@@ -120,6 +120,14 @@ class PublicNewsProvider:
             if self._config.requires_api_key
             else CredentialState.NOT_REQUIRED
         )
+        execution = ProviderExecutionContext(
+            provider_name=self.provider_name,
+            request=request,
+            fetched_at=fetched_at,
+            credential_state=credential_state,
+            cache_key=cache_key,
+        )
+        fetched: JsonFetch | None = None
         try:
             fetched = fetch_json(
                 transport=self._transport,
@@ -131,6 +139,10 @@ class PublicNewsProvider:
                 fetched_at=fetched_at,
                 cache=self._cache,
                 timeout=self._timeout,
+                cacheable_payload=lambda payload: isinstance(
+                    payload.get(self._config.articles_key),
+                    list,
+                ),
             )
             evidence, partial_warnings = self._map_payload(request, fetched, query, url, fetched_at)
         except ProviderTransportError as exc:
@@ -142,25 +154,21 @@ class PublicNewsProvider:
                 credential_state=credential_state,
             )
         except MalformedProviderResponse as exc:
-            return malformed_result(
-                provider_name=self.provider_name,
-                request=request,
-                fetched_at=fetched_at,
-                message=str(exc),
-                credential_state=credential_state,
-                cache_key=cache_key,
-            )
-        return evidence_result_from_records(
-            provider_name=self.provider_name,
-            request=request,
-            fetched_at=fetched_at,
+            if fetched is not None:
+                execution = execution.with_fetch(
+                    raw_snapshot_id=fetched.raw_snapshot_id,
+                    cache_key=fetched.cache_key,
+                )
+            return execution.malformed(str(exc))
+        assert fetched is not None
+        return execution.with_fetch(
+            raw_snapshot_id=fetched.raw_snapshot_id,
+            cache_key=fetched.cache_key,
+        ).evidence_result(
             evidence=evidence,
             warnings=partial_warnings,
             no_data_message=f"{self.provider_name} returned no articles",
             stale_message=f"{self.provider_name} returned stale news articles",
-            credential_state=credential_state,
-            raw_snapshot_id=fetched.raw_snapshot_id,
-            cache_key=fetched.cache_key,
         )
 
     def health(self) -> ProviderHealth:
@@ -296,7 +304,7 @@ class PublicNewsProvider:
                             "source_name": source_name,
                             "author": raw_article.get("author"),
                             "cache_hit": fetched.cache_hit,
-                            "source_query_url": source_url,
+                            "source_query_url": _redact_sensitive_url(source_url),
                         },
                     ),
                     metadata={"source_name": source_name},
@@ -316,6 +324,18 @@ def _retrieval_method_for_provider(provider_name: str) -> RetrievalMethod:
     if "fixture" in provider_name.lower():
         return RetrievalMethod.FIXTURE
     return RetrievalMethod.OFFICIAL_API
+
+
+def _redact_sensitive_url(url: str) -> str:
+    sensitive = {"api_key", "apikey", "token", "access_token", "key", "bearer"}
+    split = urlsplit(url)
+    query = urlencode(
+        [
+            (key, "REDACTED" if key.lower() in sensitive else value)
+            for key, value in parse_qsl(split.query, keep_blank_values=True)
+        ]
+    )
+    return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
 
 
 __all__ = ["PublicNewsProvider", "PublicNewsProviderConfig"]

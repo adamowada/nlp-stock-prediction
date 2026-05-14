@@ -7,8 +7,8 @@ import sqlite3
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import UTC, date, datetime
+from pathlib import Path, PureWindowsPath
 from typing import cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
@@ -37,11 +37,18 @@ from nlp_stock_prediction.storage.records import (
     PredictionEvaluationRecord,
     PredictionOutcomeEvaluationRecord,
     PredictionOutcomeRecord,
+    ReportArtifactRecord,
     ResearchRunRecord,
     SourceQueryRecord,
     ToolRunRecord,
     WatchlistItemRecord,
     WatchlistRecord,
+)
+from nlp_stock_prediction.storage.report_artifacts import (
+    fetch_latest_prior_report_artifact_row,
+    fetch_latest_report_artifact_row,
+    fetch_report_artifact_row,
+    fetch_report_artifact_rows_for_run,
 )
 from nlp_stock_prediction.storage.run_graph import (
     fetch_artifact_rows,
@@ -51,7 +58,7 @@ from nlp_stock_prediction.storage.run_graph import (
     fetch_tool_run_rows,
 )
 
-CURRENT_RESEARCH_SCHEMA_VERSION = 6
+CURRENT_RESEARCH_SCHEMA_VERSION = 7
 CURRENT_PLANNING_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = CURRENT_RESEARCH_SCHEMA_VERSION
 DEFAULT_RESEARCH_DATABASE_PATH = Path("data/prediction-research.sqlite3")
@@ -523,6 +530,7 @@ class SQLiteStore:
                     _format_datetime(created_at),
                 ),
             )
+            self._sync_candidate_links_for_artifact(connection, record.artifact_id)
 
     def get_artifact(self, artifact_id: str) -> ArtifactRecord | None:
         _validate_required(artifact_id, "artifact_id")
@@ -544,6 +552,173 @@ class SQLiteStore:
             _ensure_initialized(connection)
             rows = fetch_artifact_rows(connection, run_id)
         return tuple(_artifact_from_row(row) for row in rows)
+
+    def record_report_artifact(self, record: ReportArtifactRecord) -> None:
+        _validate_required(record.artifact_id, "artifact_id")
+        _validate_required(record.run_id, "run_id")
+        _validate_report_artifact_type(record.artifact_type)
+        _validate_required(record.sha256, "sha256")
+        _validate_required(record.schema_version, "schema_version")
+        _validate_required(record.report_schema_version, "report_schema_version")
+        _validate_required(record.report_data_mode, "report_data_mode")
+        _validate_relative_artifact_path(record.path)
+        if record.instrument_id is not None:
+            _validate_required(record.instrument_id, "instrument_id")
+        if record.symbol is not None:
+            _validate_required(record.symbol, "symbol")
+        created_at = record.created_at or _utc_now()
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            artifact_row = connection.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ?",
+                (record.artifact_id,),
+            ).fetchone()
+            if artifact_row is None:
+                raise ValueError(
+                    "report artifact index rows require an existing artifact ledger row"
+                )
+            artifact = _artifact_from_row(artifact_row)
+            _validate_report_artifact_matches_ledger(record, artifact)
+            connection.execute(
+                """
+                INSERT INTO report_artifact_index (
+                    artifact_id, run_id, tool_run_id, artifact_type, path, sha256,
+                    schema_version, report_schema_version, report_date, instrument_id,
+                    symbol, report_data_mode, source_run_started_at,
+                    source_run_completed_at, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(artifact_id) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    tool_run_id = excluded.tool_run_id,
+                    artifact_type = excluded.artifact_type,
+                    path = excluded.path,
+                    sha256 = excluded.sha256,
+                    schema_version = excluded.schema_version,
+                    report_schema_version = excluded.report_schema_version,
+                    report_date = excluded.report_date,
+                    instrument_id = excluded.instrument_id,
+                    symbol = excluded.symbol,
+                    report_data_mode = excluded.report_data_mode,
+                    source_run_started_at = excluded.source_run_started_at,
+                    source_run_completed_at = excluded.source_run_completed_at,
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
+                """,
+                (
+                    record.artifact_id,
+                    record.run_id,
+                    record.tool_run_id,
+                    record.artifact_type,
+                    str(record.path),
+                    record.sha256,
+                    record.schema_version,
+                    record.report_schema_version,
+                    record.report_date.isoformat(),
+                    record.instrument_id,
+                    record.symbol.strip().upper() if record.symbol is not None else None,
+                    record.report_data_mode,
+                    _format_datetime(record.source_run_started_at),
+                    _format_optional_datetime(record.source_run_completed_at),
+                    _dump_json(record.metadata),
+                    _format_datetime(created_at),
+                ),
+            )
+
+    def get_report_artifact(self, artifact_id: str) -> ReportArtifactRecord | None:
+        _validate_required(artifact_id, "artifact_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = fetch_report_artifact_row(connection, artifact_id)
+        if row is None:
+            return None
+        return _report_artifact_from_row(row)
+
+    def list_report_artifacts_for_run(
+        self,
+        run_id: str,
+    ) -> tuple[ReportArtifactRecord, ...]:
+        _validate_required(run_id, "run_id")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            rows = fetch_report_artifact_rows_for_run(connection, run_id)
+        return tuple(_report_artifact_from_row(row) for row in rows)
+
+    def get_latest_report_artifact(
+        self,
+        *,
+        artifact_type: str = "json_report",
+        report_date: date | None = None,
+        instrument_id: str | None = None,
+        symbol: str | None = None,
+    ) -> ReportArtifactRecord | None:
+        _validate_report_artifact_type(artifact_type)
+        if instrument_id is not None:
+            _validate_required(instrument_id, "instrument_id")
+        if symbol is not None:
+            _validate_required(symbol, "symbol")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = fetch_latest_report_artifact_row(
+                connection,
+                artifact_type=artifact_type,
+                report_date=report_date,
+                instrument_id=instrument_id,
+                symbol=symbol,
+            )
+        if row is None:
+            return None
+        return _report_artifact_from_row(row)
+
+    def get_latest_prior_report_artifact(
+        self,
+        *,
+        before_report_date: date,
+        artifact_type: str = "json_report",
+        instrument_id: str | None = None,
+        symbol: str | None = None,
+    ) -> ReportArtifactRecord | None:
+        _validate_report_artifact_type(artifact_type)
+        if instrument_id is not None:
+            _validate_required(instrument_id, "instrument_id")
+        if symbol is not None:
+            _validate_required(symbol, "symbol")
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = fetch_latest_prior_report_artifact_row(
+                connection,
+                before_report_date=before_report_date,
+                artifact_type=artifact_type,
+                instrument_id=instrument_id,
+                symbol=symbol,
+            )
+        if row is None:
+            return None
+        return _report_artifact_from_row(row)
+
+    def list_latest_report_artifact_bundle(
+        self,
+        *,
+        report_date: date | None = None,
+        instrument_id: str | None = None,
+        symbol: str | None = None,
+    ) -> tuple[ReportArtifactRecord, ...]:
+        latest = self.get_latest_report_artifact(
+            artifact_type="json_report",
+            report_date=report_date,
+            instrument_id=instrument_id,
+            symbol=symbol,
+        )
+        if latest is None:
+            return ()
+        run_artifacts = self.list_report_artifacts_for_run(latest.run_id)
+        return tuple(
+            artifact
+            for artifact in run_artifacts
+            if artifact.report_date == latest.report_date
+            and artifact.instrument_id == latest.instrument_id
+            and artifact.symbol == latest.symbol
+        )
 
     def record_source_query(self, record: SourceQueryRecord) -> None:
         _validate_required(record.source_query_id, "source_query_id")
@@ -655,6 +830,7 @@ class SQLiteStore:
                     _dump_json(record.metadata),
                 ),
             )
+            self._sync_candidate_links_for_evidence(connection, record.evidence_id)
 
     def get_evidence(self, evidence_id: str) -> EvidenceRecord | None:
         _validate_required(evidence_id, "evidence_id")
@@ -1762,6 +1938,68 @@ class SQLiteStore:
                 ),
             )
 
+    def _sync_candidate_links_for_evidence(
+        self,
+        connection: sqlite3.Connection,
+        evidence_id: str,
+    ) -> None:
+        created_at = _format_datetime(_utc_now())
+        rows = connection.execute("SELECT * FROM prediction_candidates").fetchall()
+        for row in rows:
+            candidate = _prediction_candidate_from_row(row)
+            relationships: list[str] = []
+            if evidence_id in candidate.evidence_for:
+                relationships.append("supports")
+            if evidence_id in candidate.evidence_against:
+                relationships.append("contradicts")
+            for relationship in relationships:
+                connection.execute(
+                    """
+                    INSERT INTO candidate_evidence_links (
+                        candidate_id, evidence_id, relationship, metadata_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(candidate_id, evidence_id, relationship) DO UPDATE SET
+                        metadata_json = excluded.metadata_json
+                    """,
+                    (
+                        candidate.candidate_id,
+                        evidence_id,
+                        relationship,
+                        _dump_json({"source": "prediction_candidate_record"}),
+                        created_at,
+                    ),
+                )
+
+    def _sync_candidate_links_for_artifact(
+        self,
+        connection: sqlite3.Connection,
+        artifact_id: str,
+    ) -> None:
+        created_at = _format_datetime(_utc_now())
+        rows = connection.execute("SELECT * FROM prediction_candidates").fetchall()
+        for row in rows:
+            candidate = _prediction_candidate_from_row(row)
+            if artifact_id not in candidate.signal_artifacts:
+                continue
+            connection.execute(
+                """
+                INSERT INTO candidate_artifact_links (
+                    candidate_id, artifact_id, relationship, metadata_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(candidate_id, artifact_id, relationship) DO UPDATE SET
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    candidate.candidate_id,
+                    artifact_id,
+                    "signal",
+                    _dump_json({"source": "prediction_candidate_record"}),
+                    created_at,
+                ),
+            )
+
 
 ResearchSQLiteStore = SQLiteStore
 
@@ -2191,6 +2429,12 @@ def _migrate_research_schema_v5(connection: sqlite3.Connection) -> None:
 
 def _migrate_research_schema_v6(connection: sqlite3.Connection) -> None:
     connection.executescript(_RESEARCH_EVALUATION_SCHEMA_SQL)
+    connection.executescript(_RESEARCH_REPORT_INDEX_SCHEMA_SQL)
+
+
+def _migrate_research_schema_v7(connection: sqlite3.Connection) -> None:
+    connection.executescript(_RESEARCH_EVALUATION_SCHEMA_SQL)
+    connection.executescript(_RESEARCH_REPORT_INDEX_SCHEMA_SQL)
 
 
 _RESEARCH_MIGRATION_STEPS = (
@@ -2199,7 +2443,8 @@ _RESEARCH_MIGRATION_STEPS = (
     _SchemaMigrationStep(3, "phase2_evidence_provenance_schema", _noop_migration),
     _SchemaMigrationStep(4, "registry_grade_research_schema_v4", _migrate_research_schema_v4),
     _SchemaMigrationStep(5, "artifact_audit_provenance_schema_v5", _migrate_research_schema_v5),
-    _SchemaMigrationStep(6, "phase6_evaluation_calibration_schema", _migrate_research_schema_v6),
+    _SchemaMigrationStep(6, "phase5_phase6_runtime_schema_v6", _migrate_research_schema_v6),
+    _SchemaMigrationStep(7, "phase5_phase6_schema_reconciliation_v7", _migrate_research_schema_v7),
 )
 
 
@@ -2465,6 +2710,7 @@ _SAFE_SQL_TABLE_NAMES = frozenset(
         "planning_progress",
         "plans",
         "prediction_candidates",
+        "report_artifact_index",
         "research_runs",
         "schema_migrations",
         "source_queries",
@@ -2552,10 +2798,50 @@ def _validate_choice(value: str, field_name: str, allowed: set[str]) -> None:
 
 
 def _validate_relative_artifact_path(path: Path) -> None:
-    if path.is_absolute():
+    path_text = str(path).strip()
+    if not path_text or path_text == ".":
+        raise ValueError("artifact path must name a file")
+    windows_path = PureWindowsPath(path_text)
+    if (
+        path.is_absolute()
+        or path.anchor
+        or path.drive
+        or path.root
+        or windows_path.is_absolute()
+        or windows_path.anchor
+        or windows_path.drive
+        or windows_path.root
+    ):
         raise ValueError("artifact path must be relative")
-    if any(part == ".." for part in path.parts):
+    if any(part in {"..", "."} for part in (*path.parts, *windows_path.parts)):
         raise ValueError("artifact path must not contain parent traversal")
+
+
+def _validate_report_artifact_matches_ledger(
+    record: ReportArtifactRecord,
+    artifact: ArtifactRecord,
+) -> None:
+    expected = {
+        "artifact_type": artifact.artifact_type,
+        "path": str(artifact.path),
+        "sha256": artifact.sha256,
+        "schema_version": artifact.schema_version,
+        "tool_run_id": artifact.tool_run_id,
+    }
+    observed = {
+        "artifact_type": record.artifact_type,
+        "path": str(record.path),
+        "sha256": record.sha256,
+        "schema_version": record.schema_version,
+        "tool_run_id": record.tool_run_id,
+    }
+    mismatched = tuple(
+        field for field, expected_value in expected.items() if observed[field] != expected_value
+    )
+    if mismatched:
+        raise ValueError(
+            "report artifact index row must match artifact ledger fields: " + ", ".join(mismatched)
+        )
 
 
 def _validate_confidence(value: float | None) -> None:
@@ -2568,6 +2854,16 @@ def _validate_confidence(value: float | None) -> None:
 def _validate_non_negative_count(value: int, field_name: str) -> None:
     if value < 0:
         raise ValueError(f"{field_name} must be non-negative")
+
+
+_REPORT_ARTIFACT_TYPES = frozenset({"markdown_report", "json_report", "audit_manifest"})
+
+
+def _validate_report_artifact_type(value: str) -> None:
+    _validate_required(value, "artifact_type")
+    if value not in _REPORT_ARTIFACT_TYPES:
+        allowed = ", ".join(sorted(_REPORT_ARTIFACT_TYPES))
+        raise ValueError(f"report artifact_type must be one of: {allowed}")
 
 
 def _utc_now() -> datetime:
@@ -2753,6 +3049,29 @@ def _artifact_from_row(row: sqlite3.Row) -> ArtifactRecord:
         schema_version=_row_text(row, "schema_version"),
         produced_by=_row_optional_text(row, "produced_by"),
         record_count=_row_optional_int(row, "record_count"),
+        metadata=_load_json_object(_row_text(row, "metadata_json")),
+        created_at=_parse_datetime(_row_text(row, "created_at")),
+    )
+
+
+def _report_artifact_from_row(row: sqlite3.Row) -> ReportArtifactRecord:
+    return ReportArtifactRecord(
+        artifact_id=_row_text(row, "artifact_id"),
+        run_id=_row_text(row, "run_id"),
+        tool_run_id=_row_optional_text(row, "tool_run_id"),
+        artifact_type=_row_text(row, "artifact_type"),
+        path=Path(_row_text(row, "path")),
+        sha256=_row_text(row, "sha256"),
+        schema_version=_row_text(row, "schema_version"),
+        report_schema_version=_row_text(row, "report_schema_version"),
+        report_date=date.fromisoformat(_row_text(row, "report_date")),
+        instrument_id=_row_optional_text(row, "instrument_id"),
+        symbol=_row_optional_text(row, "symbol"),
+        report_data_mode=_row_text(row, "report_data_mode"),
+        source_run_started_at=_parse_datetime(_row_text(row, "source_run_started_at")),
+        source_run_completed_at=_parse_optional_datetime(
+            _row_optional_text(row, "source_run_completed_at")
+        ),
         metadata=_load_json_object(_row_text(row, "metadata_json")),
         created_at=_parse_datetime(_row_text(row, "created_at")),
     )
@@ -3541,6 +3860,42 @@ CREATE INDEX IF NOT EXISTS idx_calibration_slices_family
 ON calibration_slices(signal_family);
 """
 
+_RESEARCH_REPORT_INDEX_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS report_artifact_index (
+    artifact_id TEXT PRIMARY KEY
+        REFERENCES artifacts(artifact_id) ON DELETE CASCADE
+        CHECK(length(artifact_id) > 0),
+    run_id TEXT NOT NULL
+        REFERENCES research_runs(run_id) ON DELETE CASCADE
+        CHECK(length(run_id) > 0),
+    tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+    artifact_type TEXT NOT NULL CHECK(
+        artifact_type IN ('markdown_report', 'json_report', 'audit_manifest')
+    ),
+    path TEXT NOT NULL CHECK(length(path) > 0),
+    sha256 TEXT NOT NULL CHECK(length(sha256) > 0),
+    schema_version TEXT NOT NULL CHECK(length(schema_version) > 0),
+    report_schema_version TEXT NOT NULL CHECK(length(report_schema_version) > 0),
+    report_date TEXT NOT NULL CHECK(length(report_date) > 0),
+    instrument_id TEXT,
+    symbol TEXT,
+    report_data_mode TEXT NOT NULL CHECK(length(report_data_mode) > 0),
+    source_run_started_at TEXT NOT NULL CHECK(length(source_run_started_at) > 0),
+    source_run_completed_at TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL CHECK(length(created_at) > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_artifact_index_run_id
+ON report_artifact_index(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_report_artifact_index_latest_json
+ON report_artifact_index(artifact_type, report_date, instrument_id, symbol, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_report_artifact_index_symbol_date
+ON report_artifact_index(symbol, report_date);
+"""
+
 _PLANNING_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -3660,6 +4015,7 @@ __all__ = [
     "PredictionEvaluationRecord",
     "PredictionOutcomeEvaluationRecord",
     "PredictionOutcomeRecord",
+    "ReportArtifactRecord",
     "ResearchRunRecord",
     "ResearchSQLiteStore",
     "SQLiteStore",

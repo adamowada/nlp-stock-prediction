@@ -23,6 +23,10 @@ from nlp_stock_prediction.orchestration.phase4_technical_package import (
     Phase4TechnicalPackageTool,
     load_phase4_technical_package_artifact,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    OFFLINE_FIXTURE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
 from nlp_stock_prediction.providers.market import AlphaVantageMarketDataProvider
 from nlp_stock_prediction.storage import ResearchRunRecord, SQLiteStore
@@ -47,7 +51,10 @@ def _store(tmp_path: Path, run_id: str = RUN_ID) -> SQLiteStore:
             objective="exercise Phase 4 technical package tool",
             status="running",
             started_at=NOW,
-            metadata={"run_date": RUN_DATE.isoformat()},
+            metadata={
+                "run_date": RUN_DATE.isoformat(),
+                **report_data_mode_metadata(OFFLINE_FIXTURE_REPORT_DATA_MODE),
+            },
         )
     )
     return store

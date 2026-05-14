@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -32,6 +32,7 @@ from nlp_stock_prediction.storage import (
     PredictionEvaluationRecord,
     PredictionOutcomeEvaluationRecord,
     PredictionOutcomeRecord,
+    ReportArtifactRecord,
     ResearchRunRecord,
     SourceQueryRecord,
     SQLiteStore,
@@ -188,6 +189,7 @@ def test_research_database_initialization_is_idempotent_and_excludes_planning(
         "prediction_evaluations",
         "prediction_outcome_evaluations",
         "prediction_outcomes",
+        "report_artifact_index",
         "research_runs",
         "outcome_artifact_links",
         "outcome_evaluation_artifact_links",
@@ -236,10 +238,6 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
                 asset_class TEXT NOT NULL,
                 venue TEXT,
                 aliases_json TEXT NOT NULL DEFAULT '[]',
-                provider_ids_json TEXT NOT NULL DEFAULT '[]',
-                related_instruments_json TEXT NOT NULL DEFAULT '[]',
-                tradability_evidence_json TEXT NOT NULL DEFAULT '[]',
-                data_availability_json TEXT NOT NULL DEFAULT '[]',
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -354,6 +352,7 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
         "prediction_evaluations",
         "prediction_outcome_evaluations",
         "prediction_outcomes",
+        "report_artifact_index",
         "watchlist_items",
         "watchlists",
     }.issubset(_table_names(store))
@@ -1038,6 +1037,36 @@ def test_record_artifact_rejects_absolute_and_parent_traversal_paths(tmp_path: P
                 schema_version="unit.v1",
             )
         )
+    with pytest.raises(ValueError, match="relative"):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id="artifact-invalid-path-rooted",
+                artifact_type="provider_result",
+                path=Path("\\tmp\\leak.json"),
+                sha256="b" * 64,
+                schema_version="unit.v1",
+            )
+        )
+    with pytest.raises(ValueError, match="relative"):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id="artifact-invalid-path-drive",
+                artifact_type="provider_result",
+                path=Path("C:\\tmp\\leak.json"),
+                sha256="b" * 64,
+                schema_version="unit.v1",
+            )
+        )
+    with pytest.raises(ValueError, match="name a file"):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id="artifact-invalid-path-current",
+                artifact_type="provider_result",
+                path=Path("."),
+                sha256="b" * 64,
+                schema_version="unit.v1",
+            )
+        )
 
 
 @pytest.mark.unit
@@ -1070,6 +1099,284 @@ def test_artifact_upsert_refreshes_created_at_for_run_graph_ordering(tmp_path: P
     artifact = store.get_artifact("artifact-refresh")
     assert artifact is not None
     assert artifact.created_at == later
+
+
+@pytest.mark.unit
+def test_candidate_links_are_repaired_when_evidence_and_artifacts_arrive_later(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    now = _timestamp()
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id="run-link-repair",
+            run_kind="unit",
+            objective="repair candidate links",
+            status="running",
+            started_at=now,
+        )
+    )
+    store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-link-repair",
+            run_id="run-link-repair",
+            tool_name="unit_tool",
+            tool_version="unit.v1",
+            status="successful",
+            started_at=now,
+        )
+    )
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id="instrument:unit:tsla",
+            symbol="TSLA",
+            asset_class="stock",
+        )
+    )
+    store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            candidate_id="candidate-link-repair",
+            run_id="run-link-repair",
+            instrument_id="instrument:unit:tsla",
+            prediction_horizon="swing",
+            prediction_type="directional",
+            scenario="Candidate references records that arrive later.",
+            status="insufficient_evidence",
+            evidence_for=("evidence-late",),
+            signal_artifacts=("artifact-late",),
+        )
+    )
+
+    assert store.list_candidate_evidence_links("candidate-link-repair") == ()
+    assert store.list_candidate_artifact_links("candidate-link-repair") == ()
+
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-late",
+            tool_run_id="tool-link-repair",
+            artifact_type="technical_package",
+            path=Path("artifacts/late.json"),
+            sha256="e" * 64,
+            schema_version="technical_package.v1",
+        )
+    )
+    store.record_evidence(
+        EvidenceRecord(
+            evidence_id="evidence-late",
+            tool_run_id="tool-link-repair",
+            source_type="news_article",
+            provider="unit-news",
+            retrieved_at=now,
+            claim="Late evidence arrived after candidate storage.",
+        )
+    )
+
+    assert tuple(
+        link.evidence_id for link in store.list_candidate_evidence_links("candidate-link-repair")
+    ) == ("evidence-late",)
+    assert tuple(
+        link.artifact_id for link in store.list_candidate_artifact_links("candidate-link-repair")
+    ) == ("artifact-late",)
+
+
+@pytest.mark.unit
+def test_report_artifact_index_round_trips_and_finds_latest_bundle(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    earlier = _timestamp()
+    later = earlier.replace(hour=13)
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id="run-report-index",
+            run_kind="daily_prediction_report",
+            objective="index final report artifacts",
+            status="completed",
+            started_at=earlier,
+            completed_at=later,
+            metadata={"run_date": "2026-05-13"},
+        )
+    )
+    store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-render-report-index",
+            run_id="run-report-index",
+            tool_name="render_prediction_report",
+            tool_version="phase5.report-index.v1",
+            status="successful",
+            started_at=earlier,
+            completed_at=later,
+            inputs={"symbol": "TSLA"},
+        )
+    )
+    for artifact_id, artifact_type, path, digest in (
+        (
+            "artifact-report-md-index",
+            "markdown_report",
+            Path("reports/2026-05-13/tsla/report.md"),
+            "a" * 64,
+        ),
+        (
+            "artifact-report-json-index",
+            "json_report",
+            Path("reports/2026-05-13/tsla/report.json"),
+            "b" * 64,
+        ),
+        (
+            "artifact-report-audit-index",
+            "audit_manifest",
+            Path("reports/2026-05-13/tsla/audit/audit-manifest.json"),
+            "c" * 64,
+        ),
+    ):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id=artifact_id,
+                tool_run_id="tool-render-report-index",
+                artifact_type=artifact_type,
+                path=path,
+                sha256=digest,
+                schema_version="phase5-report.v1",
+                produced_by="render_prediction_report",
+                metadata={"run_id": "run-report-index"},
+                created_at=later,
+            )
+        )
+        store.record_report_artifact(
+            ReportArtifactRecord(
+                artifact_id=artifact_id,
+                run_id="run-report-index",
+                tool_run_id="tool-render-report-index",
+                artifact_type=artifact_type,
+                path=path,
+                sha256=digest,
+                schema_version="phase5-report.v1",
+                report_schema_version="daily-report.v2",
+                report_date=date(2026, 5, 13),
+                instrument_id="instrument:equity:us:tsla",
+                symbol="tsla",
+                report_data_mode="offline_fixture",
+                source_run_started_at=earlier,
+                source_run_completed_at=later,
+                metadata={"candidate_count": 1},
+                created_at=later,
+            )
+        )
+
+    report_artifacts = store.list_report_artifacts_for_run("run-report-index")
+    assert tuple(artifact.artifact_type for artifact in report_artifacts) == (
+        "markdown_report",
+        "json_report",
+        "audit_manifest",
+    )
+    assert report_artifacts[1] == ReportArtifactRecord(
+        artifact_id="artifact-report-json-index",
+        run_id="run-report-index",
+        tool_run_id="tool-render-report-index",
+        artifact_type="json_report",
+        path=Path("reports/2026-05-13/tsla/report.json"),
+        sha256="b" * 64,
+        schema_version="phase5-report.v1",
+        report_schema_version="daily-report.v2",
+        report_date=date(2026, 5, 13),
+        instrument_id="instrument:equity:us:tsla",
+        symbol="TSLA",
+        report_data_mode="offline_fixture",
+        source_run_started_at=earlier,
+        source_run_completed_at=later,
+        metadata={"candidate_count": 1},
+        created_at=later,
+    )
+    latest = store.get_latest_report_artifact(
+        report_date=date(2026, 5, 13),
+        instrument_id="instrument:equity:us:tsla",
+        artifact_type="json_report",
+    )
+    assert latest == report_artifacts[1]
+    assert store.get_latest_report_artifact(symbol="TSLA") == report_artifacts[1]
+    assert (
+        store.get_latest_prior_report_artifact(
+            before_report_date=date(2026, 5, 14),
+            symbol="TSLA",
+        )
+        == report_artifacts[1]
+    )
+    assert (
+        store.get_latest_prior_report_artifact(
+            before_report_date=date(2026, 5, 13),
+            symbol="TSLA",
+        )
+        is None
+    )
+    assert store.list_latest_report_artifact_bundle(symbol="TSLA") == report_artifacts
+
+    columns = _column_names(store, "report_artifact_index")
+    assert "report_body" not in columns
+    assert "payload_json" not in columns
+    with store.connect() as connection:
+        stored_metadata = connection.execute(
+            """
+            SELECT metadata_json FROM report_artifact_index
+            WHERE artifact_id = 'artifact-report-json-index'
+            """
+        ).fetchone()[0]
+    assert "candidate_count" in stored_metadata
+    assert "prediction_candidates" not in stored_metadata
+
+
+@pytest.mark.unit
+def test_report_artifact_index_must_match_artifact_ledger(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    now = _timestamp()
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id="run-report-index-mismatch",
+            run_kind="daily_prediction_report",
+            objective="index final report artifacts",
+            status="completed",
+            started_at=now,
+        )
+    )
+    store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-render-report-mismatch",
+            run_id="run-report-index-mismatch",
+            tool_name="render_prediction_report",
+            tool_version="phase5-report.v1",
+            status="successful",
+            started_at=now,
+        )
+    )
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-report-json-mismatch",
+            tool_run_id="tool-render-report-mismatch",
+            artifact_type="json_report",
+            path=Path("reports/report.json"),
+            sha256="f" * 64,
+            schema_version="phase5-report.v1",
+            produced_by="render_prediction_report",
+            created_at=now,
+        )
+    )
+
+    with pytest.raises(ValueError, match="artifact ledger"):
+        store.record_report_artifact(
+            ReportArtifactRecord(
+                artifact_id="artifact-report-json-mismatch",
+                run_id="run-report-index-mismatch",
+                tool_run_id="tool-render-report-mismatch",
+                artifact_type="json_report",
+                path=Path("reports/other.json"),
+                sha256="f" * 64,
+                schema_version="phase5-report.v1",
+                report_schema_version="daily-report.v2",
+                report_date=date(2026, 5, 13),
+                report_data_mode="offline_fixture",
+                source_run_started_at=now,
+            )
+        )
 
 
 @pytest.mark.unit

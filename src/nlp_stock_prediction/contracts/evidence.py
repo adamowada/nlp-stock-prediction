@@ -68,6 +68,12 @@ class SourceEvidence(ContractModel):
             and self.instrument_id not in self.matched_instrument_ids
         ):
             raise ValueError("instrument_id must be included in matched_instrument_ids")
+        if (
+            self.ticker is not None
+            and self.matched_tickers
+            and self.ticker not in self.matched_tickers
+        ):
+            raise ValueError("ticker must be included in matched_tickers")
         for span in self.match_spans:
             if span.end_char > len(self.text):
                 raise ValueError("match_spans must stay within evidence text")

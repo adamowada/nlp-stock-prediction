@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from nlp_stock_prediction.contracts.base import JsonObject
@@ -89,6 +89,26 @@ class ArtifactRecord:
     tool_run_id: str | None = None
     produced_by: str | None = None
     record_count: int | None = None
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ReportArtifactRecord:
+    artifact_id: str
+    run_id: str
+    artifact_type: str
+    path: Path
+    sha256: str
+    schema_version: str
+    report_schema_version: str
+    report_date: date
+    report_data_mode: str
+    source_run_started_at: datetime
+    source_run_completed_at: datetime | None = None
+    tool_run_id: str | None = None
+    instrument_id: str | None = None
+    symbol: str | None = None
     metadata: JsonObject = field(default_factory=dict)
     created_at: datetime | None = None
 
@@ -384,6 +404,7 @@ __all__ = [
     "PredictionEvaluationRecord",
     "PredictionOutcomeEvaluationRecord",
     "PredictionOutcomeRecord",
+    "ReportArtifactRecord",
     "ResearchRunRecord",
     "SourceQueryRecord",
     "ToolRunRecord",

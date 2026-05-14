@@ -127,19 +127,33 @@ class FredMacroProvider:
                 warnings.append(stale_warning)
         if not series:
             if warnings:
-                status = (
-                    ProviderStatus.RATE_LIMITED
-                    if all(warning.code == WarningCode.RATE_LIMITED for warning in warnings)
-                    else ProviderStatus.FAILED
+                status = _aggregate_failure_status(warnings)
+                raw_snapshot_id = (
+                    raw_snapshot_id_for_payload(
+                        "fred-combined-failure",
+                        {
+                            "raw_snapshot_ids": raw_snapshot_ids,
+                            "series_ids": list(series_ids),
+                            "warning_codes": [warning.code.value for warning in warnings],
+                        },
+                    )
+                    if raw_snapshot_ids
+                    else None
                 )
                 return provider_result(
                     provider_name=self.provider_name,
                     status=status,
                     request=request,
                     fetched_at=fetched_at,
-                    credential_state=CredentialState.CONFIGURED,
+                    credential_state=(
+                        CredentialState.INVALID
+                        if status == ProviderStatus.UNAUTHORIZED
+                        else CredentialState.CONFIGURED
+                    ),
                     warnings=tuple(warnings),
                     rate_limit_remaining=0 if status == ProviderStatus.RATE_LIMITED else None,
+                    raw_snapshot_id=raw_snapshot_id,
+                    cache_key=";".join(cache_keys) if cache_keys else None,
                 )
             return no_data_result(
                 provider_name=self.provider_name,
@@ -230,6 +244,7 @@ class FredMacroProvider:
                 fetched_at=fetched_at,
                 cache=self._cache,
                 timeout=self._timeout,
+                cacheable_payload=_is_fred_cacheable,
             )
         except ProviderTransportError as exc:
             error_envelope: ProviderResult[MacroSnapshot] = transport_error_result(
@@ -335,6 +350,21 @@ class FredMacroProvider:
             name=definition.name,
             values=tuple(values),
         ), stale_warning
+
+
+def _aggregate_failure_status(warnings: list[ProviderWarning]) -> ProviderStatus:
+    warning_codes = {warning.code for warning in warnings}
+    if WarningCode.AUTH_FAILED in warning_codes:
+        return ProviderStatus.UNAUTHORIZED
+    if warning_codes and warning_codes == {WarningCode.RATE_LIMITED}:
+        return ProviderStatus.RATE_LIMITED
+    if WarningCode.MALFORMED_RESPONSE in warning_codes:
+        return ProviderStatus.MALFORMED
+    return ProviderStatus.FAILED
+
+
+def _is_fred_cacheable(payload: dict[str, object]) -> bool:
+    return isinstance(payload.get("observations"), list)
 
 
 __all__ = ["DEFAULT_FRED_SERIES", "FredMacroProvider", "FredSeriesDefinition"]

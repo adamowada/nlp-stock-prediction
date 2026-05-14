@@ -17,9 +17,12 @@ CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 _CLI_EPILOG = """Examples:
   python -m nlp_stock_prediction research \\
     --date 2026-05-12 --symbol TSLA --output reports/ --offline
+  python -m nlp_stock_prediction research \\
+    --date 2026-05-12 --symbol TSLA --output reports/ --live
 
 Configuration:
   Offline runs are deterministic and do not use network providers.
+  Live runs require --live and use configured live providers without fixture fallback.
   A local .env file is loaded automatically without overriding exported shell variables.
   Keep provider credentials in environment variables or ignored local .env files;
   see docs/configuration.md.
@@ -83,11 +86,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Optional provider cache directory recorded in command metadata.",
     )
-    research_parser.add_argument(
+    mode_group = research_parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument(
         "--offline",
         action="store_true",
-        required=True,
         help="Use deterministic offline fixtures.",
+    )
+    mode_group.add_argument(
+        "--live",
+        action="store_true",
+        help="Use live providers and public-source adapters without fixture fallback.",
     )
     return parser
 
@@ -100,7 +108,8 @@ def build_research_config(args: argparse.Namespace) -> RunConfig:
         fixture_dir=args.fixture_dir,
         cache_dir=args.cache_dir,
         offline=args.offline,
-        source_mode="offline",
+        source_mode="offline" if args.offline else "live",
+        live_providers=args.live,
     )
 
 

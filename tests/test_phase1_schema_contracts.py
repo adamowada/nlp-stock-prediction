@@ -7,6 +7,8 @@ from pydantic import ValidationError
 
 from nlp_stock_prediction.contracts import (
     AssetClass,
+    AuditArtifact,
+    AuditManifest,
     DailyReport,
     DataFreshnessSummary,
     Direction,
@@ -25,9 +27,12 @@ from nlp_stock_prediction.contracts import (
     RelatedInstrument,
     ReportSourceReference,
     RetrievalMethod,
+    SignalArtifactFamily,
+    SignalArtifactReference,
     SourceEvidence,
     SourceKind,
     SourceProvenance,
+    TechnicalAnalysis,
     TimeHorizon,
 )
 
@@ -148,6 +153,24 @@ def _report(*, include_sources: bool = True) -> DailyReport:
 
 
 @pytest.mark.schema
+def test_external_source_provenance_accepts_explicit_unknown_freshness() -> None:
+    provenance = SourceProvenance(
+        provider_name="fixture-news",
+        source_kind=SourceKind.NEWS_ARTICLE,
+        retrieval_method=RetrievalMethod.FIXTURE,
+        fetched_at=_now(),
+        observed_at=datetime(2026, 5, 12, 18, 0, tzinfo=UTC),
+        source_url="https://example.com/future-timestamp",
+        permalink="https://example.com/future-timestamp",
+        raw_identifier="fixture-future-timestamp",
+        raw_snapshot_id="raw-fixture-future-timestamp",
+        freshness_status=FreshnessStatus.UNKNOWN,
+    )
+
+    assert provenance.freshness_status == FreshnessStatus.UNKNOWN
+
+
+@pytest.mark.schema
 def test_prediction_candidate_requires_evidence_for_supported_status() -> None:
     with pytest.raises(ValidationError, match="evidence_for"):
         PredictionCandidate(
@@ -162,6 +185,32 @@ def test_prediction_candidate_requires_evidence_for_supported_status() -> None:
                 "No evidence exists, so change triggers cannot be defined.",
             ),
         )
+
+
+@pytest.mark.schema
+def test_contradicted_candidate_requires_opposing_evidence() -> None:
+    payload = _candidate().model_dump(mode="python")
+    payload["status"] = PredictionStatus.CONTRADICTED
+    payload["evidence_for"] = [EvidenceReference(evidence_id="evidence-tsla-1").model_dump()]
+    payload["evidence_against"] = []
+    payload["dissenting_evidence"] = []
+
+    with pytest.raises(ValidationError, match="opposing evidence"):
+        PredictionCandidate.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_nested_analysis_fields_reject_trading_instructions() -> None:
+    payload = _report().model_dump(mode="python")
+    payload["instrument_sections"][0]["technical_analysis"] = TechnicalAnalysis(
+        ticker="TSLA",
+        summary="Technical context is included for evidence review.",
+        trend="Buy TSLA now",
+        evidence=(EvidenceReference(evidence_id="evidence-tsla-1"),),
+    ).model_dump(mode="python")
+
+    with pytest.raises(ValidationError, match="trading instructions"):
+        DailyReport.model_validate(payload)
 
 
 @pytest.mark.schema
@@ -241,6 +290,15 @@ def test_prediction_candidate_requires_change_trigger_context() -> None:
 
 
 @pytest.mark.schema
+def test_prediction_candidate_rejects_trading_instruction_synonyms() -> None:
+    payload = _candidate().model_dump(mode="python")
+    payload["thesis"] = "Investors should accumulate TSLA."
+
+    with pytest.raises(ValidationError, match="trading language"):
+        PredictionCandidate.model_validate(payload)
+
+
+@pytest.mark.schema
 def test_daily_report_requires_material_claim_traces_for_candidates() -> None:
     payload = _report().model_dump(mode="python")
     payload["material_claim_traces"] = []
@@ -256,6 +314,70 @@ def test_daily_report_validates_material_claim_trace_source_reference_ids() -> N
 
     with pytest.raises(ValidationError, match="source_reference_ids"):
         DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_daily_report_requires_inline_audit_manifest_for_cited_artifacts() -> None:
+    signal_ref = SignalArtifactReference(
+        artifact_id="artifact-technical-tsla",
+        family=SignalArtifactFamily.TECHNICALS,
+        artifact_type="technical_package",
+    )
+    payload = _report().model_dump(mode="python")
+    payload["prediction_candidates"][0]["signal_artifact_ids"] = [signal_ref.artifact_id]
+    payload["prediction_candidates"][0]["signal_artifacts"] = [signal_ref.model_dump(mode="python")]
+
+    with pytest.raises(ValidationError, match="audit manifest"):
+        DailyReport.model_validate(payload)
+
+    payload["audit_manifest"] = AuditManifest(
+        run_id="research-2026-05-11",
+        schema_version="audit-manifest.v1",
+        created_at=_now(),
+        artifacts=(
+            AuditArtifact(
+                artifact_id=signal_ref.artifact_id,
+                artifact_type="technical_package",
+                path="reports/audit/technical.json",
+                created_at=_now(),
+                produced_by="phase4_technical_package",
+            ),
+        ),
+    ).model_dump(mode="python")
+
+    assert DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_daily_report_requires_audit_manifest_run_id_to_match() -> None:
+    payload = _report().model_dump(mode="python")
+    payload["audit_manifest"] = AuditManifest(
+        run_id="different-run",
+        schema_version="audit-manifest.v2",
+        created_at=_now(),
+    ).model_dump(mode="python")
+
+    with pytest.raises(ValidationError, match="run_id"):
+        DailyReport.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_audit_manifest_rejects_duplicate_artifact_ids() -> None:
+    artifact = AuditArtifact(
+        artifact_id="artifact-duplicate",
+        artifact_type="json_report",
+        path="reports/report.json",
+        created_at=_now(),
+        produced_by="unit-test",
+    )
+
+    with pytest.raises(ValidationError, match="artifact ids"):
+        AuditManifest(
+            run_id="research-2026-05-11",
+            schema_version="audit-manifest.v2",
+            created_at=_now(),
+            artifacts=(artifact, artifact),
+        )
 
 
 @pytest.mark.schema

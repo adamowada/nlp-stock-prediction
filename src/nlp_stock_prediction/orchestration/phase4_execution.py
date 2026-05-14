@@ -15,6 +15,9 @@ from nlp_stock_prediction.orchestration.artifacts import (
     ArtifactIndex,
     ArtifactType,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    report_data_mode_metadata_for_run_id,
+)
 from nlp_stock_prediction.storage.records import ToolRunRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
@@ -77,7 +80,7 @@ def record_tool_completed(
             status=normalized_status,
             started_at=started_at,
             completed_at=completed_at,
-            inputs=inputs,
+            inputs=_with_run_mode_metadata(store, run_id, inputs),
             warnings=tuple(warnings),
             error_message=error_message,
         )
@@ -104,13 +107,14 @@ def safe_phase4_tool_execution(
     previous_tool_run = store.get_tool_run(tool_run_id)
     try:
         with store.transaction():
+            enriched_inputs = _with_run_mode_metadata(store, run_id, inputs)
             record_tool_started(
                 store=store,
                 tool_run_id=tool_run_id,
                 run_id=run_id,
                 tool_name=tool_name,
                 started_at=started_at,
-                inputs=inputs,
+                inputs=enriched_inputs,
                 tool_version=tool_version,
             )
             yield
@@ -143,11 +147,14 @@ def safe_phase4_tool_execution(
                 status="failed",
                 started_at=started_at,
                 completed_at=completed_at,
-                inputs=inputs,
+                inputs=_with_run_mode_metadata(store, run_id, inputs),
                 error_message=error_message,
             )
         )
         raise
+    else:
+        for file_transaction in file_transactions:
+            file_transaction.cleanup()
 
 
 def standardize_phase4_tool_run_status(
@@ -200,6 +207,7 @@ def write_phase4_json_artifact(
         produced_by=produced_by,
         tool_run_id=tool_run_id,
         schema_version=schema_version,
+        default_metadata=_metadata_for_tool_run(store, tool_run_id),
     ).write_json(
         artifact_id=artifact_id,
         artifact_type=artifact_type,
@@ -209,6 +217,17 @@ def write_phase4_json_artifact(
         metadata=metadata,
     )
     return Path(artifact.path)
+
+
+def _with_run_mode_metadata(store: SQLiteStore, run_id: str, inputs: JsonObject) -> JsonObject:
+    return {**inputs, **report_data_mode_metadata_for_run_id(store, run_id)}
+
+
+def _metadata_for_tool_run(store: SQLiteStore, tool_run_id: str) -> JsonObject:
+    tool_run = store.get_tool_run(tool_run_id)
+    if tool_run is None or tool_run.run_id is None:
+        return {}
+    return report_data_mode_metadata_for_run_id(store, tool_run.run_id)
 
 
 def _unique_resolved_paths(paths: Sequence[Path]) -> tuple[Path, ...]:

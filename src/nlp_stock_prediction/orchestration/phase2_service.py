@@ -25,6 +25,10 @@ from nlp_stock_prediction.orchestration.phase2_evidence import record_codex_sear
 from nlp_stock_prediction.orchestration.phase2_report import render_phase2_prediction_report
 from nlp_stock_prediction.orchestration.phase2_synthesis import synthesize_prediction_candidates
 from nlp_stock_prediction.orchestration.phase2_tool_plan import phase2_research_tool_plan
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    CODEX_SMOKE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.storage.records import ResearchRunRecord
 from nlp_stock_prediction.storage.sqlite import (
     SQLiteStore,
@@ -83,6 +87,7 @@ class Phase2McpService:
                     "symbol": normalized_symbol,
                     "output_dir": paths.output_dir.as_posix(),
                     "phase": "phase2_codex_orchestrator",
+                    **report_data_mode_metadata(CODEX_SMOKE_REPORT_DATA_MODE),
                 },
             )
         )
@@ -94,6 +99,7 @@ class Phase2McpService:
             "run_dir": paths.run_dir.as_posix(),
             "audit_dir": paths.audit_dir.as_posix(),
             "database_path": self._resolve_write_path(self.database_path).as_posix(),
+            **report_data_mode_metadata(CODEX_SMOKE_REPORT_DATA_MODE),
         }
 
     def list_research_tool_plan(self) -> JsonObject:

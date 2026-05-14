@@ -22,6 +22,10 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     stable_digest,
     utc_now,
 )
+from nlp_stock_prediction.orchestration.report_data_modes import (
+    CODEX_SMOKE_REPORT_DATA_MODE,
+    report_data_mode_metadata,
+)
 from nlp_stock_prediction.storage.records import (
     EvidenceRecord,
     SourceQueryRecord,
@@ -95,6 +99,7 @@ def record_codex_search_evidence(
     payload: JsonObject = {
         "schema_version": "codex-search-evidence.v1",
         "run_id": run_id,
+        **report_data_mode_metadata(CODEX_SMOKE_REPORT_DATA_MODE),
         "records": [cast(JsonObject, evidence.model_dump(mode="json"))],
     }
     if record_tool_run:
@@ -110,6 +115,7 @@ def record_codex_search_evidence(
                     "url": url,
                     "query": query,
                     "stance": normalized_stance,
+                    **report_data_mode_metadata(CODEX_SMOKE_REPORT_DATA_MODE),
                 },
                 started_at=now,
                 completed_at=now,
@@ -123,6 +129,7 @@ def record_codex_search_evidence(
         produced_by=tool_name,
         tool_run_id=resolved_tool_run_id,
         schema_version="codex-search-evidence.v1",
+        default_metadata=report_data_mode_metadata(CODEX_SMOKE_REPORT_DATA_MODE),
     ).write_json(
         artifact_id=artifact_id,
         artifact_type="normalized_evidence",
@@ -138,7 +145,10 @@ def record_codex_search_evidence(
             query=query,
             url=url,
             retrieved_at=now,
-            metadata={"codex_search": True},
+            metadata={
+                "codex_search": True,
+                **report_data_mode_metadata(CODEX_SMOKE_REPORT_DATA_MODE),
+            },
         )
     )
     store.record_evidence(
@@ -164,6 +174,7 @@ def record_codex_search_evidence(
                 "codex_search": True,
                 "stance": normalized_stance,
                 "source_evidence": cast(JsonObject, evidence.model_dump(mode="json")),
+                **report_data_mode_metadata(CODEX_SMOKE_REPORT_DATA_MODE),
             },
         )
     )

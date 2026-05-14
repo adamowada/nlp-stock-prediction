@@ -4,22 +4,30 @@ from __future__ import annotations
 
 from nlp_stock_prediction.contracts import (
     Direction,
+    DissentingEvidence,
     EvidenceReference,
     PredictionCandidate,
     PredictionStatus,
     PredictionType,
-    SignalArtifactFamily,
     SignalArtifactReference,
     SourceEvidence,
     TimeHorizon,
 )
-from nlp_stock_prediction.storage.records import PredictionCandidateRecord
+from nlp_stock_prediction.contracts.signal_artifact_references import (
+    legacy_signal_artifact_reference,
+    metadata_signal_artifact_references,
+)
+from nlp_stock_prediction.storage.records import (
+    CandidateEvidenceLinkRecord,
+    PredictionCandidateRecord,
+)
 
 
 def prediction_candidate_from_record(
     candidate: PredictionCandidateRecord,
     evidence_sources: tuple[SourceEvidence, ...],
     *,
+    candidate_evidence_links: tuple[CandidateEvidenceLinkRecord, ...] = (),
     include_missing_references: bool = False,
     prefer_evaluated_references: bool = False,
 ) -> PredictionCandidate:
@@ -28,6 +36,7 @@ def prediction_candidate_from_record(
     evidence_by_id = {record.evidence_id: record for record in evidence_sources}
     evidence_for_ids, evidence_against_ids = _candidate_evidence_ids(
         candidate,
+        candidate_evidence_links=candidate_evidence_links,
         prefer_evaluated_references=prefer_evaluated_references,
     )
     evidence_for_refs = _evidence_references(
@@ -50,6 +59,8 @@ def prediction_candidate_from_record(
     if not isinstance(baseline, str) or not baseline.strip():
         baseline = "No directional edge is assumed without source-backed evidence."
     uncertainty = candidate.uncertainty or "Evidence coverage and freshness may limit confidence."
+    signal_artifacts = _signal_artifact_references(candidate)
+    signal_artifact_ids = tuple(reference.artifact_id for reference in signal_artifacts)
     return PredictionCandidate(
         candidate_id=candidate.candidate_id,
         instrument_id=candidate.instrument_id,
@@ -63,13 +74,14 @@ def prediction_candidate_from_record(
         confidence=candidate.confidence or 0.0,
         evidence_for=evidence_for_refs,
         evidence_against=evidence_against_refs,
+        dissenting_evidence=_dissenting_evidence(evidence_against_refs),
         assumptions=("Source evidence is observed material, not automatically true.",),
         uncertainties=(uncertainty,),
         change_trigger_limitations=(
             "Stored candidate records do not yet include structured change-trigger inputs.",
         ),
-        signal_artifact_ids=candidate.signal_artifacts,
-        signal_artifacts=_signal_artifact_references(candidate.signal_artifacts),
+        signal_artifact_ids=signal_artifact_ids,
+        signal_artifacts=signal_artifacts,
         metadata=candidate.metadata,
     )
 
@@ -77,16 +89,29 @@ def prediction_candidate_from_record(
 def _candidate_evidence_ids(
     candidate: PredictionCandidateRecord,
     *,
+    candidate_evidence_links: tuple[CandidateEvidenceLinkRecord, ...],
     prefer_evaluated_references: bool,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    record_for_ids = candidate.evidence_for
+    record_against_ids = candidate.evidence_against
     if prefer_evaluated_references:
         metadata = candidate.metadata.get("prediction_evaluation")
         if isinstance(metadata, dict):
             evidence_for_ids = _string_tuple(metadata.get("evidence_for_ids"))
             evidence_against_ids = _string_tuple(metadata.get("evidence_against_ids"))
             if evidence_for_ids or evidence_against_ids:
-                return evidence_for_ids, evidence_against_ids
-    return candidate.evidence_for, candidate.evidence_against
+                record_for_ids = evidence_for_ids
+                record_against_ids = evidence_against_ids
+    linked_for_ids = tuple(
+        link.evidence_id for link in candidate_evidence_links if link.relationship == "supports"
+    )
+    linked_against_ids = tuple(
+        link.evidence_id for link in candidate_evidence_links if link.relationship == "contradicts"
+    )
+    return (
+        tuple(dict.fromkeys((*record_for_ids, *linked_for_ids))),
+        tuple(dict.fromkeys((*record_against_ids, *linked_against_ids))),
+    )
 
 
 def _evidence_references(
@@ -152,14 +177,28 @@ def _candidate_status(
     evidence_for_refs: tuple[EvidenceReference, ...],
     evidence_against_refs: tuple[EvidenceReference, ...],
 ) -> PredictionStatus:
+    if evidence_against_refs:
+        return PredictionStatus.CONTRADICTED
     try:
         return PredictionStatus(candidate.status)
     except ValueError:
-        if evidence_against_refs:
-            return PredictionStatus.CONTRADICTED
         if evidence_for_refs:
             return PredictionStatus.EVIDENCE_SUPPORTED
         return PredictionStatus.INSUFFICIENT_EVIDENCE
+
+
+def _dissenting_evidence(
+    evidence_against_refs: tuple[EvidenceReference, ...],
+) -> tuple[DissentingEvidence, ...]:
+    if not evidence_against_refs:
+        return ()
+    return (
+        DissentingEvidence(
+            summary="Stored source evidence contradicts or materially limits the scenario.",
+            evidence=evidence_against_refs,
+            impact="contradicts",
+        ),
+    )
 
 
 def _direction(value: str | None) -> Direction:
@@ -187,26 +226,27 @@ def _prediction_type(value: str) -> PredictionType:
 
 
 def _signal_artifact_references(
-    artifact_ids: tuple[str, ...],
+    candidate: PredictionCandidateRecord,
 ) -> tuple[SignalArtifactReference, ...]:
-    return tuple(_signal_artifact_reference(artifact_id) for artifact_id in artifact_ids)
-
-
-def _signal_artifact_reference(artifact_id: str) -> SignalArtifactReference:
-    normalized = artifact_id.lower()
-    if "timesfm" in normalized or normalized.startswith("artifact-ml"):
-        return SignalArtifactReference(
-            artifact_id=artifact_id,
-            family=SignalArtifactFamily.TIMESFM,
-            artifact_type="ml_forecast",
-            metadata={"derived_from_stored_candidate": True},
+    references: list[SignalArtifactReference] = []
+    seen: set[str] = set()
+    for reference in metadata_signal_artifact_references(
+        candidate.metadata.get("signal_artifacts")
+    ):
+        if reference.artifact_id in seen:
+            continue
+        seen.add(reference.artifact_id)
+        references.append(reference)
+    for artifact_id in candidate.signal_artifacts:
+        if artifact_id in seen:
+            continue
+        seen.add(artifact_id)
+        references.append(
+            legacy_signal_artifact_reference(artifact_id).model_copy(
+                update={"metadata": {"derived_from_stored_candidate": True}}
+            )
         )
-    return SignalArtifactReference(
-        artifact_id=artifact_id,
-        family=SignalArtifactFamily.TECHNICALS,
-        artifact_type="technical_package",
-        metadata={"derived_from_stored_candidate": True},
-    )
+    return tuple(references)
 
 
 __all__ = [

@@ -26,6 +26,10 @@ from nlp_stock_prediction.contracts.enums import (
     TimeHorizon,
 )
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
+from nlp_stock_prediction.contracts.signal_artifacts import (
+    SignalArtifactType,
+    validate_signal_artifact_family_type,
+)
 
 
 class SignalArtifactReference(ContractModel):
@@ -33,13 +37,7 @@ class SignalArtifactReference(ContractModel):
 
     artifact_id: NonEmptyStr
     family: SignalArtifactFamily
-    artifact_type: Literal[
-        "market_data",
-        "technical_package",
-        "ml_forecast",
-        "normalized_evidence",
-        "analysis_context",
-    ]
+    artifact_type: SignalArtifactType
     schema_version: str | None = None
     tool_run_id: str | None = None
     produced_by: str | None = None
@@ -51,9 +49,10 @@ class SignalArtifactReference(ContractModel):
 
     @model_validator(mode="after")
     def validate_family_artifact_type(self) -> SignalArtifactReference:
-        allowed_types = _SIGNAL_ARTIFACT_TYPES[self.family]
-        if self.artifact_type not in allowed_types:
-            raise ValueError("signal artifact family does not allow artifact_type")
+        validate_signal_artifact_family_type(
+            family=self.family,
+            artifact_type=self.artifact_type,
+        )
         if self.created_at is not None and self.as_of is not None and self.as_of > self.created_at:
             raise ValueError("signal artifact as_of must be at or before created_at")
         return self
@@ -146,22 +145,24 @@ class BaselineComparison(ContractModel):
     ]
 
     @model_validator(mode="after")
-    def validate_baseline_math(self) -> BaselineComparison:
+    def validate_score_delta_and_verdict(self) -> BaselineComparison:
         if self.verdict == "baseline_unavailable":
-            if self.score_delta != 0:
+            if self.score_delta != 0.0:
                 raise ValueError("baseline_unavailable comparisons require zero score_delta")
             return self
+
         expected_delta = round(self.candidate_score - self.baseline_score, 6)
-        if round(self.score_delta, 6) != expected_delta:
-            raise ValueError("baseline score_delta must equal candidate_score minus baseline_score")
-        if expected_delta > 0.05:
-            expected_verdict = "above_baseline"
-        elif expected_delta < -0.05:
-            expected_verdict = "below_baseline"
-        else:
-            expected_verdict = "near_baseline"
+        if abs(self.score_delta - expected_delta) > 1e-6:
+            raise ValueError("baseline comparison score_delta must match candidate-baseline score")
+        expected_verdict = (
+            "above_baseline"
+            if expected_delta > 0.05
+            else "below_baseline"
+            if expected_delta < -0.05
+            else "near_baseline"
+        )
         if self.verdict != expected_verdict:
-            raise ValueError("baseline verdict must match score_delta")
+            raise ValueError("baseline comparison verdict must match score_delta")
         return self
 
 
@@ -259,18 +260,38 @@ class PredictionEvaluation(ContractModel):
             raise ValueError(
                 "evidence-supported evaluations require attributable supporting source evidence"
             )
+        if self.status == PredictionStatus.EVIDENCE_SUPPORTED and not self.evidence_for:
+            raise ValueError("evidence-supported evaluations require evidence_for references")
         if not self.uncertainty:
             raise ValueError("prediction evaluations require uncertainty context")
+        evidence_for_ids = tuple(reference.evidence_id for reference in self.evidence_for)
+        evidence_against_ids = tuple(reference.evidence_id for reference in self.evidence_against)
+        if self.evidence_counts.supporting_reference_ids != evidence_for_ids:
+            raise ValueError(
+                "prediction evaluation evidence_for must match supporting_reference_ids"
+            )
+        if self.evidence_counts.contradicting_reference_ids != evidence_against_ids:
+            raise ValueError(
+                "prediction evaluation evidence_against must match contradicting_reference_ids"
+            )
         typed_ids = tuple(reference.artifact_id for reference in self.signal_artifacts)
         if len(set(typed_ids)) != len(typed_ids):
             raise ValueError("prediction evaluation signal artifact references must be unique")
-        supporting_ids = tuple(reference.evidence_id for reference in self.evidence_for)
-        contradicting_ids = tuple(reference.evidence_id for reference in self.evidence_against)
-        if self.evidence_counts.supporting_reference_ids != supporting_ids:
-            raise ValueError("prediction evaluation supporting counts must match evidence_for")
-        if self.evidence_counts.contradicting_reference_ids != contradicting_ids:
+        if self.signal_artifact_ids != typed_ids:
             raise ValueError(
-                "prediction evaluation contradicting counts must match evidence_against"
+                "prediction evaluation signal_artifact_ids must match typed signal_artifacts"
+            )
+        expected_signal_counts = SignalArtifactCounts.from_references(self.signal_artifacts)
+        if (
+            self.evidence_counts.signal_artifacts_by_family.model_dump()
+            != expected_signal_counts.model_dump()
+        ):
+            raise ValueError(
+                "prediction evaluation signal_artifacts_by_family must match signal_artifacts"
+            )
+        if self.evidence_counts.technical_signal_artifacts != expected_signal_counts.technicals:
+            raise ValueError(
+                "prediction evaluation technical_signal_artifacts must match technical artifacts"
             )
         if (
             self.status == PredictionStatus.CONTRADICTED
@@ -324,6 +345,16 @@ class PredictionOutcome(ContractModel):
             if self.observed_result is not None:
                 raise ValueError(
                     "non-observed prediction outcomes must not include observed_result"
+                )
+            if self.observed_at is not None:
+                raise ValueError("non-observed prediction outcomes must not include observed_at")
+            if self.result_value is not None or self.baseline_value is not None:
+                raise ValueError(
+                    "non-observed prediction outcomes must not include observed values"
+                )
+            if self.outcome_evidence:
+                raise ValueError(
+                    "non-observed prediction outcomes must not include outcome_evidence"
                 )
             if not self.limitations:
                 raise ValueError("non-observed prediction outcomes require limitations")
@@ -620,16 +651,6 @@ class PredictionEvaluationArtifactPayload(ContractModel):
     evaluation: PredictionEvaluation
     source_evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     metadata: JsonObject = Field(default_factory=dict)
-
-
-_SIGNAL_ARTIFACT_TYPES: dict[SignalArtifactFamily, set[str]] = {
-    SignalArtifactFamily.TECHNICALS: {"market_data", "technical_package"},
-    SignalArtifactFamily.TIMESFM: {"ml_forecast", "technical_package"},
-    SignalArtifactFamily.SOCIAL: {"normalized_evidence"},
-    SignalArtifactFamily.NEWS: {"normalized_evidence"},
-    SignalArtifactFamily.FUNDAMENTALS: {"analysis_context", "normalized_evidence"},
-    SignalArtifactFamily.SECTOR_MACRO: {"analysis_context"},
-}
 
 
 def _validate_target_outcome_alignment(

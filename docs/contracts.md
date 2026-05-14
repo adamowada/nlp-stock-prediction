@@ -114,8 +114,9 @@ Evidence must support deduplication across repeated searches and providers.
 
 Implemented validation requires source match spans to stay inside the stored evidence text and match
 the exact referenced substring. Derived external records still need source URL/permalink, raw
-identifier, raw snapshot ID, and freshness status; only internal analysis can omit external source
-traceability.
+identifier, and raw snapshot ID; only internal analysis can omit external source traceability.
+Freshness status is always carried, but `unknown` is a valid explicit state for malformed, future,
+or otherwise not-point-in-time-checkable source timestamps.
 
 ## Prediction Candidate
 
@@ -199,11 +200,34 @@ must point to source evidence, tool artifacts, provider context, or prior outcom
 to a candidate. Candidate records must either include specific change triggers or an explicit
 limitation explaining why the report cannot define them yet.
 
+Insufficient-evidence reports are first-class outputs. They carry blocking reasons, missing evidence
+types, provider names, evidence references, artifact IDs, and metadata for excluded candidates,
+missing evidence, missing artifacts, provider statuses, and instrument-resolution status counts.
+Contradictory source evidence remains visible as `evidence_against` and dissenting evidence, and it
+forces a contradicted report candidate rather than being converted into an evidence-supported
+conclusion. Audit manifests now include provider-health snapshots so failed, stale, empty, partial,
+or malformed provider/tool results remain visible in both the JSON report and the audit manifest.
+
+`json-report-contract.v1` validates the machine-readable report artifact without wrapping or
+renaming the top-level `DailyReport` fields. It maps each material Markdown section to stable JSON
+pointers and round-trips through the `DailyReport` contract. Final report artifacts are indexed in
+runtime SQLite through `ReportArtifactRecord`, which stores metadata needed for point-in-time lookup
+without storing large report bodies in SQLite.
+
 Settled prediction/evaluation contracts now include an explicit `prediction_type`, typed
 `SignalArtifactReference` records by signal family (`technicals`, `timesfm`, `social`, `news`,
 `fundamentals`, and `sector_macro`), and per-family signal counts in prediction-quality evaluation
-payloads. Flat `signal_artifact_ids` remain for compatibility with existing SQLite candidate rows,
-but typed references are the stable report/export shape for new code.
+payloads. Signal-family and artifact-type compatibility is centralized in the signal artifact
+policy; report assembly, candidate conversion, and prediction evaluation must use that policy rather
+than hardcoding family/type mappings. Flat `signal_artifact_ids` remain for compatibility with
+existing SQLite candidate rows, but typed references are the stable report/export shape for new code.
+
+Report inputs and outputs carry typed data-mode provenance. `report_data_mode`, `provider_mode`,
+and `input_data_mode` identify whether stored records were produced by live providers, offline
+fixtures, dummy smoke, or Codex smoke paths. Live report assembly treats fixture, dummy, and smoke
+markers as boundary violations; string-marker scanning is a backstop for legacy or malformed
+metadata, not the primary contract shape. Phase 4/5 report runs must stamp data-mode metadata on the
+run and tool records; generic Phase 4 run names are not enough to infer offline fixture mode.
 
 Phase 6 outcome tracking begins with `PredictionOutcome` and `PredictionOutcomeEvaluation`.
 `PredictionOutcome` records the evaluated candidate, instrument, prediction type, horizon,
@@ -242,6 +266,16 @@ review trace. Phase 6 audit artifacts (`prediction_outcome`, `prediction_outcome
 `calibration_summary`, `signal_family_ablation`, and `walk_forward_evaluation`) remain separate
 artifacts but are preserved in the final audit manifest and report source references where they
 support calibration context.
+
+Phase 5 report rendering now populates `PriorOutcomeReview` directly from stored prior JSON report
+artifacts when available. The prior report artifact must resolve through the runtime report index,
+match its stored hash, and load through the JSON report contract. First runs, missing or malformed
+prior artifacts, stale report windows, and unlinked prior candidates are represented as explicit
+review limitations. Current candidates link to the review ID and receive concrete
+`PredictionChangeTrigger` entries for follow-up evidence, provider refreshes, baseline changes, or
+outcome data. Each prior review also carries a `prediction_outcome` and
+`prediction_outcome_evaluation` metadata projection using the settled Phase 6 outcome contracts so
+future consumers do not need a second prior-review vocabulary.
 
 ## Planning State
 

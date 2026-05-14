@@ -171,10 +171,10 @@ def test_offline_pipeline_supports_custom_output_and_symbol_isolation(tmp_path: 
 
 
 @pytest.mark.integration
-def test_pipeline_rejects_live_mode_until_production_orchestration_exists(
+def test_pipeline_requires_explicit_live_mode(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="live providers are not wired"):
+    with pytest.raises(ValueError, match="source_mode='live' or live_providers=True"):
         generate_daily_report(
             RunConfig(run_date="2026-05-11", output_dir=tmp_path / "reports", offline=False)
         )
@@ -182,7 +182,7 @@ def test_pipeline_rejects_live_mode_until_production_orchestration_exists(
 
 @pytest.mark.integration
 def test_pipeline_rejects_invalid_fixture_dir(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="fixture_dir"):
+    with pytest.raises(ValueError, match="--fixture-dir"):
         generate_daily_report(
             RunConfig(
                 run_date="2026-05-11",

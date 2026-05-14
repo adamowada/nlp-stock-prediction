@@ -3,39 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
+import tempfile
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
 
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.report import AuditArtifact
+from nlp_stock_prediction.orchestration.artifact_policy import ArtifactType
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
 from nlp_stock_prediction.storage.records import ArtifactRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
-
-ArtifactType = Literal[
-    "raw_snapshot",
-    "normalized_evidence",
-    "extraction_output",
-    "analysis_context",
-    "prediction_input",
-    "markdown_report",
-    "json_report",
-    "provider_result",
-    "market_data",
-    "technical_package",
-    "ml_forecast",
-    "instrument_universe",
-    "prediction_evaluation",
-    "prediction_outcome",
-    "prediction_outcome_evaluation",
-    "calibration_summary",
-    "signal_family_ablation",
-    "walk_forward_evaluation",
-    "audit_manifest",
-]
 
 
 @dataclass(frozen=True)
@@ -45,6 +25,7 @@ class ArtifactWriter:
     base_dir: Path
     created_at: datetime
     produced_by: str
+    default_metadata: JsonObject = field(default_factory=dict)
 
     def write_json(
         self,
@@ -63,7 +44,7 @@ class ArtifactWriter:
             filename=filename,
             content=content,
             record_count=record_count,
-            metadata=metadata,
+            metadata=_merge_metadata(self.default_metadata, metadata),
         )
 
     def write_text(
@@ -82,7 +63,7 @@ class ArtifactWriter:
             filename=filename,
             content=content.encode("utf-8"),
             record_count=record_count,
-            metadata=metadata,
+            metadata=_merge_metadata(self.default_metadata, metadata),
         )
 
     def _write_bytes(
@@ -133,6 +114,7 @@ class ArtifactIndex:
     writer: ArtifactWriter
     tool_run_id: str | None
     schema_version: str
+    default_metadata: JsonObject = field(default_factory=dict)
 
     @classmethod
     def for_directory(
@@ -145,6 +127,7 @@ class ArtifactIndex:
         produced_by: str,
         tool_run_id: str | None,
         schema_version: str,
+        default_metadata: JsonObject | None = None,
     ) -> ArtifactIndex:
         resolved_repo_root = repo_root.resolve()
         resolved_base_dir = base_dir.resolve()
@@ -161,9 +144,11 @@ class ArtifactIndex:
                 base_dir=resolved_base_dir,
                 created_at=created_at,
                 produced_by=produced_by,
+                default_metadata={} if default_metadata is None else default_metadata,
             ),
             tool_run_id=tool_run_id,
             schema_version=schema_version,
+            default_metadata={} if default_metadata is None else default_metadata,
         )
 
     def write_json(
@@ -182,7 +167,7 @@ class ArtifactIndex:
             filename=filename,
             payload=payload,
             record_count=record_count,
-            metadata=metadata,
+            metadata=_merge_metadata(self.default_metadata, metadata),
         )
         self._record_artifact(artifact)
         return artifact
@@ -203,7 +188,7 @@ class ArtifactIndex:
             filename=filename,
             content=content,
             record_count=record_count,
-            metadata=metadata,
+            metadata=_merge_metadata(self.default_metadata, metadata),
         )
         self._record_artifact(artifact)
         return artifact
@@ -229,48 +214,63 @@ class ArtifactIndex:
         )
 
 
+def _merge_metadata(default_metadata: JsonObject, metadata: JsonObject | None) -> JsonObject:
+    if not default_metadata and metadata is None:
+        return {}
+    return {**default_metadata, **({} if metadata is None else metadata)}
+
+
 @dataclass(frozen=True)
 class ArtifactFileTransaction:
     """Track files present before a tool run and restore the tree after rollback."""
 
     root: Path
     files_before: frozenset[Path]
-    file_snapshots: dict[Path, bytes]
+    file_snapshots: dict[Path, Path]
+    backup_root: Path | None = None
 
     @classmethod
     def begin(cls, root: Path) -> ArtifactFileTransaction:
         resolved_root = root.resolve()
-        snapshots = _existing_file_snapshots(resolved_root)
+        snapshots, backup_root = _existing_file_snapshots(resolved_root)
         return cls(
             root=resolved_root,
             files_before=frozenset(snapshots),
             file_snapshots=snapshots,
+            backup_root=backup_root,
         )
 
     def rollback_new_files(self) -> None:
-        if not self.root.exists():
-            for path, content in self.file_snapshots.items():
+        try:
+            if not self.root.exists():
+                for path, backup_path in self.file_snapshots.items():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(backup_path, path)
+                return
+            for path in sorted(
+                (candidate for candidate in self.root.rglob("*") if candidate.is_file()),
+                key=lambda item: len(item.parts),
+                reverse=True,
+            ):
+                resolved = path.resolve()
+                if resolved not in self.files_before:
+                    path.unlink(missing_ok=True)
+            for path, backup_path in self.file_snapshots.items():
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(content)
-            return
-        for path in sorted(
-            (candidate for candidate in self.root.rglob("*") if candidate.is_file()),
-            key=lambda item: len(item.parts),
-            reverse=True,
-        ):
-            resolved = path.resolve()
-            if resolved not in self.files_before:
-                path.unlink(missing_ok=True)
-        for path, content in self.file_snapshots.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-        for directory in sorted(
-            (candidate for candidate in self.root.rglob("*") if candidate.is_dir()),
-            key=lambda item: len(item.parts),
-            reverse=True,
-        ):
-            with suppress(OSError):
-                directory.rmdir()
+                shutil.copy2(backup_path, path)
+            for directory in sorted(
+                (candidate for candidate in self.root.rglob("*") if candidate.is_dir()),
+                key=lambda item: len(item.parts),
+                reverse=True,
+            ):
+                with suppress(OSError):
+                    directory.rmdir()
+        finally:
+            self.cleanup()
+
+    def cleanup(self) -> None:
+        if self.backup_root is not None:
+            shutil.rmtree(self.backup_root, ignore_errors=True)
 
 
 def _existing_files(root: Path) -> frozenset[Path]:
@@ -279,8 +279,18 @@ def _existing_files(root: Path) -> frozenset[Path]:
     return frozenset(path.resolve() for path in root.rglob("*") if path.is_file())
 
 
-def _existing_file_snapshots(root: Path) -> dict[Path, bytes]:
-    return {path: path.read_bytes() for path in _existing_files(root)}
+def _existing_file_snapshots(root: Path) -> tuple[dict[Path, Path], Path | None]:
+    files = _existing_files(root)
+    if not files:
+        return {}, None
+    backup_root = Path(tempfile.mkdtemp(prefix="nlp-stock-artifact-rollback-")).resolve()
+    snapshots: dict[Path, Path] = {}
+    for index, path in enumerate(sorted(files)):
+        backup_path = backup_root / f"{index:08d}.snapshot"
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, backup_path)
+        snapshots[path] = backup_path
+    return snapshots, backup_root
 
 
 __all__ = ["ArtifactFileTransaction", "ArtifactIndex", "ArtifactType", "ArtifactWriter"]
