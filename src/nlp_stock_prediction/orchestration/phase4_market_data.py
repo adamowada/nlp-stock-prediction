@@ -34,7 +34,10 @@ from nlp_stock_prediction.contracts import (
 from nlp_stock_prediction.ml.ohlcv import calendar_date, timestamp_key_for
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
 from nlp_stock_prediction.orchestration.phase2_common import stable_digest, symbol_slug, utc_now
-from nlp_stock_prediction.orchestration.phase4_common import retrieval_method_for_provider
+from nlp_stock_prediction.orchestration.phase4_common import (
+    retrieval_method_for_provider,
+    sanitize_source_query_url,
+)
 from nlp_stock_prediction.orchestration.phase4_execution import safe_phase4_tool_execution
 from nlp_stock_prediction.providers._base import provider_health, provider_warning
 from nlp_stock_prediction.storage.records import SourceQueryRecord, ToolRunRecord
@@ -580,7 +583,9 @@ def _source_url(
     retrieval_method: RetrievalMethod,
 ) -> str | None:
     if source_url is not None:
-        return str(source_url)
+        if isinstance(source_url, Path):
+            return str(source_url)
+        return sanitize_source_query_url(str(source_url))
     if retrieval_method != RetrievalMethod.FIXTURE:
         return None
     return f"fixture://{provider_name}/{symbol_slug(symbol)}/daily-ohlcv"
@@ -682,7 +687,9 @@ def _tool_run_status(status: ProviderStatus, warnings: tuple[ProviderWarning, ..
         return "successful"
     if status in {ProviderStatus.OK, ProviderStatus.PARTIAL, ProviderStatus.STALE}:
         return "partial" if warnings else "successful"
-    return "empty"
+    if status == ProviderStatus.EMPTY:
+        return "empty"
+    return "failed" if warnings else "empty"
 
 
 def _extraction_confidence(status: ProviderStatus) -> float | None:

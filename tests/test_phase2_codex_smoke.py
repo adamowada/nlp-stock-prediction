@@ -56,11 +56,12 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
     assert "nlp_stock_prediction.codex_mcp" in rendered
     assert "--repo-root" in rendered
     assert "--database" in rendered
-    assert "phase2-codex-smoke-2026-05-13-tsla.sqlite3" in rendered
+    assert "phase4-codex-smoke-2026-05-13-tsla.sqlite3" in rendered
     assert _option_value(command, "--output-last-message") == str(config.final_message_path)
     assert "Do not import project modules directly" in command[-1]
-    assert "record_codex_search_evidence" in command[-1]
-    assert "stance set to" in command[-1]
+    assert "phase4_universe_discovery" in command[-1]
+    assert "phase4_candidate_synthesis" in command[-1]
+    assert "phase4_prediction_evaluation" in command[-1]
     assert "render_prediction_report" in command[-1]
 
 
@@ -189,8 +190,9 @@ def test_codex_smoke_uses_safe_symbol_slug_for_database_and_run_id(tmp_path: Pat
         python_executable=Path("python"),
     )
 
-    assert config.database_arg_path == Path("data/phase2-codex-smoke-2026-05-13-btc-usd.sqlite3")
-    assert smoke.expected_run_id(config) == "codex-smoke-2026-05-13-btc-usd"
+    assert config.run_dir == config.output_dir / "2026-05-13" / "btc-usd"
+    assert config.database_arg_path == Path("data/phase4-codex-smoke-2026-05-13-btc-usd.sqlite3")
+    assert smoke.expected_run_id(config) == "phase4-2026-05-13-btc-usd"
 
 
 @pytest.mark.unit

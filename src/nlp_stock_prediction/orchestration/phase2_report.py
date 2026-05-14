@@ -65,7 +65,12 @@ def render_phase2_prediction_report(
     instrument = _primary_instrument(store, symbol=symbol, fallback_generated_at=now)
     candidates = store.list_prediction_candidates_for_run(run.run_id)
     prediction_candidates = tuple(
-        prediction_candidate_from_record(candidate, evidence_sources) for candidate in candidates
+        prediction_candidate_from_record(
+            candidate,
+            evidence_sources,
+            prefer_evaluated_references=True,
+        )
+        for candidate in candidates
     )
     section_refs = tuple(
         EvidenceReference(
@@ -121,7 +126,14 @@ def render_phase2_prediction_report(
         for record in store.list_artifacts_for_run(run.run_id)
     )
     has_codex_search_evidence = bool(evidence_sources)
-    provider_status = ProviderStatus.OK if has_codex_search_evidence else ProviderStatus.EMPTY
+    stale_provider_names = _stale_provider_names(evidence_sources)
+    provider_status = (
+        ProviderStatus.STALE
+        if stale_provider_names and has_codex_search_evidence
+        else ProviderStatus.OK
+        if has_codex_search_evidence
+        else ProviderStatus.EMPTY
+    )
     provider_name = "phase4-fixture-tools" if is_phase4_report else "codex-web-search"
     report = DailyReport(
         schema_version="daily-report.v2",
@@ -136,6 +148,7 @@ def render_phase2_prediction_report(
         data_freshness=DataFreshnessSummary(
             as_of=now,
             summary=freshness_summary,
+            stale_provider_names=stale_provider_names,
             missing_provider_names=() if has_codex_search_evidence else (provider_name,),
         ),
         provider_health=(
@@ -287,6 +300,19 @@ def _audit_artifact_from_record(record: ArtifactRecord, repo_root: Path) -> Audi
         record_count=record.record_count,
         metadata=record.metadata,
     )
+
+
+def _stale_provider_names(evidence_sources: tuple[object, ...]) -> tuple[str, ...]:
+    provider_names: list[str] = []
+    for evidence in evidence_sources:
+        provenance = getattr(evidence, "provenance", None)
+        freshness_status = getattr(provenance, "freshness_status", None)
+        if getattr(freshness_status, "value", freshness_status) != "stale":
+            continue
+        provider_name = getattr(provenance, "provider_name", None)
+        if isinstance(provider_name, str) and provider_name:
+            provider_names.append(provider_name)
+    return tuple(dict.fromkeys(provider_names))
 
 
 __all__ = ["render_phase2_prediction_report"]

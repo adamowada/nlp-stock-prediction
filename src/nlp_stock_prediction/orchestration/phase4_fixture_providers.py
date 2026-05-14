@@ -15,7 +15,7 @@ from nlp_stock_prediction.contracts.providers import (
     RedditProvider,
 )
 from nlp_stock_prediction.orchestration.phase2_common import utc_now
-from nlp_stock_prediction.providers._base import JsonResponse
+from nlp_stock_prediction.providers._base import JsonResponse, ProviderTransportError
 from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
 from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
 from nlp_stock_prediction.providers.social import XRecentSearchProvider
@@ -135,7 +135,10 @@ class _StaticJsonTransport:
                 return JsonResponse(payload=payload)
         if len(self.responses) == 1:
             return JsonResponse(payload=next(iter(self.responses.values())))
-        raise ValueError(f"No fixture JSON response is registered for URL: {url}")
+        raise ProviderTransportError(
+            f"No fixture JSON response is registered for URL: {url}",
+            error_type="fixture_not_found",
+        )
 
 
 __all__ = ["Phase4FixtureProviderFactory"]

@@ -13,7 +13,7 @@ from nlp_stock_prediction.analysis.sector import analyze_sector_context
 from nlp_stock_prediction.contracts.analysis import MacroContext, SectorContext
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.enums import (
-    FreshnessStatus,
+    ProviderStatus,
     RetrievalMethod,
     SourceKind,
     TimeHorizon,
@@ -50,7 +50,7 @@ from nlp_stock_prediction.orchestration.phase4_common import (
 )
 from nlp_stock_prediction.orchestration.phase4_execution import (
     record_tool_completed,
-    record_tool_started,
+    safe_phase4_tool_execution,
     write_phase4_json_artifact,
 )
 from nlp_stock_prediction.storage.records import EvidenceRecord, SourceQueryRecord
@@ -109,188 +109,192 @@ class Phase4SectorMacroTool:
             "horizon": horizon.value,
             "macro_request": model_json(macro_request),
         }
-        record_tool_started(
+        with safe_phase4_tool_execution(
             store=store,
+            artifact_roots=(artifact_dir,),
             tool_run_id=tool_run_id,
             run_id=run_id,
             tool_name=PHASE4_SECTOR_MACRO_TOOL_NAME,
             started_at=generated_at,
             inputs=inputs,
-        )
-
-        sector_query = _record_sector_source_query(
-            store=store,
-            tool_run_id=tool_run_id,
-            generated_at=generated_at,
-            run_id=run_id,
-            symbol=normalized_symbol,
-            sector=sector,
-            benchmark_symbol=benchmark_symbol,
-        )
-        source_query_ids: list[str] = [sector_query.source_query_id]
-        warning_text: list[str] = []
-        all_warnings: list[ProviderWarning] = []
-        metric_evidence: list[SourceEvidence] = []
-        evidence_records: list[EvidenceRecord] = []
-
-        sector_metric_evidence = _sector_metric_evidence(
-            run_id=run_id,
-            generated_at=generated_at,
-            source_query_id=sector_query.source_query_id,
-            query=sector_query.query,
-            target_snapshot=target_snapshot,
-            peers=peers,
-            benchmark_symbol=benchmark_symbol,
-            benchmark_metrics=benchmark_metrics,
-        )
-        metric_evidence.extend(sector_metric_evidence)
-        evidence_records.extend(
-            metric_record_from_evidence(
-                evidence,
-                tool_run_id=tool_run_id,
-                source_query_id=sector_query.source_query_id,
-                artifact_id=artifact_id,
-                fallback_instrument_id=instrument_id,
-                analysis_reference={"analysis_type": "sector_metric_input"},
-            )
-            for evidence in sector_metric_evidence
-        )
-
-        macro_results = tuple(
-            provider.fetch_macro(macro_request) for provider in self.macro_providers
-        )
-        macro_series: list[MacroSeries] = []
-        for provider_result in macro_results:
-            source_query = record_source_query_for_result(
+        ):
+            sector_query = _record_sector_source_query(
                 store=store,
-                tool_slug=PHASE4_SECTOR_MACRO_TOOL_SLUG,
                 tool_run_id=tool_run_id,
-                result=cast(ProviderResult[object], provider_result),
-            )
-            source_query_ids.append(source_query.source_query_id)
-            warning_text.extend(warning_messages(provider_result.warnings))
-            all_warnings.extend(provider_result.warnings)
-            snapshot = provider_result.data
-            if snapshot is None:
-                continue
-            macro_series.extend(snapshot.series)
-            for series in snapshot.series:
-                for index, raw_metric in enumerate(series.values):
-                    metric = _macro_metric_with_metadata(raw_metric, provider_result, series)
-                    evidence = metric_source_evidence(
-                        run_id=run_id,
-                        tool_slug=PHASE4_SECTOR_MACRO_TOOL_SLUG,
-                        fetched_at=provider_result.fetched_at,
-                        provider_name=provider_result.provider_name,
-                        source_query_id=source_query.source_query_id,
-                        query=provider_request_query(provider_result.request),
-                        raw_snapshot_id=provider_result.raw_snapshot_id,
-                        cache_key=provider_result.cache_key,
-                        symbol=None,
-                        metric=metric,
-                        source_kind=SourceKind.MACRO_SERIES,
-                        retrieval_method=retrieval_method_for_provider(
-                            provider_result.provider_name
-                        ),
-                        freshness_status=provider_metric_freshness(provider_result.status, metric),
-                        index=index,
-                    )
-                    metric_evidence.append(evidence)
-                    evidence_records.append(
-                        metric_record_from_evidence(
-                            evidence,
-                            tool_run_id=tool_run_id,
-                            source_query_id=source_query.source_query_id,
-                            artifact_id=artifact_id,
-                            analysis_reference={
-                                "analysis_type": "macro_metric_input",
-                                "series_id": series.series_id,
-                            },
-                        )
-                    )
-
-        sector_context = _sector_with_references(
-            analyze_sector_context(
-                target_snapshot,
-                peers=peers,
+                generated_at=generated_at,
+                run_id=run_id,
+                symbol=normalized_symbol,
                 sector=sector,
                 benchmark_symbol=benchmark_symbol,
+            )
+            source_query_ids: list[str] = [sector_query.source_query_id]
+            warning_text: list[str] = []
+            all_warnings: list[ProviderWarning] = []
+            metric_evidence: list[SourceEvidence] = []
+            evidence_records: list[EvidenceRecord] = []
+
+            sector_metric_evidence = _sector_metric_evidence(
+                run_id=run_id,
+                generated_at=generated_at,
+                source_query_id=sector_query.source_query_id,
+                query=sector_query.query,
+                target_snapshot=target_snapshot,
+                peers=peers,
+                benchmark_symbol=benchmark_symbol,
                 benchmark_metrics=benchmark_metrics,
-                as_of=run_date,
-            ),
-            evidence=sector_metric_evidence,
-        )
-        macro_snapshot = MacroSnapshot(series=tuple(macro_series))
-        macro_context = _macro_with_references(
-            analyze_macro_context(macro_snapshot, horizon=horizon, as_of=run_date),
-            evidence=tuple(
-                item for item in metric_evidence if item.source_kind == SourceKind.MACRO_SERIES
-            ),
-            warnings=tuple(all_warnings),
-        )
-        warnings = dedupe_strings(warning_text)
-        status = tool_status(record_count=len(metric_evidence), warnings=warnings)
-        payload = _artifact_payload(
-            run_id=run_id,
-            tool_run_id=tool_run_id,
-            macro_request=macro_request,
-            macro_results=macro_results,
-            target_snapshot=target_snapshot,
-            peers=peers,
-            benchmark_metrics=benchmark_metrics,
-            macro_snapshot=macro_snapshot,
-            sector_context=sector_context,
-            macro_context=macro_context,
-            metric_evidence=metric_evidence,
-            warnings=warnings,
-        )
-        artifact_path = write_phase4_json_artifact(
-            store=store,
-            repo_root=repo_root,
-            artifact_dir=artifact_dir,
-            created_at=generated_at,
-            produced_by=PHASE4_SECTOR_MACRO_TOOL_NAME,
-            tool_run_id=tool_run_id,
-            schema_version=PHASE4_SECTOR_MACRO_SCHEMA_VERSION,
-            artifact_id=artifact_id,
-            artifact_type="analysis_context",
-            filename=filename,
-            payload=payload,
-            record_count=len(metric_evidence),
-            metadata=cast(
-                JsonObject,
-                {
-                    "symbol": normalized_symbol,
-                    "evidence_ids": [record.evidence_id for record in metric_evidence],
-                    "source_query_ids": source_query_ids,
-                    "warnings": list(warnings),
-                },
-            ),
-        )
-        for evidence_record in evidence_records:
-            store.record_evidence(evidence_record)
-        record_tool_completed(
-            store=store,
-            tool_run_id=tool_run_id,
-            run_id=run_id,
-            tool_name=PHASE4_SECTOR_MACRO_TOOL_NAME,
-            started_at=generated_at,
-            completed_at=generated_at,
-            status=status,
-            inputs=inputs,
-            warnings=warnings,
-        )
-        return Phase4ToolResult(
-            run_id=run_id,
-            tool_run_id=tool_run_id,
-            artifact_id=artifact_id,
-            artifact_path=artifact_path,
-            status=status,
-            evidence_ids=tuple(record.evidence_id for record in metric_evidence),
-            source_query_ids=tuple(source_query_ids),
-            warnings=warnings,
-            artifact_payload=payload,
-        )
+            )
+            metric_evidence.extend(sector_metric_evidence)
+            evidence_records.extend(
+                metric_record_from_evidence(
+                    evidence,
+                    tool_run_id=tool_run_id,
+                    source_query_id=sector_query.source_query_id,
+                    artifact_id=artifact_id,
+                    fallback_instrument_id=instrument_id,
+                    analysis_reference={"analysis_type": "sector_metric_input"},
+                )
+                for evidence in sector_metric_evidence
+            )
+
+            macro_results = tuple(
+                provider.fetch_macro(macro_request) for provider in self.macro_providers
+            )
+            macro_series: list[MacroSeries] = []
+            for provider_result in macro_results:
+                source_query = record_source_query_for_result(
+                    store=store,
+                    tool_slug=PHASE4_SECTOR_MACRO_TOOL_SLUG,
+                    tool_run_id=tool_run_id,
+                    result=cast(ProviderResult[object], provider_result),
+                )
+                source_query_ids.append(source_query.source_query_id)
+                warning_text.extend(warning_messages(provider_result.warnings))
+                all_warnings.extend(provider_result.warnings)
+                snapshot = provider_result.data
+                if snapshot is None:
+                    continue
+                macro_series.extend(snapshot.series)
+                for series in snapshot.series:
+                    for index, raw_metric in enumerate(series.values):
+                        metric = _macro_metric_with_metadata(raw_metric, provider_result, series)
+                        evidence = metric_source_evidence(
+                            run_id=run_id,
+                            tool_slug=PHASE4_SECTOR_MACRO_TOOL_SLUG,
+                            fetched_at=provider_result.fetched_at,
+                            provider_name=provider_result.provider_name,
+                            source_query_id=source_query.source_query_id,
+                            query=provider_request_query(provider_result.request),
+                            raw_snapshot_id=provider_result.raw_snapshot_id,
+                            cache_key=provider_result.cache_key,
+                            symbol=None,
+                            metric=metric,
+                            source_kind=SourceKind.MACRO_SERIES,
+                            retrieval_method=retrieval_method_for_provider(
+                                provider_result.provider_name
+                            ),
+                            freshness_status=provider_metric_freshness(
+                                provider_result.status,
+                                metric,
+                                run_date=run_date,
+                            ),
+                            index=index,
+                        )
+                        metric_evidence.append(evidence)
+                        evidence_records.append(
+                            metric_record_from_evidence(
+                                evidence,
+                                tool_run_id=tool_run_id,
+                                source_query_id=source_query.source_query_id,
+                                artifact_id=artifact_id,
+                                analysis_reference={
+                                    "analysis_type": "macro_metric_input",
+                                    "series_id": series.series_id,
+                                },
+                            )
+                        )
+
+            sector_context = _sector_with_references(
+                analyze_sector_context(
+                    target_snapshot,
+                    peers=peers,
+                    sector=sector,
+                    benchmark_symbol=benchmark_symbol,
+                    benchmark_metrics=benchmark_metrics,
+                    as_of=run_date,
+                ),
+                evidence=sector_metric_evidence,
+            )
+            macro_snapshot = MacroSnapshot(series=tuple(macro_series))
+            macro_context = _macro_with_references(
+                analyze_macro_context(macro_snapshot, horizon=horizon, as_of=run_date),
+                evidence=tuple(
+                    item for item in metric_evidence if item.source_kind == SourceKind.MACRO_SERIES
+                ),
+                warnings=tuple(all_warnings),
+            )
+            warnings = dedupe_strings(warning_text)
+            status = tool_status(record_count=len(metric_evidence), warnings=warnings)
+            payload = _artifact_payload(
+                run_id=run_id,
+                tool_run_id=tool_run_id,
+                macro_request=macro_request,
+                macro_results=macro_results,
+                target_snapshot=target_snapshot,
+                peers=peers,
+                benchmark_metrics=benchmark_metrics,
+                macro_snapshot=macro_snapshot,
+                sector_context=sector_context,
+                macro_context=macro_context,
+                metric_evidence=metric_evidence,
+                warnings=warnings,
+            )
+            artifact_path = write_phase4_json_artifact(
+                store=store,
+                repo_root=repo_root,
+                artifact_dir=artifact_dir,
+                created_at=generated_at,
+                produced_by=PHASE4_SECTOR_MACRO_TOOL_NAME,
+                tool_run_id=tool_run_id,
+                schema_version=PHASE4_SECTOR_MACRO_SCHEMA_VERSION,
+                artifact_id=artifact_id,
+                artifact_type="analysis_context",
+                filename=filename,
+                payload=payload,
+                record_count=len(metric_evidence),
+                metadata=cast(
+                    JsonObject,
+                    {
+                        "symbol": normalized_symbol,
+                        "evidence_ids": [record.evidence_id for record in metric_evidence],
+                        "source_query_ids": source_query_ids,
+                        "warnings": list(warnings),
+                    },
+                ),
+            )
+            for evidence_record in evidence_records:
+                store.record_evidence(evidence_record)
+            record_tool_completed(
+                store=store,
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=PHASE4_SECTOR_MACRO_TOOL_NAME,
+                started_at=generated_at,
+                completed_at=generated_at,
+                status=status,
+                inputs=inputs,
+                warnings=warnings,
+            )
+            return Phase4ToolResult(
+                run_id=run_id,
+                tool_run_id=tool_run_id,
+                artifact_id=artifact_id,
+                artifact_path=artifact_path,
+                status=status,
+                evidence_ids=tuple(record.evidence_id for record in metric_evidence),
+                source_query_ids=tuple(source_query_ids),
+                warnings=warnings,
+                artifact_payload=payload,
+            )
 
 
 def run_phase4_sector_macro_tool(
@@ -466,8 +470,10 @@ def _sector_metric_source_evidence(
             if upstream_provider == _SECTOR_INPUT_PROVIDER
             else retrieval_method_for_provider(upstream_provider)
         ),
-        freshness_status=(
-            FreshnessStatus.MISSING if metric.as_of is None else FreshnessStatus.FRESH
+        freshness_status=provider_metric_freshness(
+            ProviderStatus.OK,
+            metric,
+            run_date=generated_at.date(),
         ),
         index=index,
     )

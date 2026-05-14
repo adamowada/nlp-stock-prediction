@@ -474,6 +474,7 @@ class SQLiteStore:
         _validate_required(record.artifact_type, "artifact_type")
         _validate_required(record.sha256, "sha256")
         _validate_required(record.schema_version, "schema_version")
+        _validate_relative_artifact_path(record.path)
         if record.produced_by is not None:
             _validate_required(record.produced_by, "produced_by")
         if record.record_count is not None and record.record_count < 0:
@@ -496,7 +497,8 @@ class SQLiteStore:
                     schema_version = excluded.schema_version,
                     produced_by = excluded.produced_by,
                     record_count = excluded.record_count,
-                    metadata_json = excluded.metadata_json
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
                 """,
                 (
                     record.artifact_id,
@@ -771,6 +773,7 @@ class SQLiteStore:
                     _format_datetime(now),
                 ),
             )
+            self._sync_candidate_links(connection, record)
 
     def get_prediction_candidate(self, candidate_id: str) -> PredictionCandidateRecord | None:
         _validate_required(candidate_id, "candidate_id")
@@ -812,7 +815,8 @@ class SQLiteStore:
                 )
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(candidate_id, evidence_id, relationship) DO UPDATE SET
-                    metadata_json = excluded.metadata_json
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
                 """,
                 (
                     record.candidate_id,
@@ -853,7 +857,8 @@ class SQLiteStore:
                 )
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(candidate_id, artifact_id, relationship) DO UPDATE SET
-                    metadata_json = excluded.metadata_json
+                    metadata_json = excluded.metadata_json,
+                    created_at = excluded.created_at
                 """,
                 (
                     record.candidate_id,
@@ -879,6 +884,75 @@ class SQLiteStore:
                 (candidate_id,),
             ).fetchall()
         return tuple(_candidate_artifact_link_from_row(row) for row in rows)
+
+    def _sync_candidate_links(
+        self,
+        connection: sqlite3.Connection,
+        record: PredictionCandidateRecord,
+    ) -> None:
+        connection.execute(
+            """
+            DELETE FROM candidate_evidence_links
+            WHERE candidate_id = ? AND relationship IN ('supports', 'contradicts')
+            """,
+            (record.candidate_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM candidate_artifact_links
+            WHERE candidate_id = ? AND relationship = 'signal'
+            """,
+            (record.candidate_id,),
+        )
+        created_at = _format_datetime(_utc_now())
+        for relationship, evidence_ids in (
+            ("supports", record.evidence_for),
+            ("contradicts", record.evidence_against),
+        ):
+            for evidence_id in dict.fromkeys(evidence_ids):
+                connection.execute(
+                    """
+                    INSERT INTO candidate_evidence_links (
+                        candidate_id, evidence_id, relationship, metadata_json, created_at
+                    )
+                    SELECT ?, ?, ?, ?, ?
+                    WHERE EXISTS (
+                        SELECT 1 FROM evidence_items WHERE evidence_id = ?
+                    )
+                    ON CONFLICT(candidate_id, evidence_id, relationship) DO UPDATE SET
+                        metadata_json = excluded.metadata_json
+                    """,
+                    (
+                        record.candidate_id,
+                        evidence_id,
+                        relationship,
+                        _dump_json({"source": "prediction_candidate_record"}),
+                        created_at,
+                        evidence_id,
+                    ),
+                )
+        for artifact_id in dict.fromkeys(record.signal_artifacts):
+            connection.execute(
+                """
+                INSERT INTO candidate_artifact_links (
+                    candidate_id, artifact_id, relationship, metadata_json, created_at
+                )
+                SELECT ?, ?, ?, ?, ?
+                WHERE EXISTS (
+                    SELECT 1 FROM artifacts WHERE artifact_id = ?
+                )
+                ON CONFLICT(candidate_id, artifact_id, relationship) DO UPDATE SET
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    record.candidate_id,
+                    artifact_id,
+                    "signal",
+                    _dump_json({"source": "prediction_candidate_record"}),
+                    created_at,
+                    artifact_id,
+                ),
+            )
 
 
 ResearchSQLiteStore = SQLiteStore
@@ -1656,6 +1730,13 @@ def _ensure_planning_initialized(connection: sqlite3.Connection) -> None:
 def _validate_required(value: str, field_name: str) -> None:
     if not value.strip():
         raise ValueError(f"{field_name} must be non-empty")
+
+
+def _validate_relative_artifact_path(path: Path) -> None:
+    if path.is_absolute():
+        raise ValueError("artifact path must be relative")
+    if any(part == ".." for part in path.parts):
+        raise ValueError("artifact path must not contain parent traversal")
 
 
 def _validate_confidence(value: float | None) -> None:

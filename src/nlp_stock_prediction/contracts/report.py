@@ -432,6 +432,9 @@ def _validate_candidate_evaluation_metadata(candidate: PredictionCandidate) -> N
     status = metadata.get("status")
     if isinstance(status, str) and status != candidate.status.value:
         raise ValueError("prediction evaluation status must match rendered candidate status")
+    candidate_id = metadata.get("candidate_id")
+    if isinstance(candidate_id, str) and candidate_id != candidate.candidate_id:
+        raise ValueError("prediction evaluation candidate_id must match candidate_id")
     instrument_id = metadata.get("instrument_id")
     if isinstance(instrument_id, str) and instrument_id != candidate.instrument_id:
         raise ValueError("prediction evaluation instrument_id must match candidate instrument_id")

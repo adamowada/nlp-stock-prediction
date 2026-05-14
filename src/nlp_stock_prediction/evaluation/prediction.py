@@ -249,6 +249,12 @@ def attach_evaluation_metadata(
 ) -> PredictionCandidate:
     """Return a candidate copy with report-facing evaluation metadata attached."""
 
+    if evaluation.candidate_id != candidate.candidate_id:
+        raise ValueError("prediction evaluation candidate_id must match candidate")
+    if evaluation.instrument_id != candidate.instrument_id:
+        raise ValueError("prediction evaluation instrument_id must match candidate")
+    if evaluation.symbol.upper() != candidate.symbol.upper():
+        raise ValueError("prediction evaluation symbol must match candidate")
     metadata: JsonObject = dict(candidate.metadata)
     metadata["prediction_evaluation"] = _evaluation_metadata(evaluation, artifact)
     return candidate.model_copy(update={"metadata": metadata, "status": evaluation.status})
@@ -476,7 +482,12 @@ def _validate_candidate_matches_stored(
         and abs(candidate.confidence - stored_candidate.confidence) > 1e-9
     ):
         mismatches.append("confidence")
-    _append_mismatch(mismatches, "status", candidate.status.value, stored_candidate.status)
+    _append_mismatch(
+        mismatches,
+        "status",
+        candidate.status.value,
+        _normalized_stored_status(stored_candidate),
+    )
     _append_mismatch(
         mismatches,
         "evidence_for",
@@ -509,6 +520,17 @@ def _append_mismatch(
 ) -> None:
     if in_memory != stored:
         mismatches.append(field_name)
+
+
+def _normalized_stored_status(stored_candidate: PredictionCandidateRecord) -> str:
+    try:
+        return PredictionStatus(stored_candidate.status).value
+    except ValueError:
+        if stored_candidate.evidence_against:
+            return PredictionStatus.CONTRADICTED.value
+        if stored_candidate.evidence_for:
+            return PredictionStatus.EVIDENCE_SUPPORTED.value
+        return PredictionStatus.INSUFFICIENT_EVIDENCE.value
 
 
 def _candidate_with_stored_baseline(
@@ -567,6 +589,7 @@ def _evaluation_metadata(
 ) -> JsonObject:
     metadata: JsonObject = {
         "evaluation_id": evaluation.evaluation_id,
+        "candidate_id": evaluation.candidate_id,
         "status": evaluation.status.value,
         "instrument_id": evaluation.instrument_id,
         "symbol": evaluation.symbol,
@@ -575,6 +598,11 @@ def _evaluation_metadata(
         "quality_label": evaluation.quality_language.report_label,
         "quality_language": evaluation.quality_language.model_dump(mode="json"),
         "evidence_counts": evaluation.evidence_counts.model_dump(mode="json"),
+        "evidence_for_ids": [reference.evidence_id for reference in evaluation.evidence_for],
+        "evidence_against_ids": [
+            reference.evidence_id for reference in evaluation.evidence_against
+        ],
+        "missing_reference_ids": list(evaluation.evidence_counts.missing_reference_ids),
     }
     if artifact is not None:
         metadata["artifact_id"] = artifact.artifact_id

@@ -117,59 +117,12 @@ class Phase4UniverseDiscoveryTool:
     ) -> Phase4UniverseDiscoveryToolResult:
         validated = InstrumentUniverseRequest.model_validate(request)
         retrieved_at = context.generated_at
-        provider_result = self.provider.discover(validated, retrieved_at=retrieved_at)
         tool_run_id = _tool_run_id(context.run_id, validated.request_id)
         artifact_id = _artifact_id(context.run_id, validated.request_id)
-        source_query_records = _source_query_records(
-            tool_run_id=tool_run_id,
-            retrieved_at=retrieved_at,
-            source_queries=provider_result.source_queries,
-        )
-        source_query_ids_by_instrument = _source_query_ids_by_instrument(
-            source_queries=provider_result.source_queries,
-            records=source_query_records,
-        )
-        candidate_records = tuple(
-            instrument_record_from_contract(
-                instrument,
-                provider_name=self.provider.provider_name,
-                source_query_ids=tuple(
-                    source_query_ids_by_instrument.get(instrument.instrument_id, ())
-                ),
-            )
-            for instrument in provider_result.instruments
-        )
-
-        store.initialize()
-        registry = InstrumentRegistry(store, initialize=False)
-        for record in candidate_records:
-            store.upsert_instrument(record)
-
-        resolved_universe = registry.resolve_universe(validated)
-        universe = _phase4_universe(
-            request=validated,
-            resolved_universe=resolved_universe,
-            generated_at=retrieved_at,
-            provider_result=provider_result,
-            source_query_records=source_query_records,
-            provider_name=self.provider.provider_name,
-            provider_version=self.provider.provider_version,
-        )
-        warnings = _dedupe_strings((*provider_result.warnings, *universe.warnings))
-        tool_run_record = ToolRunRecord(
-            tool_run_id=tool_run_id,
-            run_id=context.run_id,
-            tool_name=PHASE4_TOOL_NAME,
-            tool_version=PHASE4_TOOL_VERSION,
-            status="partial" if warnings else "successful",
-            started_at=retrieved_at,
-            completed_at=retrieved_at,
-            inputs={
-                "request": cast(JsonObject, validated.model_dump(mode="json")),
-                "provider": self.provider.provider_name,
-            },
-            warnings=warnings,
-        )
+        inputs: JsonObject = {
+            "request": cast(JsonObject, validated.model_dump(mode="json")),
+            "provider": self.provider.provider_name,
+        }
         with safe_phase4_tool_execution(
             store=store,
             artifact_roots=(context.audit_dir,),
@@ -178,8 +131,59 @@ class Phase4UniverseDiscoveryTool:
             tool_name=PHASE4_TOOL_NAME,
             tool_version=PHASE4_TOOL_VERSION,
             started_at=retrieved_at,
-            inputs=tool_run_record.inputs,
+            inputs=inputs,
         ):
+            provider_result = self.provider.discover(validated, retrieved_at=retrieved_at)
+            source_query_records = _source_query_records(
+                tool_run_id=tool_run_id,
+                retrieved_at=retrieved_at,
+                source_queries=provider_result.source_queries,
+            )
+            source_query_ids_by_instrument = _source_query_ids_by_instrument(
+                source_queries=provider_result.source_queries,
+                records=source_query_records,
+            )
+            candidate_records = tuple(
+                instrument_record_from_contract(
+                    instrument,
+                    provider_name=self.provider.provider_name,
+                    source_query_ids=tuple(
+                        source_query_ids_by_instrument.get(instrument.instrument_id, ())
+                    ),
+                )
+                for instrument in provider_result.instruments
+            )
+
+            store.initialize()
+            registry = InstrumentRegistry(store, initialize=False)
+            for record in candidate_records:
+                store.upsert_instrument(record)
+
+            resolved_universe = registry.resolve_universe(validated)
+            universe = _phase4_universe(
+                request=validated,
+                resolved_universe=resolved_universe,
+                generated_at=retrieved_at,
+                provider_result=provider_result,
+                source_query_records=source_query_records,
+                provider_name=self.provider.provider_name,
+                provider_version=self.provider.provider_version,
+            )
+            warnings = _dedupe_strings((*provider_result.warnings, *universe.warnings))
+            tool_run_record = ToolRunRecord(
+                tool_run_id=tool_run_id,
+                run_id=context.run_id,
+                tool_name=PHASE4_TOOL_NAME,
+                tool_version=PHASE4_TOOL_VERSION,
+                status="partial" if warnings else "successful",
+                started_at=retrieved_at,
+                completed_at=retrieved_at,
+                inputs={
+                    "request": cast(JsonObject, validated.model_dump(mode="json")),
+                    "provider": self.provider.provider_name,
+                },
+                warnings=warnings,
+            )
             store.record_tool_run(tool_run_record)
             for source_query_record in source_query_records:
                 store.record_source_query(source_query_record)

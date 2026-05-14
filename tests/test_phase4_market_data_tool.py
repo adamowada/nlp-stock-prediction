@@ -277,7 +277,13 @@ def test_phase4_market_data_tool_records_warning_artifacts_for_provider_problems
     source_query = store.get_source_query(result.source_query_id)
 
     assert tool_run is not None
-    expected_tool_status = "partial" if expected_status == ProviderStatus.STALE else "empty"
+    expected_tool_status = (
+        "partial"
+        if expected_status == ProviderStatus.STALE
+        else "failed"
+        if expected_status in {ProviderStatus.MALFORMED, ProviderStatus.UNCONFIGURED}
+        else "empty"
+    )
     assert tool_run.status == expected_tool_status
     assert tool_run.warnings
     assert artifact is not None

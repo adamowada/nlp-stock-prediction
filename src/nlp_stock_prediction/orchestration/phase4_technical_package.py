@@ -166,122 +166,11 @@ class Phase4TechnicalPackageTool:
         generated_at = self.now()
         tool_run_id = _technical_package_tool_run_id(run_id, normalized_symbol)
         artifact_id = _technical_package_artifact_id(run_id, normalized_symbol)
-        market_bundle = _sanitize_market_bundle(
-            _coerce_market_data_input(market_data, generated_at, repo_root=self.repo_root),
-            symbol=normalized_symbol,
-        )
-        snapshot = _snapshot_for_technical_input(
-            symbol=normalized_symbol,
-            provider_result=market_bundle.provider_result,
-        )
-        latest_bar = latest_usable_bar(snapshot)
-        market_warnings = (
-            market_bundle.provider_result.warnings
-            if market_bundle.provider_result is not None
-            else ()
-        )
-        timesfm_bundle = _coerce_timesfm_sidecar(
-            timesfm_sidecar,
-            generated_at,
-            symbol=normalized_symbol,
-        )
-        internal_warnings = _technical_warnings(
-            symbol=normalized_symbol,
-            snapshot=snapshot,
-            freshness_status=_freshness_status(market_bundle),
-            market_data_status=(
-                market_bundle.provider_result.status
-                if market_bundle.provider_result is not None
-                else None
-            ),
-            timesfm_signal=timesfm_bundle.signal,
-            generated_at=generated_at,
-        )
-        warnings = _dedupe_warnings(
-            (
-                *market_bundle.warnings,
-                *market_warnings,
-                *timesfm_bundle.warnings,
-                *internal_warnings,
-            )
-        )
-
-        analysis = analyze_technical_snapshot(
-            snapshot,
-            as_of=calendar_date(latest_bar.timestamp) if latest_bar is not None else generated_at,
-        )
-        has_deterministic_bars = bool(snapshot.bars)
-        timesfm_applied = timesfm_bundle.signal is not None and has_deterministic_bars
-        if timesfm_applied:
-            analysis = apply_technical_ml_signal(analysis, timesfm_bundle.signal)
-        analysis = analysis.model_copy(
-            update={
-                "warnings": warnings,
-                "assumptions": _dedupe_strings(
-                    (
-                        *analysis.assumptions,
-                        "Market data is technical context, not a trade instruction.",
-                        TECHNICAL_PACKAGE_PREDICTION_POLICY,
-                        *_timesfm_assumptions(
-                            timesfm_bundle.signal,
-                            has_deterministic_bars=has_deterministic_bars,
-                        ),
-                    )
-                ),
-            }
-        )
-        status = _package_status(
-            has_bars=has_deterministic_bars,
-            freshness_status=_freshness_status(market_bundle),
-            warnings=warnings,
-        )
-        artifact_payload = Phase4TechnicalPackageArtifact(
-            run_id=run_id,
-            tool_run_id=tool_run_id,
-            artifact_id=artifact_id,
-            symbol=normalized_symbol,
-            generated_at=generated_at,
-            status=status,
-            freshness_status=_freshness_status(market_bundle),
-            market_data_status=(
-                market_bundle.provider_result.status
-                if market_bundle.provider_result is not None
-                else None
-            ),
-            market_data_artifact_id=market_bundle.artifact_id,
-            market_data_artifact_path=market_bundle.artifact_path,
-            market_data_artifact_sha256=market_bundle.artifact_sha256,
-            market_data_source_query_id=(
-                market_bundle.market_artifact.provenance.source_query_id
-                if market_bundle.market_artifact is not None
-                else None
-            ),
-            latest_usable_bar=latest_bar,
-            baseline_context=build_baseline_context(snapshot),
-            technical_analysis=analysis,
-            deterministic_indicators=analysis.metrics,
-            timesfm_sidecar=timesfm_bundle.signal,
-            timesfm_applied_to_analysis=timesfm_applied,
-            warnings=warnings,
-            assumptions=analysis.assumptions,
-            metadata={
-                "instrument_id": instrument_id,
-                "bar_count": len(snapshot.bars),
-                "market_data_artifact_id": market_bundle.artifact_id,
-                "timesfm_sidecar_present": timesfm_bundle.signal is not None,
-                "timesfm_sidecar_source_only": True,
-            },
-        )
-        inputs: JsonObject = {
+        started_inputs: JsonObject = {
             "symbol": normalized_symbol,
             "instrument_id": instrument_id,
-            "market_data_artifact_id": market_bundle.artifact_id,
-            "market_data_status": (
-                market_bundle.provider_result.status.value
-                if market_bundle.provider_result is not None
-                else None
-            ),
-            "timesfm_sidecar_present": timesfm_bundle.signal is not None,
+            "market_data_input": str(market_data),
+            "timesfm_sidecar_present": timesfm_sidecar is not None,
         }
         with safe_phase4_tool_execution(
             store=self.store,
@@ -291,8 +180,127 @@ class Phase4TechnicalPackageTool:
             tool_name=PHASE4_TECHNICAL_PACKAGE_TOOL_NAME,
             tool_version=PHASE4_TECHNICAL_PACKAGE_TOOL_VERSION,
             started_at=started_at,
-            inputs=inputs,
+            inputs=started_inputs,
         ):
+            market_bundle = _sanitize_market_bundle(
+                _coerce_market_data_input(market_data, generated_at, repo_root=self.repo_root),
+                symbol=normalized_symbol,
+            )
+            snapshot = _snapshot_for_technical_input(
+                symbol=normalized_symbol,
+                provider_result=market_bundle.provider_result,
+            )
+            latest_bar = latest_usable_bar(snapshot)
+            market_warnings = (
+                market_bundle.provider_result.warnings
+                if market_bundle.provider_result is not None
+                else ()
+            )
+            timesfm_bundle = _coerce_timesfm_sidecar(
+                timesfm_sidecar,
+                generated_at,
+                symbol=normalized_symbol,
+            )
+            internal_warnings = _technical_warnings(
+                symbol=normalized_symbol,
+                snapshot=snapshot,
+                freshness_status=_freshness_status(market_bundle),
+                market_data_status=(
+                    market_bundle.provider_result.status
+                    if market_bundle.provider_result is not None
+                    else None
+                ),
+                timesfm_signal=timesfm_bundle.signal,
+                generated_at=generated_at,
+            )
+            warnings = _dedupe_warnings(
+                (
+                    *market_bundle.warnings,
+                    *market_warnings,
+                    *timesfm_bundle.warnings,
+                    *internal_warnings,
+                )
+            )
+
+            analysis = analyze_technical_snapshot(
+                snapshot,
+                as_of=calendar_date(latest_bar.timestamp)
+                if latest_bar is not None
+                else generated_at,
+            )
+            has_deterministic_bars = bool(snapshot.bars)
+            timesfm_applied = timesfm_bundle.signal is not None and has_deterministic_bars
+            if timesfm_applied:
+                analysis = apply_technical_ml_signal(analysis, timesfm_bundle.signal)
+            analysis = analysis.model_copy(
+                update={
+                    "warnings": warnings,
+                    "assumptions": _dedupe_strings(
+                        (
+                            *analysis.assumptions,
+                            "Market data is technical context, not a trade instruction.",
+                            TECHNICAL_PACKAGE_PREDICTION_POLICY,
+                            *_timesfm_assumptions(
+                                timesfm_bundle.signal,
+                                has_deterministic_bars=has_deterministic_bars,
+                            ),
+                        )
+                    ),
+                }
+            )
+            status = _package_status(
+                has_bars=has_deterministic_bars,
+                freshness_status=_freshness_status(market_bundle),
+                warnings=warnings,
+            )
+            artifact_payload = Phase4TechnicalPackageArtifact(
+                run_id=run_id,
+                tool_run_id=tool_run_id,
+                artifact_id=artifact_id,
+                symbol=normalized_symbol,
+                generated_at=generated_at,
+                status=status,
+                freshness_status=_freshness_status(market_bundle),
+                market_data_status=(
+                    market_bundle.provider_result.status
+                    if market_bundle.provider_result is not None
+                    else None
+                ),
+                market_data_artifact_id=market_bundle.artifact_id,
+                market_data_artifact_path=market_bundle.artifact_path,
+                market_data_artifact_sha256=market_bundle.artifact_sha256,
+                market_data_source_query_id=(
+                    market_bundle.market_artifact.provenance.source_query_id
+                    if market_bundle.market_artifact is not None
+                    else None
+                ),
+                latest_usable_bar=latest_bar,
+                baseline_context=build_baseline_context(snapshot),
+                technical_analysis=analysis,
+                deterministic_indicators=analysis.metrics,
+                timesfm_sidecar=timesfm_bundle.signal,
+                timesfm_applied_to_analysis=timesfm_applied,
+                warnings=warnings,
+                assumptions=analysis.assumptions,
+                metadata={
+                    "instrument_id": instrument_id,
+                    "bar_count": len(snapshot.bars),
+                    "market_data_artifact_id": market_bundle.artifact_id,
+                    "timesfm_sidecar_present": timesfm_bundle.signal is not None,
+                    "timesfm_sidecar_source_only": True,
+                },
+            )
+            completed_inputs: JsonObject = {
+                "symbol": normalized_symbol,
+                "instrument_id": instrument_id,
+                "market_data_artifact_id": market_bundle.artifact_id,
+                "market_data_status": (
+                    market_bundle.provider_result.status.value
+                    if market_bundle.provider_result is not None
+                    else None
+                ),
+                "timesfm_sidecar_present": timesfm_bundle.signal is not None,
+            }
             self.store.record_tool_run(
                 ToolRunRecord(
                     tool_run_id=tool_run_id,
@@ -302,7 +310,7 @@ class Phase4TechnicalPackageTool:
                     status=_tool_run_status(status, warnings),
                     started_at=started_at,
                     completed_at=generated_at,
-                    inputs=inputs,
+                    inputs=completed_inputs,
                     warnings=tuple(warning.message for warning in warnings),
                 )
             )
@@ -694,7 +702,7 @@ def _tool_run_status(
     if status == "ok" and not warnings:
         return "successful"
     if status == "unavailable":
-        return "empty"
+        return "partial" if warnings else "empty"
     return "partial" if warnings else "successful"
 
 

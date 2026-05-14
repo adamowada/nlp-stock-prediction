@@ -59,7 +59,11 @@ def evaluate_stored_prediction_candidates(
     artifact_ids: list[str] = []
     warnings: list[str] = []
     for candidate_record in candidate_records:
-        candidate = prediction_candidate_from_record(candidate_record, evidence_sources)
+        candidate = prediction_candidate_from_record(
+            candidate_record,
+            evidence_sources,
+            include_missing_references=True,
+        )
         evaluation, artifact = write_prediction_evaluation_artifact(
             store=store,
             repo_root=repo_root,

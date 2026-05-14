@@ -40,6 +40,7 @@ def test_phase4_registry_exposes_real_public_tool_suite() -> None:
         "phase4_fundamentals",
         "phase4_technical_package",
         "phase4_sector_macro",
+        "phase4_prediction_candidate_synthesis",
         "phase4_prediction_evaluation",
         "render_prediction_report",
     ]
@@ -70,6 +71,7 @@ def test_phase4_service_plan_and_mcp_registration_are_not_phase2_dummy_only(
         "phase4_news_catalyst",
         "phase4_fundamentals",
         "phase4_sector_macro",
+        "phase4_prediction_candidate_synthesis",
         "phase4_prediction_evaluation",
         "render_prediction_report",
     }.issubset(plan_names)
@@ -96,8 +98,37 @@ def test_offline_pipeline_runs_real_phase4_public_flow(tmp_path: Path) -> None:
         "phase4_news_catalyst",
         "phase4_fundamentals",
         "phase4_sector_macro",
+        "phase4_prediction_candidate_synthesis",
         "phase4_prediction_evaluation",
         "render_prediction_report",
     }.issubset(tool_names)
     assert not any("dummy" in tool_name for tool_name in tool_names)
     assert payload["run_id"].startswith("phase4-")
+    assert payload["prediction_candidates"]
+
+
+@pytest.mark.integration
+def test_offline_pipeline_supports_custom_output_and_symbol_isolation(tmp_path: Path) -> None:
+    output_dir = tmp_path / "custom-output"
+    tsla = generate_daily_report(
+        RunConfig(
+            run_date="2026-05-11",
+            output_dir=output_dir,
+            symbol="TSLA",
+            offline=True,
+        )
+    )
+    btc = generate_daily_report(
+        RunConfig(
+            run_date="2026-05-11",
+            output_dir=output_dir,
+            symbol="BTC:USD",
+            offline=True,
+        )
+    )
+
+    assert tsla.json_path.exists()
+    assert btc.json_path.exists()
+    assert tsla.json_path != btc.json_path
+    assert tsla.json_path.parent.name == "tsla"
+    assert btc.json_path.parent.name == "btc-usd"

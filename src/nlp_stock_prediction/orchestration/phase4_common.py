@@ -172,7 +172,9 @@ def evidence_source_urls_from_result(result: ProviderResult[object]) -> tuple[st
             if isinstance(item, SourceEvidence):
                 source_url = item.provenance.source_url or item.provenance.permalink
                 if source_url:
-                    urls.append(source_url)
+                    sanitized = sanitize_source_query_url(source_url)
+                    if sanitized:
+                        urls.append(sanitized)
     return dedupe_strings(tuple(urls))
 
 
@@ -180,14 +182,17 @@ def sanitize_source_query_url(url: str | None) -> str | None:
     if not isinstance(url, str) or not url.strip():
         return None
     split = urlsplit(url.strip())
-    sensitive = {"api_key", "apikey", "token", "access_token", "key"}
+    sensitive = {"api_key", "apikey", "token", "access_token", "key", "bearer"}
+    netloc = split.hostname or ""
+    if split.port is not None:
+        netloc = f"{netloc}:{split.port}"
     query = urlencode(
         [
             (key, "REDACTED" if key.lower() in sensitive else value)
             for key, value in parse_qsl(split.query, keep_blank_values=True)
         ]
     )
-    return urlunsplit((split.scheme, split.netloc, split.path, query, split.fragment))
+    return urlunsplit((split.scheme, netloc, _sanitize_url_path(split.path), query, split.fragment))
 
 
 def _urls_from_request_options(options: JsonObject) -> tuple[str, ...]:
@@ -225,11 +230,12 @@ def _provider_query_urls_from_evidence(result: ProviderResult[object]) -> tuple[
             sanitized = sanitize_source_query_url(source_url)
             if sanitized:
                 urls.append(sanitized)
-        hub_url = item.provenance.provider_metadata.get("hub_url")
-        if isinstance(hub_url, str):
-            sanitized = sanitize_source_query_url(hub_url)
-            if sanitized:
-                urls.append(sanitized)
+        for key in ("source_query_url", "query_url", "hub_url"):
+            metadata_url = item.provenance.provider_metadata.get(key)
+            if isinstance(metadata_url, str):
+                sanitized = sanitize_source_query_url(metadata_url)
+                if sanitized:
+                    urls.append(sanitized)
     return dedupe_strings(tuple(urls))
 
 
@@ -290,7 +296,16 @@ def scoped_source_evidence(
 ) -> SourceEvidence:
     """Scope provider evidence IDs to a run while preserving the provider ID in metadata."""
 
-    evidence_id = f"evidence-{tool_slug}-{stable_digest('|'.join((run_id, evidence.evidence_id)))}"
+    provenance = evidence.provenance
+    scope_parts = (
+        run_id,
+        tool_slug,
+        provenance.provider_name,
+        provenance.raw_identifier or "",
+        provenance.permalink or "",
+        evidence.evidence_id,
+    )
+    evidence_id = f"evidence-{tool_slug}-{stable_digest('|'.join(scope_parts))}"
     payload = evidence.model_dump(mode="python")
     raw_metadata = payload.get("metadata")
     metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
@@ -591,17 +606,29 @@ def tool_status(*, record_count: int, warnings: Sequence[str]) -> str:
         return "partial"
     if record_count:
         return "successful"
+    if warnings:
+        return "partial"
     return "empty"
 
 
 def provider_metric_freshness(
     provider_status: ProviderStatus,
     metric: ProviderMetric,
+    *,
+    run_date: date | None = None,
+    stale_after_days: int = 456,
 ) -> FreshnessStatus:
     if provider_status == ProviderStatus.STALE:
         return FreshnessStatus.STALE
     if metric.as_of is None:
         return FreshnessStatus.MISSING
+    if run_date is not None:
+        metric_date = metric.as_of.date() if isinstance(metric.as_of, datetime) else metric.as_of
+        age_days = (run_date - metric_date).days
+        if age_days < 0:
+            return FreshnessStatus.UNKNOWN
+        if age_days > stale_after_days:
+            return FreshnessStatus.STALE
     return FreshnessStatus.FRESH
 
 
@@ -705,11 +732,21 @@ def metric_source_url(
 ) -> str:
     source_url = text_from_metadata(metric.metadata, "source_url")
     if source_url:
-        return source_url
+        return sanitize_source_query_url(source_url) or source_url
     query_url = text_from_metadata(metric.metadata, "source_query_url")
     if query_url:
-        return query_url
+        return sanitize_source_query_url(query_url) or query_url
     return f"provider://{provider_name}/{stable_digest(raw_identifier)}"
+
+
+def _sanitize_url_path(path: str) -> str:
+    if not path:
+        return path
+    sensitive_markers = ("apikey", "api_key", "access_token", "token", "key", "secret")
+    return "/".join(
+        "REDACTED" if any(marker in part.lower() for marker in sensitive_markers) else part
+        for part in path.split("/")
+    )
 
 
 def metric_claim(*, symbol: str | None, metric: ProviderMetric) -> str:

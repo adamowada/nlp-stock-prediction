@@ -322,7 +322,10 @@ def _freshness(
     fetched_at: datetime,
     freshness_window_seconds: int,
 ) -> tuple[FreshnessStatus, int]:
-    age_seconds = max(0, int((fetched_at - observed_at).total_seconds()))
+    raw_age_seconds = int((fetched_at - observed_at).total_seconds())
+    if raw_age_seconds < -300:
+        return FreshnessStatus.UNKNOWN, 0
+    age_seconds = max(0, raw_age_seconds)
     status = (
         FreshnessStatus.FRESH if age_seconds <= freshness_window_seconds else FreshnessStatus.STALE
     )

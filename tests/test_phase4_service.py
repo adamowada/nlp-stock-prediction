@@ -65,6 +65,7 @@ def test_phase4_tool_plan_is_registry_derived_with_canonical_stages(tmp_path: Pa
         "phase4_fundamentals",
         "phase4_technical_package",
         "phase4_sector_macro",
+        "phase4_prediction_candidate_synthesis",
         "phase4_prediction_evaluation",
         "render_prediction_report",
     ]
@@ -76,6 +77,7 @@ def test_phase4_tool_plan_is_registry_derived_with_canonical_stages(tmp_path: Pa
         "collect",
         "analyze",
         "analyze",
+        "evaluate",
         "evaluate",
         "report",
     ]
@@ -103,6 +105,18 @@ def test_phase4_tool_plan_is_registry_derived_with_canonical_stages(tmp_path: Pa
         "audit_manifest",
     ]
     assert cast(dict[str, object], report_tool["metadata"])["final_only"] is True
+
+
+@pytest.mark.unit
+def test_phase4_start_research_run_rejects_blank_symbol(tmp_path: Path) -> None:
+    service = Phase4Service(repo_root=tmp_path)
+
+    with pytest.raises(ValueError, match="symbol must be non-empty"):
+        service.start_research_run(
+            run_date=RUN_DATE.isoformat(),
+            output_dir="reports/phase4-runtime-report",
+            symbol="   ",
+        )
 
 
 @pytest.mark.unit
@@ -210,12 +224,81 @@ def test_phase4_tool_execution_rolls_back_new_and_overwritten_artifacts_but_reco
     assert failed_record.error_message == "deterministic phase4 failure"
 
 
+@pytest.mark.unit
+def test_phase4_tool_failed_retry_preserves_previous_success_outputs(tmp_path: Path) -> None:
+    service, run_id = _started_service(tmp_path)
+    paths = service.write_policy.run_paths(RUN_DATE, "reports/phase4-runtime-report")
+    tool = Phase4ToolMetadata(
+        tool_id="phase4.test.retry",
+        tool_name="retry_tool",
+        tool_version="unit.v1",
+        stage="analyze",
+        description="Exercise deterministic retry behavior.",
+        artifact_kinds=("provider_result",),
+    )
+
+    def success_action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
+        artifact = context.artifact_index(schema_version="unit-artifact.v1").write_json(
+            artifact_id="artifact-phase4-retry-success",
+            artifact_type="provider_result",
+            filename="retry-success.json",
+            payload={"attempt": "success"},
+        )
+        return Phase4ToolRunOutcome(
+            status="successful",
+            payload={"attempt": "success"},
+            artifact_ids=(artifact.artifact_id,),
+        )
+
+    first = execute_phase4_tool(
+        store=service.store,
+        repo_root=tmp_path,
+        paths=paths,
+        run_id=run_id,
+        tool=tool,
+        inputs={"case": "retry"},
+        action=success_action,
+    )
+    first_tool_run_id = str(first.payload["tool_run_id"])
+
+    def failing_action(context: Phase4ToolRunContext) -> Phase4ToolRunOutcome:
+        context.artifact_index(schema_version="unit-artifact.v1").write_json(
+            artifact_id="artifact-phase4-retry-failed",
+            artifact_type="provider_result",
+            filename="retry-failed.json",
+            payload={"attempt": "failed"},
+        )
+        raise RuntimeError("retry failed after prior success")
+
+    with pytest.raises(Phase4ToolExecutionError) as exc_info:
+        execute_phase4_tool(
+            store=service.store,
+            repo_root=tmp_path,
+            paths=paths,
+            run_id=run_id,
+            tool=tool,
+            inputs={"case": "retry"},
+            action=failing_action,
+        )
+
+    failed_tool_run_id = exc_info.value.tool_run_id
+    assert failed_tool_run_id != first_tool_run_id
+    first_record = service.store.get_tool_run(first_tool_run_id)
+    assert first_record is not None
+    assert first_record.status == "successful"
+    failed_record = service.store.get_tool_run(failed_tool_run_id)
+    assert failed_record is not None
+    assert failed_record.status == "failed"
+    assert service.store.get_artifact("artifact-phase4-retry-success") is not None
+    assert service.store.get_artifact("artifact-phase4-retry-failed") is None
+
+
 @pytest.mark.integration
 def test_phase4_report_is_final_only_and_warns_without_synthesizing_candidates(
     tmp_path: Path,
 ) -> None:
     service, run_id = _started_service(tmp_path)
-    service.run_dummy_universe_tool(run_id=run_id, symbol="TSLA")
+    service.phase4_universe_discovery(run_id=run_id, symbol="TSLA")
 
     rendered = service.render_prediction_report(run_id=run_id, symbol="TSLA")
 

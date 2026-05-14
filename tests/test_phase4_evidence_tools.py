@@ -280,7 +280,8 @@ def test_phase4_news_tool_preserves_articles_and_catalyst_labels(tmp_path: Path)
     assert any(evidence_stance_from_record(row) == "supports" for row in evidence_rows)
     source_queries = {query.provider: query for query in store.list_source_queries_for_run(RUN_ID)}
     assert source_queries["ap-news"].url == "https://apnews.com/hub/financial-markets"
-    assert source_queries["fixture-news"].url is None
+    assert source_queries["fixture-news"].url is not None
+    assert "token=REDACTED" in source_queries["fixture-news"].url
     assert all(row.url != source_queries["ap-news"].url for row in evidence_rows)
 
 
@@ -469,7 +470,7 @@ def test_phase4_news_tool_writes_warning_artifact_for_provider_failures(
 
     payload = _artifact_payload(result.artifact_path)
 
-    assert result.status == "empty"
+    assert result.status == "partial"
     assert result.evidence_ids == ()
     assert store.get_artifact(result.artifact_id) is not None
     assert len(store.list_source_queries_for_run(RUN_ID)) == 2

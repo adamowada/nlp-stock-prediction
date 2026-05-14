@@ -16,27 +16,30 @@ from nlp_stock_prediction.storage.records import PredictionCandidateRecord
 def prediction_candidate_from_record(
     candidate: PredictionCandidateRecord,
     evidence_sources: tuple[SourceEvidence, ...],
+    *,
+    include_missing_references: bool = False,
+    prefer_evaluated_references: bool = False,
 ) -> PredictionCandidate:
     """Return a report/evaluation candidate from durable SQLite state."""
 
     evidence_by_id = {record.evidence_id: record for record in evidence_sources}
-    evidence_for_refs = tuple(
-        EvidenceReference(
-            evidence_id=evidence_id,
-            quote=evidence_by_id[evidence_id].text[:180] if evidence_id in evidence_by_id else None,
-            relevance=0.76,
-        )
-        for evidence_id in candidate.evidence_for
+    evidence_for_ids, evidence_against_ids = _candidate_evidence_ids(
+        candidate,
+        prefer_evaluated_references=prefer_evaluated_references,
     )
-    evidence_against_refs = tuple(
-        EvidenceReference(
-            evidence_id=evidence_id,
-            quote=evidence_by_id[evidence_id].text[:180] if evidence_id in evidence_by_id else None,
-            relevance=0.76,
-        )
-        for evidence_id in candidate.evidence_against
+    evidence_for_refs = _evidence_references(
+        evidence_for_ids,
+        evidence_by_id,
+        include_missing_references=include_missing_references,
+    )
+    evidence_against_refs = _evidence_references(
+        evidence_against_ids,
+        evidence_by_id,
+        include_missing_references=include_missing_references,
     )
     status = _candidate_status(candidate, evidence_for_refs, evidence_against_refs)
+    if prefer_evaluated_references:
+        status = _evaluated_status(candidate) or status
     symbol = candidate.metadata.get("symbol")
     if not isinstance(symbol, str) or not symbol.strip():
         symbol = candidate.instrument_id.rsplit(":", 1)[-1]
@@ -61,6 +64,54 @@ def prediction_candidate_from_record(
         signal_artifact_ids=candidate.signal_artifacts,
         metadata=candidate.metadata,
     )
+
+
+def _candidate_evidence_ids(
+    candidate: PredictionCandidateRecord,
+    *,
+    prefer_evaluated_references: bool,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if prefer_evaluated_references:
+        metadata = candidate.metadata.get("prediction_evaluation")
+        if isinstance(metadata, dict):
+            evidence_for_ids = _string_tuple(metadata.get("evidence_for_ids"))
+            evidence_against_ids = _string_tuple(metadata.get("evidence_against_ids"))
+            if evidence_for_ids or evidence_against_ids:
+                return evidence_for_ids, evidence_against_ids
+    return candidate.evidence_for, candidate.evidence_against
+
+
+def _evidence_references(
+    evidence_ids: tuple[str, ...],
+    evidence_by_id: dict[str, SourceEvidence],
+    *,
+    include_missing_references: bool,
+) -> tuple[EvidenceReference, ...]:
+    references: list[EvidenceReference] = []
+    for evidence_id in evidence_ids:
+        if evidence_id not in evidence_by_id and not include_missing_references:
+            continue
+        references.append(EvidenceReference(evidence_id=evidence_id))
+    return tuple(references)
+
+
+def _evaluated_status(candidate: PredictionCandidateRecord) -> PredictionStatus | None:
+    metadata = candidate.metadata.get("prediction_evaluation")
+    if not isinstance(metadata, dict):
+        return None
+    status = metadata.get("status")
+    if not isinstance(status, str):
+        return None
+    try:
+        return PredictionStatus(status)
+    except ValueError:
+        return None
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(item for item in value if isinstance(item, str) and item)
 
 
 def update_candidate_record_from_contract(

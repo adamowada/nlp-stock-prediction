@@ -235,7 +235,7 @@ def test_phase4_technical_package_malformed_market_artifact_path_warns_not_crash
     assert Path(result.artifact.path).exists()
     tool_run = store.get_tool_run(result.tool_run_id)
     assert tool_run is not None
-    assert tool_run.status == "empty"
+    assert tool_run.status == "partial"
     assert tool_run.warnings
 
 

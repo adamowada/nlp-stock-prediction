@@ -507,6 +507,65 @@ def test_research_database_records_artifact_evidence_and_prediction_candidate(
 
 
 @pytest.mark.unit
+def test_record_artifact_rejects_absolute_and_parent_traversal_paths(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+
+    with pytest.raises(ValueError, match="relative"):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id="artifact-invalid-path-absolute",
+                artifact_type="provider_result",
+                path=tmp_path / "absolute.json",
+                sha256="b" * 64,
+                schema_version="unit.v1",
+            )
+        )
+    with pytest.raises(ValueError, match="parent traversal"):
+        store.record_artifact(
+            ArtifactRecord(
+                artifact_id="artifact-invalid-path-traversal",
+                artifact_type="provider_result",
+                path=Path("artifacts/../leak.json"),
+                sha256="b" * 64,
+                schema_version="unit.v1",
+            )
+        )
+
+
+@pytest.mark.unit
+def test_artifact_upsert_refreshes_created_at_for_run_graph_ordering(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    earlier = _timestamp()
+    later = earlier.replace(hour=13)
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-refresh",
+            artifact_type="provider_result",
+            path=Path("artifacts/refresh.json"),
+            sha256="c" * 64,
+            schema_version="unit.v1",
+            created_at=earlier,
+        )
+    )
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-refresh",
+            artifact_type="provider_result",
+            path=Path("artifacts/refresh.json"),
+            sha256="d" * 64,
+            schema_version="unit.v1",
+            created_at=later,
+        )
+    )
+
+    artifact = store.get_artifact("artifact-refresh")
+    assert artifact is not None
+    assert artifact.created_at == later
+
+
+@pytest.mark.unit
 def test_instrument_registry_tables_round_trip_and_query_helpers(tmp_path: Path) -> None:
     store = _research_store(tmp_path)
     store.initialize()

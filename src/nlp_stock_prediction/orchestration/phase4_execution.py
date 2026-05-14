@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -100,6 +101,7 @@ def safe_phase4_tool_execution(
     file_transactions = tuple(
         ArtifactFileTransaction.begin(root) for root in _unique_resolved_paths(artifact_roots)
     )
+    previous_tool_run = store.get_tool_run(tool_run_id)
     try:
         with store.transaction():
             record_tool_started(
@@ -113,20 +115,36 @@ def safe_phase4_tool_execution(
             )
             yield
     except Exception as exc:
+        rollback_errors: list[str] = []
         for file_transaction in reversed(file_transactions):
-            file_transaction.rollback_new_files()
-        store.delete_tool_run_outputs(tool_run_id)
+            try:
+                file_transaction.rollback_new_files()
+            except Exception as rollback_exc:
+                rollback_errors.append(str(rollback_exc))
+        completed_at = _failure_completed_at(started_at)
+        failed_tool_run_id = _failed_tool_run_id(
+            tool_run_id=tool_run_id,
+            previous_exists=previous_tool_run is not None
+            and previous_tool_run.status != PHASE4_RUNNING_TOOL_RUN_STATUS,
+            completed_at=completed_at,
+            error_message=str(exc),
+        )
+        error_message = str(exc)
+        if rollback_errors:
+            error_message = f"{error_message}; artifact rollback errors: " + "; ".join(
+                dict.fromkeys(rollback_errors)
+            )
         store.record_tool_run(
             ToolRunRecord(
-                tool_run_id=tool_run_id,
+                tool_run_id=failed_tool_run_id,
                 run_id=run_id,
                 tool_name=tool_name,
                 tool_version=tool_version,
                 status="failed",
                 started_at=started_at,
-                completed_at=_failure_completed_at(started_at),
+                completed_at=completed_at,
                 inputs=inputs,
-                error_message=str(exc),
+                error_message=error_message,
             )
         )
         raise
@@ -203,6 +221,21 @@ def _unique_resolved_paths(paths: Sequence[Path]) -> tuple[Path, ...]:
 
 def _failure_completed_at(started_at: datetime) -> datetime:
     return datetime.now(UTC).astimezone(started_at.tzinfo or UTC)
+
+
+def _failed_tool_run_id(
+    *,
+    tool_run_id: str,
+    previous_exists: bool,
+    completed_at: datetime,
+    error_message: str,
+) -> str:
+    if not previous_exists:
+        return tool_run_id
+    digest = hashlib.sha256(
+        f"{tool_run_id}|{completed_at.isoformat()}|{error_message}".encode()
+    ).hexdigest()[:12]
+    return f"{tool_run_id}-failed-{digest}"
 
 
 __all__ = [
