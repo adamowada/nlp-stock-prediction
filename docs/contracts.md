@@ -219,6 +219,14 @@ status, quality score when resolved, optional baseline comparison, evidence, art
 limitations. Resolved outcome evaluations require an observed outcome plus evidence or artifacts;
 pending, stale, or not-evaluable evaluations must explain their limitations.
 
+Phase 5 report rendering now populates `PriorOutcomeReview` directly from stored prior JSON report
+artifacts when available. The prior report artifact must resolve through the runtime report index,
+match its stored hash, and load through the JSON report contract. First runs, missing or malformed
+prior artifacts, stale report windows, and unlinked prior candidates are represented as explicit
+review limitations. Current candidates link to the review ID and receive concrete
+`PredictionChangeTrigger` entries for follow-up evidence, provider refreshes, baseline changes, or
+outcome data.
+
 ## Planning State
 
 Active plans belong in the tracked planning SQLite database. Planning contracts include:

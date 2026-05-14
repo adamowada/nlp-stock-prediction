@@ -682,6 +682,20 @@ def test_report_artifact_index_round_trips_and_finds_latest_bundle(tmp_path: Pat
     )
     assert latest == report_artifacts[1]
     assert store.get_latest_report_artifact(symbol="TSLA") == report_artifacts[1]
+    assert (
+        store.get_latest_prior_report_artifact(
+            before_report_date=date(2026, 5, 14),
+            symbol="TSLA",
+        )
+        == report_artifacts[1]
+    )
+    assert (
+        store.get_latest_prior_report_artifact(
+            before_report_date=date(2026, 5, 13),
+            symbol="TSLA",
+        )
+        is None
+    )
     assert store.list_latest_report_artifact_bundle(symbol="TSLA") == report_artifacts
 
     columns = _column_names(store, "report_artifact_index")

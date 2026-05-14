@@ -96,6 +96,18 @@ version, report date, instrument identity, report data mode, tool run id, and so
 It does not store report bodies or raw provider payloads; those remain file-backed artifacts under
 ignored output directories.
 
+## Prior Outcome Review
+
+Report rendering loads the latest indexed prior JSON report for the same instrument, or an explicit
+prior report artifact recorded in run metadata. Prior report files are read from disk and checked
+against the stored hash before they can source a `PriorOutcomeReview`. If no prior report exists,
+the candidate receives an explicit `not_available` review. Missing, malformed, or stale prior
+artifacts are represented as unavailable or stale limitations rather than synthesized history.
+
+When a prior report is usable, the current report records follow-up evidence as the outcome context,
+links the prior JSON artifact in the current audit manifest, and adds change triggers for supporting
+or contradictory evidence, outcome data, baseline changes, and provider refreshes where applicable.
+
 Run the optional Phase 4 real-Codex smoke after installing the MCP extra:
 
 ```sh

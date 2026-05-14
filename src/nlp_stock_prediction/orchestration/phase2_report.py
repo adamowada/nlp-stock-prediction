@@ -20,7 +20,6 @@ from nlp_stock_prediction.contracts.report import (
     DataFreshnessSummary,
     InstrumentReportSection,
     InsufficientEvidenceReport,
-    PriorOutcomeReview,
 )
 from nlp_stock_prediction.instruments.repository import instrument_from_record
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
@@ -31,6 +30,7 @@ from nlp_stock_prediction.orchestration.phase2_common import (
     utc_now,
 )
 from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
+from nlp_stock_prediction.orchestration.prior_outcomes import apply_prior_outcome_context
 from nlp_stock_prediction.orchestration.report_assembly import (
     material_claim_traces,
     prepare_report_assembly_state,
@@ -107,6 +107,24 @@ def render_phase2_prediction_report(
         )
         for candidate in assembly_state.usable_candidate_records
     )
+    provider_name = _provider_name_for_mode(
+        resolved_report_data_mode,
+    )
+    has_codex_search_evidence = bool(evidence_sources)
+    stale_provider_names = _stale_provider_names(evidence_sources)
+    missing_provider_names = () if has_codex_search_evidence else (provider_name,)
+    prior_outcome_context = apply_prior_outcome_context(
+        store=store,
+        repo_root=repo_root,
+        run=run,
+        report_date=run_date,
+        reviewed_at=now,
+        instrument=instrument,
+        prediction_candidates=prediction_candidates,
+        missing_provider_names=missing_provider_names,
+        stale_provider_names=stale_provider_names,
+    )
+    prediction_candidates = prior_outcome_context.prediction_candidates
     section_refs = tuple(
         EvidenceReference(
             evidence_id=record.evidence_id,
@@ -168,12 +186,7 @@ def render_phase2_prediction_report(
         evidence=section_refs,
         data_quality={"codex_search_evidence_count": len(evidence_sources)},
     )
-    audit_artifacts = assembly_state.audit_artifacts
-    provider_name = _provider_name_for_mode(
-        resolved_report_data_mode,
-    )
-    has_codex_search_evidence = bool(evidence_sources)
-    stale_provider_names = _stale_provider_names(evidence_sources)
+    audit_artifacts = (*assembly_state.audit_artifacts, *prior_outcome_context.audit_artifacts)
     provider_status = (
         ProviderStatus.STALE
         if stale_provider_names and has_codex_search_evidence
@@ -196,12 +209,14 @@ def render_phase2_prediction_report(
         provider_health=provider_health,
         assembly_state=assembly_state,
     )
+    source_references = (*source_references, *prior_outcome_context.source_references)
     material_traces = material_claim_traces(
         prediction_candidates=prediction_candidates,
         source_references=source_references,
         assembly_state=assembly_state,
     )
-    prior_outcome_reviews = _prior_outcome_reviews(prediction_candidates)
+    material_traces = (*material_traces, *prior_outcome_context.material_claim_traces)
+    prior_outcome_reviews = prior_outcome_context.prior_outcome_reviews
     insufficient_summary = _insufficient_evidence_summary(
         prediction_candidates=prediction_candidates,
         assembly_state_blocking_reasons=assembly_state.blocking_reasons,
@@ -365,7 +380,7 @@ def render_phase2_prediction_report(
         "candidate_count": len(prediction_candidates),
         "stored_candidate_count": len(candidate_records),
         "excluded_candidate_ids": list(assembly_state.excluded_candidate_ids),
-        "warnings": list(assembly_state.warnings),
+        "warnings": list((*assembly_state.warnings, *prior_outcome_context.warnings)),
         **mode_metadata,
     }
 
@@ -421,30 +436,6 @@ def _record_final_report_artifact_index(
                 created_at=artifact.created_at,
             )
         )
-
-
-def _prior_outcome_reviews(
-    prediction_candidates: tuple[object, ...],
-) -> tuple[PriorOutcomeReview, ...]:
-    reviews: list[PriorOutcomeReview] = []
-    for candidate in prediction_candidates:
-        candidate_id = getattr(candidate, "candidate_id", None)
-        prior_ids = getattr(candidate, "prior_outcome_review_ids", ())
-        if not isinstance(candidate_id, str):
-            continue
-        for review_id in prior_ids:
-            if not isinstance(review_id, str) or not review_id:
-                continue
-            reviews.append(
-                PriorOutcomeReview(
-                    review_id=review_id,
-                    status="not_available",
-                    summary="No prior outcome review is available for this run.",
-                    candidate_id=candidate_id,
-                    limitations=("No stored prior outcome artifact was linked to this candidate.",),
-                )
-            )
-    return tuple(reviews)
 
 
 def _primary_instrument(

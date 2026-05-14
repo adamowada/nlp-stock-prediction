@@ -672,6 +672,41 @@ class SQLiteStore:
             return None
         return _report_artifact_from_row(row)
 
+    def get_latest_prior_report_artifact(
+        self,
+        *,
+        before_report_date: date,
+        artifact_type: str = "json_report",
+        instrument_id: str | None = None,
+        symbol: str | None = None,
+    ) -> ReportArtifactRecord | None:
+        _validate_report_artifact_type(artifact_type)
+        filters = ["artifact_type = ?", "report_date < ?"]
+        params: list[str] = [artifact_type, before_report_date.isoformat()]
+        if instrument_id is not None:
+            _validate_required(instrument_id, "instrument_id")
+            filters.append("instrument_id = ?")
+            params.append(instrument_id)
+        if symbol is not None:
+            _validate_required(symbol, "symbol")
+            filters.append("symbol = ?")
+            params.append(symbol.strip().upper())
+        where_clause = " AND ".join(filters)
+        with self.connect() as connection:
+            _ensure_initialized(connection)
+            row = connection.execute(
+                f"""
+                SELECT * FROM report_artifact_index
+                WHERE {where_clause}
+                ORDER BY report_date DESC, created_at DESC, run_id DESC, artifact_id DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            ).fetchone()
+        if row is None:
+            return None
+        return _report_artifact_from_row(row)
+
     def list_latest_report_artifact_bundle(
         self,
         *,
