@@ -220,8 +220,9 @@ def _time_horizon(value: str) -> TimeHorizon:
 def _prediction_type(value: str) -> PredictionType:
     try:
         return PredictionType(value)
-    except ValueError:
-        return PredictionType.DIRECTIONAL
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in PredictionType)
+        raise ValueError(f"prediction_type must be one of: {allowed}") from exc
 
 
 def _signal_artifact_references(

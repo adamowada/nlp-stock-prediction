@@ -188,6 +188,24 @@ candidate-evidence and candidate-artifact link tables, prior report hash validat
 insufficient-evidence or contradicted outcomes when sources are missing, stale, unknown, malformed,
 or conflicting.
 
+### Phase 6 QA Gates
+
+The Phase 6 gate is deterministic and uses persisted point-in-time outcome evaluations rather than
+fixtures or dummy fallback paths. It exercises outcome evaluation, persisted outcome loading,
+signal-family ablation, walk-forward folds, calibration summaries, public MCP/service wiring, and
+report integration from SQLite run-graph records and audit artifacts.
+
+```sh
+python -m pytest tests/test_phase6_evaluation_contracts.py tests/test_phase6_outcome_evaluation_tool.py
+python -m pytest tests/test_phase6_public_tooling.py tests/test_phase6_report_integration.py
+python -m pytest tests/test_phase6_calibration_summary.py tests/test_phase6_signal_family_ablation.py tests/test_phase6_walk_forward_evaluation.py
+```
+
+The gate must stay offline and should verify point-in-time outcome evidence, no lookahead market
+artifacts, canonical prediction type/horizon handling, idempotent SQLite persistence, cohort-source
+attribution, artifact write-policy enforcement, and report references that preserve Phase 6 outputs
+without turning calibration into trading-performance claims.
+
 ### Cross-Cutting Integrity Gates
 
 Run these when contracts, providers, orchestration, reporting, storage, or local ML behavior changes:

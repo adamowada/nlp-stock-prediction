@@ -1,0 +1,34 @@
+{
+  "fixture_version": 1,
+  "recorded_at": "2026-05-11T16:30:00Z",
+  "redactions": ["authorization_header", "api_key", "session_cookie", "raw_user_id"],
+  "provider_metadata": {
+    "source": "recorded_fixture",
+    "redaction_policy": {
+      "secrets_removed": true,
+      "raw_user_ids_hashed": true
+    }
+  },
+  "fixtures": [
+    ["fixture-x", "recent_tsla", "raw/x/recent_tsla.json", "application/json"],
+    ["fixture-news", "tsla", "raw/news/tsla.json", "application/json"],
+    ["fixture-candlecharts", "widget_only_tsla", "raw/candlecharts/widget_only_tsla.html", "text/html"],
+    ["fixture-candlecharts", "stale_ohlcv_tsla", "raw/candlecharts/stale_ohlcv_tsla.html", "text/html"],
+    ["fixture-candlecharts", "public_ohlcv_tsla", "raw/candlecharts/public_ohlcv_tsla.html", "text/html"],
+    ["fixture-candlecharts", "malformed_ohlcv_tsla", "raw/candlecharts/malformed_ohlcv_tsla.html", "text/html"],
+    ["fixture-fred", "fedfunds_stale", "raw/fred/fedfunds_stale.json", "application/json"],
+    ["fixture-alpha-vantage", "daily_tsla", "raw/alpha_vantage/daily_tsla.json", "application/json"],
+    ["fixture-alpha-vantage", "overview_tsla", "raw/alpha_vantage/overview_tsla.json", "application/json"],
+    ["fixture-sec-edgar", "submissions_tsla", "raw/sec_edgar/submissions_tsla.json", "application/json"],
+    ["fixture-sec-edgar", "companyfacts_tsla", "raw/sec_edgar/companyfacts_tsla.json", "application/json"],
+    ["fixture-apnews", "hub_unrelated", "raw/apnews/hub_unrelated.html", "text/html"],
+    ["fixture-apnews", "hub_stale", "raw/apnews/hub_stale.html", "text/html"],
+    ["fixture-apnews", "hub_missing_timestamp", "raw/apnews/hub_missing_timestamp.html", "text/html"],
+    ["fixture-apnews", "hub_financial_markets", "raw/apnews/hub_financial_markets.html", "text/html"],
+    ["fixture-apnews", "hub_drift", "raw/apnews/hub_drift.html", "text/html"],
+    ["fixture-apnews", "article_unrelated", "raw/apnews/article_unrelated.html", "text/html"],
+    ["fixture-apnews", "article_tsla_nvidia", "raw/apnews/article_tsla_nvidia.html", "text/html"],
+    ["fixture-apnews", "article_stale", "raw/apnews/article_stale.html", "text/html"],
+    ["fixture-apnews", "article_missing_timestamp", "raw/apnews/article_missing_timestamp.html", "text/html"]
+  ]
+}

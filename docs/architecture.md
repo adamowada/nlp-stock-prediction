@@ -141,6 +141,12 @@ unsupported or ambiguous instrument resolutions, and contradictory source eviden
 structured insufficient-evidence, provider-health, audit-manifest, or contradicted-candidate context
 instead of being hidden or converted into unsupported conclusions.
 
+Phase 6 evaluation artifacts remain independent audit files, not inline report calculations. When a
+report is rendered for a run with persisted outcome evaluations or calibration runs, the renderer
+adds those artifacts to the audit manifest, surfaces outcome evaluations as prior-outcome reviews,
+and references calibration artifacts as tool artifacts so downstream readers can audit prediction
+quality without treating it as trading performance.
+
 ## ML Signal Discipline
 
 Technical ML sidecars are conservative audit inputs. OHLCV timestamps are normalized across date and

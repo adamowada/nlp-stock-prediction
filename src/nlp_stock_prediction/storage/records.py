@@ -166,6 +166,134 @@ class PredictionCandidateRecord:
 
 
 @dataclass(frozen=True)
+class PredictionEvaluationRecord:
+    evaluation_id: str
+    candidate_id: str
+    instrument_id: str
+    symbol: str
+    created_at: datetime
+    prediction_type: str
+    horizon: str
+    status: str
+    score: float
+    run_id: str | None = None
+    direction: str | None = None
+    baseline_comparison: JsonObject = field(default_factory=dict)
+    evidence_counts: JsonObject = field(default_factory=dict)
+    signal_counts: JsonObject = field(default_factory=dict)
+    artifact_id: str | None = None
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PredictionOutcomeRecord:
+    outcome_id: str
+    candidate_id: str
+    instrument_id: str
+    symbol: str
+    prediction_type: str
+    evaluation_window_start: datetime
+    evaluation_window_end: datetime
+    status: str
+    horizon: str = "unknown"
+    observed_result: str | None = None
+    observed_at: datetime | None = None
+    result_summary: str | None = None
+    result_value: float | None = None
+    baseline_value: float | None = None
+    limitations: tuple[str, ...] = ()
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PredictionOutcomeEvaluationRecord:
+    outcome_evaluation_id: str
+    outcome_id: str
+    candidate_id: str
+    instrument_id: str
+    symbol: str
+    evaluated_at: datetime
+    status: str
+    run_id: str | None = None
+    quality_score: float | None = None
+    baseline_comparison: JsonObject = field(default_factory=dict)
+    artifact_id: str | None = None
+    limitations: tuple[str, ...] = ()
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class OutcomeEvidenceLinkRecord:
+    outcome_id: str
+    evidence_id: str
+    relationship: str
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OutcomeArtifactLinkRecord:
+    outcome_id: str
+    artifact_id: str
+    relationship: str
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OutcomeEvaluationEvidenceLinkRecord:
+    outcome_evaluation_id: str
+    evidence_id: str
+    relationship: str
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class OutcomeEvaluationArtifactLinkRecord:
+    outcome_evaluation_id: str
+    artifact_id: str
+    relationship: str
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class CalibrationRunRecord:
+    calibration_id: str
+    run_id: str
+    method_version: str
+    created_at: datetime
+    point_in_time_cutoff: datetime
+    tool_run_id: str | None = None
+    cohort_query: JsonObject = field(default_factory=dict)
+    source_outcome_evaluation_ids: tuple[str, ...] = ()
+    artifact_id: str | None = None
+    limitations: tuple[str, ...] = ()
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CalibrationSliceRecord:
+    slice_id: str
+    calibration_id: str
+    cohort_label: str
+    sample_count: int
+    resolved_count: int
+    pending_count: int = 0
+    stale_count: int = 0
+    unavailable_count: int = 0
+    not_evaluable_count: int = 0
+    signal_family: str | None = None
+    prediction_type: str | None = None
+    horizon: str | None = None
+    metrics: JsonObject = field(default_factory=dict)
+    baseline_comparison: JsonObject = field(default_factory=dict)
+    provenance: JsonObject = field(default_factory=dict)
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CandidateEvidenceLinkRecord:
     candidate_id: str
     evidence_id: str
@@ -254,11 +382,17 @@ class PlanCommitLinkRecord:
 
 __all__ = [
     "ArtifactRecord",
+    "CalibrationRunRecord",
+    "CalibrationSliceRecord",
     "CandidateArtifactLinkRecord",
     "CandidateEvidenceLinkRecord",
     "EvidenceRecord",
     "InstrumentRecord",
     "InstrumentTradabilityEvidenceRecord",
+    "OutcomeArtifactLinkRecord",
+    "OutcomeEvaluationArtifactLinkRecord",
+    "OutcomeEvaluationEvidenceLinkRecord",
+    "OutcomeEvidenceLinkRecord",
     "PlanAcceptanceCriterionRecord",
     "PlanArtifactLinkRecord",
     "PlanCommitLinkRecord",
@@ -267,6 +401,9 @@ __all__ = [
     "PlanProgressRecord",
     "PlanRecord",
     "PredictionCandidateRecord",
+    "PredictionEvaluationRecord",
+    "PredictionOutcomeEvaluationRecord",
+    "PredictionOutcomeRecord",
     "ReportArtifactRecord",
     "ResearchRunRecord",
     "SourceQueryRecord",

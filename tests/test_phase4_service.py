@@ -385,7 +385,7 @@ def test_phase4_prediction_evaluation_service_writes_artifact_and_metadata(
             run_id=run_id,
             instrument_id="instrument:equity:us:tsla",
             prediction_horizon="swing",
-            prediction_type="scenario_quality",
+            prediction_type="directional",
             scenario="TSLA fixture scenario quality depends on attributed evidence.",
             status="evidence_supported",
             confidence=0.62,

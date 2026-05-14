@@ -16,6 +16,7 @@ from nlp_stock_prediction.contracts.enums import (
     CredentialState,
     InstrumentResolutionStatus,
     ProviderStatus,
+    TimeHorizon,
     TradabilityStatus,
 )
 from nlp_stock_prediction.contracts.instruments import (
@@ -34,6 +35,10 @@ from nlp_stock_prediction.contracts.report import (
     DataFreshnessSummary,
     InstrumentReportSection,
     InsufficientEvidenceReport,
+    MaterialClaimTrace,
+    PredictionCandidate,
+    PriorOutcomeReview,
+    ReportSourceReference,
 )
 from nlp_stock_prediction.instruments.repository import instrument_from_record
 from nlp_stock_prediction.orchestration.artifact_policy import FINAL_REPORT_ARTIFACT_TYPES
@@ -317,6 +322,22 @@ def _render_phase2_prediction_report_core(
         data_quality={"codex_search_evidence_count": len(evidence_sources)},
     )
     audit_artifacts = (*assembly_state.audit_artifacts, *prior_outcome_context.audit_artifacts)
+    stored_prior_outcome_reviews = _stored_prior_outcome_reviews(
+        store=store,
+        run_id=run.run_id,
+        candidate_ids=tuple(candidate.candidate_id for candidate in prediction_candidates),
+        evidence_source_ids=tuple(evidence.evidence_id for evidence in evidence_sources),
+        audit_artifact_ids=tuple(artifact.artifact_id for artifact in audit_artifacts),
+    )
+    stored_review_ids_by_candidate = _prior_review_ids_by_candidate(stored_prior_outcome_reviews)
+    if stored_review_ids_by_candidate:
+        prediction_candidates = tuple(
+            _with_prior_outcome_review_ids(
+                candidate,
+                stored_review_ids_by_candidate.get(candidate.candidate_id, ()),
+            )
+            for candidate in prediction_candidates
+        )
     provider_status = (
         ProviderStatus.STALE
         if stale_provider_names and has_codex_search_evidence
@@ -339,14 +360,28 @@ def _render_phase2_prediction_report_core(
         provider_health=provider_health,
         assembly_state=assembly_state,
     )
-    source_references = (*source_references, *prior_outcome_context.source_references)
+    stored_prior_source_references = tuple(
+        _stored_prior_source_reference(review) for review in stored_prior_outcome_reviews
+    )
+    source_references = (
+        *source_references,
+        *stored_prior_source_references,
+        *prior_outcome_context.source_references,
+    )
     material_traces = material_claim_traces(
         prediction_candidates=prediction_candidates,
         source_references=source_references,
         assembly_state=assembly_state,
     )
-    material_traces = (*material_traces, *prior_outcome_context.material_claim_traces)
-    prior_outcome_reviews = prior_outcome_context.prior_outcome_reviews
+    material_traces = (
+        *material_traces,
+        *(_stored_prior_material_claim_trace(review) for review in stored_prior_outcome_reviews),
+        *prior_outcome_context.material_claim_traces,
+    )
+    prior_outcome_reviews = (
+        *stored_prior_outcome_reviews,
+        *prior_outcome_context.prior_outcome_reviews,
+    )
     resolution_blocking_reasons = _instrument_resolution_blocking_reasons(
         instrument_resolutions,
     )
@@ -600,12 +635,165 @@ def _record_final_report_artifact_index(
         )
 
 
+def _stored_prior_outcome_reviews(
+    *,
+    store: SQLiteStore,
+    run_id: str,
+    candidate_ids: tuple[str, ...],
+    evidence_source_ids: tuple[str, ...],
+    audit_artifact_ids: tuple[str, ...],
+) -> tuple[PriorOutcomeReview, ...]:
+    if not candidate_ids:
+        return ()
+    candidate_id_set = set(candidate_ids)
+    evidence_source_id_set = set(evidence_source_ids)
+    audit_artifact_id_set = set(audit_artifact_ids)
+    reviews: list[PriorOutcomeReview] = []
+    for record in store.list_outcome_evaluations_for_run(run_id):
+        if record.candidate_id not in candidate_id_set:
+            continue
+        outcome = store.get_prediction_outcome(record.outcome_id)
+        artifact_ids = _stored_prior_review_artifact_ids(store, record.outcome_evaluation_id)
+        if record.artifact_id is not None:
+            artifact_ids = (record.artifact_id, *artifact_ids)
+        artifact_ids = tuple(
+            artifact_id
+            for artifact_id in dict.fromkeys(artifact_ids)
+            if artifact_id in audit_artifact_id_set
+        )
+        evidence = tuple(
+            EvidenceReference(evidence_id=link.evidence_id)
+            for link in store.list_outcome_evaluation_evidence_links(record.outcome_evaluation_id)
+            if link.evidence_id in evidence_source_id_set
+        )
+        review_status = _stored_prior_review_status(record.status)
+        limitations = record.limitations
+        if review_status != "available" and not limitations:
+            limitations = ("Stored outcome evaluation is not resolved as available.",)
+        if review_status == "available" and not (evidence or artifact_ids):
+            review_status = "not_available"
+            limitations = (
+                "Stored outcome evaluation is missing report-visible evidence and artifacts.",
+            )
+        reviews.append(
+            PriorOutcomeReview(
+                review_id=record.outcome_evaluation_id,
+                status=review_status,
+                summary=_stored_prior_review_summary(record.status, record.quality_score),
+                candidate_id=record.candidate_id,
+                instrument_id=record.instrument_id,
+                reviewed_at=record.evaluated_at,
+                horizon=_review_horizon(outcome.horizon if outcome is not None else None),
+                outcome_evidence=evidence,
+                artifact_ids=artifact_ids,
+                limitations=limitations,
+                metadata={
+                    "outcome_id": record.outcome_id,
+                    "quality_score": record.quality_score,
+                    "baseline_comparison": dict(record.baseline_comparison),
+                    "source": "prediction_outcome_evaluations",
+                },
+            )
+        )
+    return tuple(reviews)
+
+
+def _stored_prior_review_artifact_ids(
+    store: SQLiteStore,
+    outcome_evaluation_id: str,
+) -> tuple[str, ...]:
+    return tuple(
+        link.artifact_id
+        for link in store.list_outcome_evaluation_artifact_links(outcome_evaluation_id)
+    )
+
+
+def _stored_prior_review_status(status: str) -> str:
+    if status in {"confirmed", "missed", "mixed", "inconclusive"}:
+        return "available"
+    if status == "pending":
+        return "pending"
+    if status == "stale":
+        return "stale"
+    if status in {"unavailable", "not_evaluable"}:
+        return "unavailable"
+    return "not_available"
+
+
+def _stored_prior_review_summary(status: str, quality_score: float | None) -> str:
+    if quality_score is None:
+        return f"Stored outcome evaluation is {status} for this prediction candidate."
+    return (
+        f"Stored outcome evaluation is {status} for this prediction candidate with "
+        f"quality score {quality_score:.2f}."
+    )
+
+
+def _review_horizon(value: str | None) -> TimeHorizon:
+    if value is None:
+        return TimeHorizon.UNKNOWN
+    try:
+        return TimeHorizon(value)
+    except ValueError:
+        return TimeHorizon.UNKNOWN
+
+
+def _prior_review_ids_by_candidate(
+    reviews: tuple[PriorOutcomeReview, ...],
+) -> dict[str, tuple[str, ...]]:
+    grouped: dict[str, list[str]] = {}
+    for review in reviews:
+        if review.candidate_id is None:
+            continue
+        grouped.setdefault(review.candidate_id, []).append(review.review_id)
+    return {
+        candidate_id: tuple(dict.fromkeys(review_ids))
+        for candidate_id, review_ids in grouped.items()
+    }
+
+
+def _with_prior_outcome_review_ids(
+    candidate: PredictionCandidate,
+    review_ids: tuple[str, ...],
+) -> PredictionCandidate:
+    merged = tuple(dict.fromkeys((*candidate.prior_outcome_review_ids, *review_ids)))
+    if merged == candidate.prior_outcome_review_ids:
+        return candidate
+    return candidate.model_copy(update={"prior_outcome_review_ids": merged})
+
+
+def _stored_prior_source_reference(review: PriorOutcomeReview) -> ReportSourceReference:
+    return ReportSourceReference(
+        reference_id=f"source-ref-{review.review_id}",
+        label=f"Prior outcome review {review.review_id}",
+        reference_type="prior_outcome",
+        evidence_ids=tuple(reference.evidence_id for reference in review.outcome_evidence),
+        artifact_ids=review.artifact_ids,
+        candidate_ids=((review.candidate_id,) if review.candidate_id else ()),
+        prior_outcome_review_ids=(review.review_id,),
+        metadata={"status": review.status, "source": "prediction_outcome_evaluations"},
+    )
+
+
+def _stored_prior_material_claim_trace(review: PriorOutcomeReview) -> MaterialClaimTrace:
+    return MaterialClaimTrace(
+        claim_id=f"claim-{review.review_id}",
+        claim=review.summary,
+        claim_type="prior_outcome",
+        evidence=review.outcome_evidence,
+        artifact_ids=review.artifact_ids,
+        source_reference_ids=(f"source-ref-{review.review_id}",),
+        candidate_ids=((review.candidate_id,) if review.candidate_id else ()),
+        prior_outcome_review_ids=(review.review_id,),
+    )
+
+
 def _primary_instrument(
     store: SQLiteStore,
     *,
     symbol: str,
     fallback_generated_at: datetime,
-    report_data_mode: ReportDataMode,
+    report_data_mode: ReportDataMode = OFFLINE_FIXTURE_REPORT_DATA_MODE,
 ) -> Instrument:
     if report_data_mode == LIVE_REPORT_DATA_MODE:
         record = store.find_instrument_by_provider_id(
@@ -625,7 +813,14 @@ def _primary_instrument(
         return instrument_from_record(record)
     discovered_records = store.find_instruments_by_symbol_or_alias(symbol.upper())
     if discovered_records:
-        return instrument_from_record(discovered_records[0])
+        exact = tuple(
+            record for record in discovered_records if record.symbol.upper() == symbol.upper()
+        )
+        if len(exact) == 1:
+            return instrument_from_record(exact[0])
+        if len(discovered_records) == 1:
+            return instrument_from_record(discovered_records[0])
+        raise ValueError(f"ambiguous instrument symbol for report rendering: {symbol.upper()}")
     return phase2_instrument(symbol.upper(), fallback_generated_at)
 
 

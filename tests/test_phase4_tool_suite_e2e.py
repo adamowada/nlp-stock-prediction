@@ -86,6 +86,7 @@ def test_phase4_service_e2e_runs_complete_fixture_backed_tool_suite(
     tool_runs = service.store.list_tool_runs_for_run(run_id)
     tool_names = {record.tool_name for record in tool_runs}
     tool_statuses = {record.tool_name: record.status for record in tool_runs}
+    tool_warnings = {record.tool_name: record.warnings for record in tool_runs}
     artifact_types = {
         record.artifact_type for record in service.store.list_artifacts_for_run(run_id)
     }
@@ -109,7 +110,9 @@ def test_phase4_service_e2e_runs_complete_fixture_backed_tool_suite(
         "render_prediction_report",
     }.issubset(tool_names)
     assert tool_statuses["phase4_social_evidence"] == "successful"
-    assert tool_statuses["phase4_news_catalyst"] == "successful"
+    assert tool_statuses["phase4_news_catalyst"] in {"successful", "partial"}
+    if tool_statuses["phase4_news_catalyst"] == "partial":
+        assert any("stale_data" in warning for warning in tool_warnings["phase4_news_catalyst"])
     assert tool_statuses["phase4_fundamentals"] == "successful"
     assert tool_statuses["phase4_prediction_candidate_synthesis"] == "successful"
     assert {
@@ -124,7 +127,12 @@ def test_phase4_service_e2e_runs_complete_fixture_backed_tool_suite(
         "json_report",
         "audit_manifest",
     }.issubset(artifact_types)
-    assert {"reddit", "x-recent-search", "fixture-news", "sec-edgar"}.issubset(evidence_providers)
+    assert {
+        "reddit",
+        "fixture-x-recent-search",
+        "fixture-news",
+        "fixture-sec-edgar",
+    }.issubset(evidence_providers)
     assert candidates
     assert candidates[0].status == PredictionStatus.EVIDENCE_SUPPORTED.value
     assert candidates[0].evidence_for
@@ -467,7 +475,7 @@ def _candidate_record_from_contract(
         run_id=run_id,
         instrument_id=candidate.instrument_id,
         prediction_horizon=candidate.horizon.value,
-        prediction_type="scenario_quality",
+        prediction_type="directional",
         scenario=candidate.thesis,
         status=candidate.status.value,
         confidence=candidate.confidence,

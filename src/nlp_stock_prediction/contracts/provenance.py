@@ -78,6 +78,12 @@ class SourceProvenance(ContractModel):
 
     @model_validator(mode="after")
     def validate_external_traceability(self) -> SourceProvenance:
+        if (
+            self.observed_at is not None
+            and self.observed_at > self.fetched_at
+            and self.freshness_status != FreshnessStatus.UNKNOWN
+        ):
+            raise ValueError("source provenance observed_at must not be after fetched_at")
         if self.source_kind == SourceKind.INTERNAL_ANALYSIS:
             return self
         if not (self.source_url or self.permalink):
@@ -110,6 +116,14 @@ class EvidenceReference(ContractModel):
             and self.end_char < self.start_char
         ):
             raise ValueError("end_char must be greater than or equal to start_char")
+        if self.quote is not None and not self.quote.strip():
+            raise ValueError("evidence reference quote must be non-empty")
+        if (
+            self.start_char is not None
+            and self.end_char is not None
+            and self.end_char == self.start_char
+        ):
+            raise ValueError("evidence reference offsets must span at least one character")
         return self
 
 

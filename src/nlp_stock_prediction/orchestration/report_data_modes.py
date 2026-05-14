@@ -190,6 +190,8 @@ def report_data_mode_from_run(
     if default is not None:
         return default
     run_kind = run.run_kind.lower()
+    if "phase6" in run_kind:
+        return LIVE_REPORT_DATA_MODE
     if "codex_smoke" in run_kind or "codex-smoke" in run_kind:
         return CODEX_SMOKE_REPORT_DATA_MODE
     if "dummy" in run_kind:

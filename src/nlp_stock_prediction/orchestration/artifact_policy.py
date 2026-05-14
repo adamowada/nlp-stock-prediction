@@ -18,6 +18,11 @@ ArtifactType = Literal[
     "ml_forecast",
     "instrument_universe",
     "prediction_evaluation",
+    "prediction_outcome",
+    "prediction_outcome_evaluation",
+    "calibration_summary",
+    "signal_family_ablation",
+    "walk_forward_evaluation",
     "audit_manifest",
 ]
 
@@ -34,6 +39,11 @@ JSON_ARTIFACT_TYPES = frozenset(
         "ml_forecast",
         "instrument_universe",
         "prediction_evaluation",
+        "prediction_outcome",
+        "prediction_outcome_evaluation",
+        "calibration_summary",
+        "signal_family_ablation",
+        "walk_forward_evaluation",
         "audit_manifest",
         "market_data",
         "technical_package",

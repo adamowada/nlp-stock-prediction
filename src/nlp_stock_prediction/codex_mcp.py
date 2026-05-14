@@ -1,4 +1,4 @@
-"""Local MCP server exposing Phase 4 research tools to Codex."""
+"""Local MCP server exposing Phase 4 and Phase 6 research tools to Codex."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from typing import Any
 
 from nlp_stock_prediction.orchestration.phase4_mcp_registration import register_phase4_mcp_tools
 from nlp_stock_prediction.orchestration.phase4_service import Phase4Service
+from nlp_stock_prediction.orchestration.phase6_mcp_registration import register_phase6_mcp_tools
+from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
 
 
 def build_server(repo_root: Path | None = None, database_path: Path | None = None) -> Any:
@@ -20,17 +22,24 @@ def build_server(repo_root: Path | None = None, database_path: Path | None = Non
         from mcp.server.fastmcp import FastMCP  # type: ignore[import-not-found, unused-ignore]
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised only without optional extra
         raise RuntimeError(
-            "The Phase 4 Codex MCP server requires the optional `codex-smoke` extra: "
+            "The Phase 4/6 Codex MCP server requires the optional `codex-smoke` extra: "
             'python -m pip install -e ".[codex-smoke]"'
         ) from exc
 
-    service = Phase4Service(
-        repo_root=repo_root or Path.cwd(),
-        database_path=database_path or Path("data/prediction-research.sqlite3"),
+    resolved_repo_root = repo_root or Path.cwd()
+    resolved_database_path = database_path or Path("data/prediction-research.sqlite3")
+    phase4_service = Phase4Service(
+        repo_root=resolved_repo_root,
+        database_path=resolved_database_path,
+    )
+    phase6_service = Phase6Service(
+        repo_root=resolved_repo_root,
+        database_path=resolved_database_path,
     )
     server = FastMCP("nlp-stock-prediction")
 
-    register_phase4_mcp_tools(server, service)
+    register_phase4_mcp_tools(server, phase4_service)
+    register_phase6_mcp_tools(server, phase6_service)
     return server
 
 

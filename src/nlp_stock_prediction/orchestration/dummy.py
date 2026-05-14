@@ -401,7 +401,7 @@ def build_dummy_tool_registry() -> ToolRegistry:
 def generate_dummy_report_bundle(config: RunConfig) -> ReportBundle:
     """Run deterministic dummy tools and write a complete report bundle."""
 
-    if not (config.offline or config.source_mode == "offline"):
+    if not config.offline:
         raise ValueError(DUMMY_ORCHESTRATION_DISABLED_MESSAGE)
     if config.live_providers:
         raise ValueError("live providers are not wired into the dummy orchestrator")

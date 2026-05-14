@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from nlp_stock_prediction.cli import build_parser, main
 from nlp_stock_prediction.contracts import (
     CredentialState,
+    EvidenceReference,
     FreshnessStatus,
     ProviderHealth,
     ProviderMetric,
@@ -132,6 +133,36 @@ def test_derived_external_provenance_still_requires_traceable_source() -> None:
             raw_identifier="derived-news-1",
             raw_snapshot_id="raw-derived-news-1",
             freshness_status=FreshnessStatus.FRESH,
+        )
+
+
+@pytest.mark.schema
+def test_source_provenance_rejects_future_observation_time() -> None:
+    with pytest.raises(ValidationError, match="observed_at"):
+        SourceProvenance(
+            provider_name="fixture-news",
+            source_kind=SourceKind.NEWS_ARTICLE,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=_fetched_at(),
+            observed_at=datetime(2026, 5, 12, 12, 0, tzinfo=UTC),
+            source_url="https://example.test/news",
+            raw_identifier="news-1",
+            raw_snapshot_id="raw-news-1",
+            freshness_status=FreshnessStatus.FRESH,
+        )
+
+
+@pytest.mark.schema
+def test_evidence_reference_rejects_empty_quote_and_zero_width_span() -> None:
+    with pytest.raises(ValidationError, match="quote"):
+        EvidenceReference(evidence_id="evidence-empty-quote", quote="")
+
+    with pytest.raises(ValidationError, match="span"):
+        EvidenceReference(
+            evidence_id="evidence-empty-span",
+            quote="TSLA",
+            start_char=2,
+            end_char=2,
         )
 
 

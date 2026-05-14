@@ -1,5 +1,7 @@
 """Deterministic orchestration runtime."""
 
+from typing import Any
+
 from nlp_stock_prediction.orchestration.artifacts import (
     ArtifactFileTransaction,
     ArtifactIndex,
@@ -89,6 +91,32 @@ from nlp_stock_prediction.orchestration.tools import (
     ToolSpec,
 )
 
+_PHASE6_EXPORTS = {
+    "PHASE6_ABLATION_TOOL_ID",
+    "PHASE6_CALIBRATION_TOOL_ID",
+    "PHASE6_INSPECT_TOOL_ID",
+    "PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID",
+    "PHASE6_OUTCOME_EVALUATION_TOOL_ID",
+    "PHASE6_STAGE_ORDER",
+    "PHASE6_WALK_FORWARD_TOOL_ID",
+    "Phase6Service",
+    "Phase6ToolMetadata",
+    "Phase6ToolRegistry",
+    "build_phase6_tool_registry",
+    "phase6_evaluation_tool_plan",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _PHASE6_EXPORTS:
+        from nlp_stock_prediction.orchestration import phase6_service
+
+        value = getattr(phase6_service, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "CODEX_SMOKE_REPORT_DATA_MODE",
     "DEFAULT_STAGE_ORDER",
@@ -97,6 +125,13 @@ __all__ = [
     "LIVE_REPORT_DATA_MODE",
     "OFFLINE_FIXTURE_REPORT_DATA_MODE",
     "PHASE4_STAGE_ORDER",
+    "PHASE6_ABLATION_TOOL_ID",
+    "PHASE6_CALIBRATION_TOOL_ID",
+    "PHASE6_INSPECT_TOOL_ID",
+    "PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID",
+    "PHASE6_OUTCOME_EVALUATION_TOOL_ID",
+    "PHASE6_STAGE_ORDER",
+    "PHASE6_WALK_FORWARD_TOOL_ID",
     "REPORT_DATA_MODE_KEY",
     "ArtifactFileTransaction",
     "ArtifactIndex",
@@ -126,6 +161,9 @@ __all__ = [
     "Phase4ToolRunOutcome",
     "Phase4UniverseDiscoveryTool",
     "Phase4UniverseDiscoveryToolResult",
+    "Phase6Service",
+    "Phase6ToolMetadata",
+    "Phase6ToolRegistry",
     "ReportBundle",
     "ReportDataMode",
     "ReportInputBoundaryViolation",
@@ -139,12 +177,14 @@ __all__ = [
     "ToolSpec",
     "build_dummy_tool_registry",
     "build_phase4_tool_registry",
+    "build_phase6_tool_registry",
     "deterministic_generated_at",
     "enforce_live_report_input_boundary",
     "execute_phase4_tool",
     "find_non_live_report_input_violations",
     "generate_dummy_report_bundle",
     "phase4_research_tool_plan",
+    "phase6_evaluation_tool_plan",
     "report_data_mode_from_run",
     "report_data_mode_metadata",
     "run_phase4_fundamentals_tool",

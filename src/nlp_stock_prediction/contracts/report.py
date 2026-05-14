@@ -260,12 +260,24 @@ class MaterialClaimTrace(ContractModel):
                 raise ValueError("labeled inference claim traces require rationale")
         elif not has_references:
             raise ValueError("material claim traces require trace references")
-        if self.claim_type == "prediction_evaluation" and not self.candidate_ids:
-            raise ValueError("prediction_evaluation claim traces require candidate_ids")
-        if self.claim_type == "provider_health" and not self.provider_names:
-            raise ValueError("provider_health claim traces require provider_names")
-        if self.claim_type == "prior_outcome" and not self.prior_outcome_review_ids:
-            raise ValueError("prior_outcome claim traces require prior_outcome_review_ids")
+        if self.claim_type == "source_observation" and not (
+            self.evidence or self.source_reference_ids
+        ):
+            raise ValueError("source observation claim traces require evidence references")
+        if self.claim_type == "prior_outcome" and not (
+            self.prior_outcome_review_ids or self.source_reference_ids
+        ):
+            raise ValueError("prior outcome claim traces require prior outcome review references")
+        if self.claim_type == "provider_health" and not (
+            self.provider_names or self.source_reference_ids
+        ):
+            raise ValueError("provider health claim traces require provider references")
+        if self.claim_type == "prediction_evaluation" and not (
+            self.candidate_ids or self.artifact_ids or self.source_reference_ids
+        ):
+            raise ValueError(
+                "prediction_evaluation claim traces require candidate, artifact, or source refs"
+            )
         if self.claim_type == "baseline" and not self.candidate_ids:
             raise ValueError("baseline claim traces require candidate_ids")
         _validate_report_authored_language(self.claim, self.rationale)
@@ -407,6 +419,11 @@ class AuditArtifact(ContractModel):
         "ml_forecast",
         "instrument_universe",
         "prediction_evaluation",
+        "prediction_outcome",
+        "prediction_outcome_evaluation",
+        "calibration_summary",
+        "signal_family_ablation",
+        "walk_forward_evaluation",
         "audit_manifest",
     ]
     path: NonEmptyStr
