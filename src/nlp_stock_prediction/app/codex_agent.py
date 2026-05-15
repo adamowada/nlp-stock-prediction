@@ -370,11 +370,26 @@ def _build_prompt(request: CodexTurnRequest) -> str:
         ),
         "Keep conclusions high-level and concise unless the user asks for audit detail.",
         (
+            "When citing prediction scores or confidence, explain that they are normalized "
+            "0.0-1.0 research/evidence scales: about 0.5 is a neutral/no-edge baseline, "
+            "higher is stronger support relative to baseline, and they are not probabilities "
+            "or expected returns."
+        ),
+        (
+            "When citing source reliability counts, include the total and percentages when "
+            "available, and explain that low/medium/high are evidence-quality audit bins rather "
+            "than votes for a direction."
+        ),
+        (
             "Do not reveal private chain-of-thought. If the user asks how you are thinking, "
             "provide concise reasoning summaries, visible assumptions, and observable "
             "tool/activity details instead."
         ),
-        "Do not provide trading instructions, position sizing, or buy/sell commands.",
+        (
+            "Predictions may discuss directional scenarios, price levels, risk/reward, and "
+            "trading-strategy context. Do not place trades, size positions, or issue direct "
+            "buy/sell/short/hold commands as instructions."
+        ),
         f"Research database: {_path_arg(request.repo_root, request.database_path)}",
     ]
     if request.report_json_path is not None:

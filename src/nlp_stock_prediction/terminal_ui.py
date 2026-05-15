@@ -193,7 +193,7 @@ def _input_is_interactive(input_stream: IO[str] | None = None) -> bool:
 
 def _header_panel() -> Panel:
     title = Text("Prediction Research Terminal", style="bold cyan")
-    subtitle = Text("Evidence-backed research, not trading instructions.", style="dim")
+    subtitle = Text("Evidence-backed prediction research.", style="dim")
     return Panel(
         Group(Align.center(title), Align.center(subtitle)),
         border_style="cyan",

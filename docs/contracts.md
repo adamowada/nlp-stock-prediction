@@ -6,7 +6,8 @@ section describes behavior beyond the current command surface, it is labeled as 
 ## Core Invariants
 
 - The product is a prediction research assistant, not a trading app.
-- Reports may make evidence-backed predictions, not buy/sell instructions.
+- Reports may make evidence-backed predictions, price-level context, and strategy scenarios; the
+  app does not place trades or size positions.
 - Every material claim must trace to evidence, a tool artifact, a baseline, or a labeled Codex
   inference.
 - Evidence for and evidence against must both be preserved.
@@ -40,7 +41,7 @@ Implemented asset classes are `stock`, `etf`, `crypto`, `currency`, `commodity`,
 `index`, `proxy`, and `unknown`. Provider IDs are namespaced so one provider can contribute multiple
 identifiers, such as ticker and CIK, without overwriting each other.
 
-Tradability/access evidence is provenance, not a trading instruction. Each observation must include
+Tradability/access evidence is provenance, not an executed trade action. Each observation must include
 provider, status, retrieval timestamp, and at least one traceable source field such as `source_url`,
 `permalink`, or `raw_identifier`.
 
@@ -190,8 +191,10 @@ report instruments.
 
 Implemented report validation also requires instrument-section and candidate symbols to match their
 referenced instruments, and requires evidence-reference quotes/spans to match the cited source
-evidence text. Markdown rendering includes published/created timestamps, data-quality metadata,
-strategy cluster summaries when present, and audit manifest references or artifact entries.
+evidence text. It does not hard-block report-authored words such as buy, sell, recommendation, or
+strategy; rendering preserves authored text while structural validation preserves traceability.
+Markdown rendering includes published/created timestamps, data-quality metadata, strategy cluster
+summaries when present, and audit manifest references or artifact entries.
 
 Phase 5 report contracts add first-class structures for dissenting evidence, uncertainty drivers,
 prediction change triggers, prior-outcome reviews, structured insufficient-evidence outcomes,

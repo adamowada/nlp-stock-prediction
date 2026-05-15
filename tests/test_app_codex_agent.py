@@ -169,7 +169,10 @@ def test_codex_adapter_starts_and_resumes_session(tmp_path: Path) -> None:
     assert "full filesystem permissions" in runner.commands[0][-1]
     assert "do not create, edit, delete, format, stage, commit, push" in runner.commands[0][-1]
     assert "Do not reveal private chain-of-thought" in runner.commands[0][-1]
-    assert "Do not provide trading instructions" in runner.commands[0][-1]
+    assert "0.0-1.0 research/evidence scales" in runner.commands[0][-1]
+    assert "source reliability counts" in runner.commands[0][-1]
+    assert "trading-strategy context" in runner.commands[0][-1]
+    assert "Do not place trades, size positions" in runner.commands[0][-1]
     transcript = first.transcript_path.read_text(encoding="utf-8")
     assert "Summarize the selected report" in transcript
     assert "High-level conclusion from Codex." in transcript

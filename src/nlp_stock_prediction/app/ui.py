@@ -12,6 +12,7 @@ from typing import Protocol
 from rich.console import Console, Group
 from rich.json import JSON
 from rich.live import Live
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.table import Table
@@ -352,7 +353,7 @@ class TerminalApp:
             )
             self.state = self.state.upsert_codex_session(session)
             self._save()
-            self.console.print(Panel(result.message, title="Codex"))
+            self.console.print(_codex_response_panel(result.message))
 
     def settings_menu(self) -> None:
         while True:
@@ -552,7 +553,6 @@ class TerminalApp:
                 activity.record_status("Codex turn failed.")
                 live.update(activity.render(done=True))
                 raise
-            activity.record_status("Response ready.")
             live.update(activity.render(done=True))
             return result
 
@@ -669,6 +669,10 @@ def _settings_panel(
     return Panel(body, title="Settings", border_style="green")
 
 
+def _codex_response_panel(message: str) -> Panel:
+    return Panel(Markdown(message), title="Codex")
+
+
 def _relative_or_absolute(repo_root: Path, path: Path) -> Path:
     resolved = path if path.is_absolute() else repo_root / path
     try:
@@ -746,7 +750,7 @@ def _codex_activity_line(event: dict[str, object]) -> str | None:
         if item_type == "reasoning":
             return _reasoning_activity_line(item)
         if item_type == "agent_message":
-            return "Final response drafted." if phase == "Finished" else None
+            return None
         if event_type is not None and event_type.startswith("item."):
             return None
 
@@ -961,7 +965,8 @@ def _format_activity_value(value: object) -> str:
 def _redacted_or_display_value(value: str) -> str:
     if _looks_sensitive_activity_text(value):
         return "<redacted>"
-    return _display_name(value, max_length=_MAX_ACTIVITY_VALUE_LENGTH) or ""
+    compacted = _compact_activity_path(value)
+    return _display_name(compacted or value, max_length=_MAX_ACTIVITY_VALUE_LENGTH) or ""
 
 
 def _first_nonempty_line(value: str) -> str | None:
@@ -981,6 +986,8 @@ def _activity_sentence(prefix: str, detail: str | None) -> str:
     )
     if not trimmed:
         return f"{prefix}."
+    if trimmed.endswith("..."):
+        return f"{prefix}: {trimmed}"
     return f"{prefix}: {trimmed.rstrip('.')}."
 
 
@@ -1018,6 +1025,21 @@ def _display_name(value: str | None, *, max_length: int = _MAX_ACTIVITY_LINE_LEN
     if len(name) > max_length:
         return f"{name[: max_length - 3]}..."
     return name
+
+
+def _compact_activity_path(value: str) -> str | None:
+    normalized = value.replace("\\", "/")
+    if "://" in normalized:
+        return None
+    if "/" not in normalized:
+        return None
+    looks_like_path = ":/" in normalized or normalized.startswith(("/", "./", "../"))
+    if not looks_like_path:
+        return None
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) <= 3:
+        return normalized
+    return ".../" + "/".join(parts[-3:])
 
 
 def _humanize_event_type(value: str) -> str:

@@ -48,7 +48,7 @@ def test_research_terminal_ui_renders_report_dashboard(tmp_path: Path) -> None:
     output = buffer.getvalue()
     assert "Prediction Research Terminal" in output
     assert "research-2026-05-12" in output
-    assert "Evidence-backed research, not trading instructions." in output
+    assert "Evidence-backed prediction research." in output
     assert "report.md" in output
     assert "offline-fixture" in output
     assert "prediction-tsla-volatility-context" in output

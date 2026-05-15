@@ -199,7 +199,7 @@ def test_contradicted_candidate_requires_opposing_evidence() -> None:
 
 
 @pytest.mark.schema
-def test_nested_analysis_fields_reject_trading_instructions() -> None:
+def test_nested_analysis_fields_allow_trading_strategy_language() -> None:
     payload = _report().model_dump(mode="python")
     payload["instrument_sections"][0]["technical_analysis"] = TechnicalAnalysis(
         ticker="TSLA",
@@ -208,8 +208,10 @@ def test_nested_analysis_fields_reject_trading_instructions() -> None:
         evidence=(EvidenceReference(evidence_id="evidence-tsla-1"),),
     ).model_dump(mode="python")
 
-    with pytest.raises(ValidationError, match="trading instructions"):
-        DailyReport.model_validate(payload)
+    report = DailyReport.model_validate(payload)
+
+    assert report.instrument_sections[0].technical_analysis is not None
+    assert report.instrument_sections[0].technical_analysis.trend == "Buy TSLA now"
 
 
 @pytest.mark.schema
@@ -289,21 +291,23 @@ def test_prediction_candidate_requires_change_trigger_context() -> None:
 
 
 @pytest.mark.schema
-def test_prediction_candidate_rejects_trading_instruction_synonyms() -> None:
+def test_prediction_candidate_allows_trading_strategy_synonyms() -> None:
     payload = _candidate().model_dump(mode="python")
     payload["thesis"] = "Investors should accumulate TSLA."
 
-    with pytest.raises(ValidationError, match="trading language"):
-        PredictionCandidate.model_validate(payload)
+    candidate = PredictionCandidate.model_validate(payload)
+
+    assert candidate.thesis == "Investors should accumulate TSLA."
 
 
 @pytest.mark.schema
-def test_prediction_candidate_rejects_lowercase_ticker_trading_instruction() -> None:
+def test_prediction_candidate_allows_lowercase_ticker_trading_language() -> None:
     payload = _candidate().model_dump(mode="python")
     payload["thesis"] = "Buy tsla before the next catalyst."
 
-    with pytest.raises(ValidationError, match="trading language"):
-        PredictionCandidate.model_validate(payload)
+    candidate = PredictionCandidate.model_validate(payload)
+
+    assert candidate.thesis == "Buy tsla before the next catalyst."
 
 
 @pytest.mark.schema

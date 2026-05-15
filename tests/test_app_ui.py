@@ -148,7 +148,7 @@ def test_agent_chat_uses_default_database_when_selected_report_has_no_database(
 ) -> None:
     _prompts, ask = _input(["What can you do?", "/back"])
     output = StringIO()
-    adapter = _FakeCodexAdapter()
+    adapter = _FakeCodexAdapter(message="**Agent response**")
     app = TerminalApp(
         repo_root=tmp_path,
         console=Console(file=output, force_terminal=False, color_system=None),
@@ -181,7 +181,9 @@ def test_agent_chat_uses_default_database_when_selected_report_has_no_database(
     assert request.database_path.exists()
     assert request.report_json_path == report_dir / "report.json"
     assert "Selected report does not have" not in output.getvalue()
-    assert "Agent response" in output.getvalue()
+    rendered = output.getvalue()
+    assert "Agent response" in rendered
+    assert "**Agent response**" not in rendered
 
 
 def test_agent_chat_starts_without_reports(tmp_path: Path) -> None:
@@ -288,11 +290,15 @@ def test_codex_activity_summarizes_shell_command_completion() -> None:
 def test_codex_activity_suppresses_unhelpful_item_lifecycle_events() -> None:
     assert _codex_activity_line({"type": "item.started", "item": {"type": "unknown"}}) is None
     assert _codex_activity_line({"type": "item.completed", "item": {"type": "unknown"}}) is None
+    assert (
+        _codex_activity_line({"type": "item.completed", "item": {"type": "agent_message"}}) is None
+    )
 
 
 class _FakeCodexAdapter:
-    def __init__(self) -> None:
+    def __init__(self, *, message: str = "Agent response") -> None:
         self.requests: list[CodexTurnRequest] = []
+        self.message = message
 
     def health(
         self,
@@ -317,7 +323,7 @@ class _FakeCodexAdapter:
             on_event({"type": "thread.started", "thread_id": "thread-test"})
         return CodexTurnResult(
             session_id="thread-test",
-            message="Agent response",
+            message=self.message,
             transcript_path=transcript_path,
             last_message_path=last_message_path,
             raw_events=(),

@@ -285,7 +285,7 @@ Always include negative coverage for:
 - contradictory evidence;
 - missing baseline comparison;
 - model/tool output that is the only support for a candidate;
-- report language that sounds like trading instruction.
+- report language that confuses research scenarios with app-executed trades or position sizing.
 
 ## Acceptance
 

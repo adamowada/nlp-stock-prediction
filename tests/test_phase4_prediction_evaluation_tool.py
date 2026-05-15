@@ -399,7 +399,7 @@ def test_attach_evaluation_metadata_updates_rendered_candidate_status(tmp_path: 
 
 
 @pytest.mark.unit
-def test_report_authored_fields_reject_trading_instructions_but_source_text_is_evidence(
+def test_report_authored_fields_allow_trading_language_and_source_text_is_evidence(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -418,8 +418,9 @@ def test_report_authored_fields_reject_trading_instructions_but_source_text_is_e
     safe_report = _report(candidate=evaluated_candidate, source=source, artifact=artifact)
 
     assert safe_report.evidence_sources[0].text == "Buy TSLA now, the article claims."
-
-    with pytest.raises(ValidationError, match="imperative trading language"):
+    assert (
         evaluated_candidate.model_copy(
             update={"thesis": "Buy TSLA now because the fixture catalyst is strong."}
-        )
+        ).thesis
+        == "Buy TSLA now because the fixture catalyst is strong."
+    )

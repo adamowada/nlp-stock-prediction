@@ -228,7 +228,8 @@ Use `--live` when:
   reports.
 
 Offline reports are useful, but they are fixture-backed. Live reports are the real provider path.
-Neither mode produces trading instructions.
+Neither mode places trades or manages position sizing; reports may discuss prediction scenarios,
+price levels, and strategy context when the evidence supports it.
 
 ## Instrument Symbols
 

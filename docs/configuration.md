@@ -106,8 +106,10 @@ triggers, prior-outcome reviews, source references, the evidence ledger, and aud
 
 Observed source claims are labeled separately from report-authored scenario analysis and labeled
 inference. Candidate sections preserve evidence-for and evidence-against references, uncertainty
-drivers, dissenting evidence, evaluation quality metadata, and prior-outcome review links without
-using recommendation, position sizing, or trade-instruction framing. Structured insufficient-evidence
+drivers, dissenting evidence, evaluation quality metadata, and prior-outcome review links. Final
+report rendering preserves authored prediction, pricing, recommendation, and strategy language
+instead of failing schema validation on those words; report authorship should still distinguish
+research scenarios from app-executed orders or position sizing. Structured insufficient-evidence
 reports render their blocking reasons, providers, evidence, artifacts, and metadata instead of
 inventing a fallback scenario.
 
