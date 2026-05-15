@@ -249,6 +249,9 @@ that cannot preserve source URLs/permalinks, raw identifiers, timestamps, artifa
 freshness semantics must be rejected or surfaced as not evaluable. Missing credentials, rate limits,
 stale data, malformed payloads, and unavailable live providers remain visible as provider health
 warnings and must not fall back to fixture, dummy, smoke, scaffold, or fabricated inputs.
+Live outcome materialization also preserves cutoff observability: a same-day daily bar is not usable
+as a cutoff baseline until its close would have been observable, and any started attempt that fails
+late validation is finalized as failed in the run graph rather than left running.
 
 ## Evaluation CLI
 

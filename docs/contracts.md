@@ -165,7 +165,9 @@ themselves.
 Implemented ML dataset contracts reject invalid OHLC relationships, normalize date and aware-datetime
 timestamps to one comparable key, preserve the one-bar lookback used by return features in metadata,
 and enforce purged TimesFM split boundaries so labels from one split do not overlap features in the
-next split.
+next split. Raw TimesFM inference uses a separate latest context-only window that reaches the latest
+usable bar instead of reusing a labeled backtest window, and labeled technical-model evaluation rows
+are marked stale when their feature date precedes the report `as_of` date.
 
 ## Report
 
@@ -235,7 +237,10 @@ evaluation window, observed/unavailable/stale/pending state, observed result whe
 outcome evidence, artifact IDs, and limitations. `PredictionOutcomeEvaluation` records the review
 status, quality score when resolved, optional baseline comparison, evidence, artifacts, and
 limitations. Resolved outcome evaluations require an observed outcome plus evidence or artifacts;
-pending, stale, or not-evaluable evaluations must explain their limitations.
+pending, stale, or unavailable outcomes and not-evaluable evaluations must explain their
+limitations. Runtime SQLite persistence enforces the same shape: observed outcomes require an
+observed result and observation time at or after the fixed window end, while non-observed outcomes
+must not carry observed values and must preserve an explicit limitation.
 
 Phase 7 freshness hardening is captured with `EvidenceAgingRecord` and
 `ArtifactFreshnessReview`. `build_prediction_evaluation_target` now freezes these records under
@@ -248,6 +253,8 @@ Date-only market metadata such as `latest_usable_bar` is normalized to a UTC sta
 with an auditable limitation instead of being silently accepted as live proof. The same records can
 be written as separate `artifact_freshness_review` and `evidence_aging_summary` audit artifacts so
 later reports can explain aged-out prior evidence without mutating calibration artifacts.
+External source provenance also rejects observations dated after retrieval even when freshness is
+unknown; unknown freshness is not a license for lookahead timestamps.
 
 Phase 6 calibration can now persist signal-family ablations. A `signal_family_ablation` audit
 artifact records the point-in-time cohort, source target/outcome-evaluation IDs, source signal
@@ -277,10 +284,12 @@ cohort, prediction type, horizon, bin edges, optional signal family, metrics, an
 membership under an explicit `as_of` cutoff. Incompatible cohort shape, lookahead summaries, missing
 source artifacts, insufficient resolved history, or conflicting metric movement become explicit
 `not_evaluable`, `insufficient_history`, or `inconclusive` statuses instead of producing
-overconfident deltas. Provider compatibility notes, evidence aging record IDs, artifact freshness
-review IDs, source calibration artifact IDs, source outcome IDs, and source calibration slice IDs are
-preserved as drift provenance. Reports reference the drift artifact through the audit manifest and
-source references; they do not inline recomputed drift math or adjust prediction scores.
+overconfident deltas. Optional signal-family drift uses family-scoped resolved counts and metrics
+rather than overall calibration deltas. Provider compatibility notes, evidence aging record IDs,
+artifact freshness review IDs, source calibration artifact IDs, source outcome IDs, and source
+calibration slice IDs are preserved as drift provenance. Reports reference the drift artifact through
+the audit manifest and source references; they do not inline recomputed drift math or adjust
+prediction scores.
 
 The public evaluation interface exposes these contracts through phase-neutral CLI and MCP tool
 names. CLI subcommands under `python -m nlp_stock_prediction evaluation` map to real artifact

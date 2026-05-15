@@ -9,8 +9,7 @@ The default suite must be deterministic and offline.
 
 ```sh
 python -m pytest
-python -m pytest -m "not live_api and not live_scraping"
-python -m pytest -m "not live_api and not live_scraping and not codex_smoke"
+python -m pytest -m "not live_api and not live_scraping and not codex_smoke and not llm"
 ruff check .
 ruff format --check .
 mypy .
@@ -92,7 +91,12 @@ Provider/tool tests should use fixtures and mocks by default. They should verify
 - duplicated evidence;
 - source query logging;
 - retryable transport failures;
+- wrapped socket timeouts retaining `timeout` error classification;
 - semantic provider error payloads that must not be cached;
+- corrupt HTML cache entries being treated as cache misses;
+- provider API request limits staying inside each live provider contract while callers can request
+  smaller local result slices;
+- public scraping providers using the shared HTML retry/cache helper rather than one-off fetch paths;
 - source match spans that must align with stored evidence text.
 
 Universe-discovery fixtures should be small and contract-shaped. Current Phase 3 fixtures live under
@@ -222,6 +226,7 @@ python -m pytest tests/test_phase7_live_outcome_materialization.py tests/test_ph
 python -m pytest tests/test_phase7_source_reliability.py tests/test_phase7_provider_playbooks.py tests/test_provider_reliability.py
 python -m pytest tests/test_phase7_calibration_drift.py tests/test_phase6_calibration_summary.py tests/test_phase6_walk_forward_evaluation.py
 python -m pytest tests/test_phase7_public_tooling.py tests/test_phase6_public_tooling.py tests/test_phase4_public_wiring.py
+python -m pytest tests/test_live_validation.py tests/test_phase7_persistence.py tests/test_storage_sqlite.py
 ```
 
 The reliability/playbook gate must verify official API evidence, public-scrape limitations, missing
@@ -238,6 +243,11 @@ metric deltas, insufficient-history and inconclusive statuses, drift artifact pe
 round trips, and report-reference preservation without turning calibration into trading-performance
 claims.
 
+The live-outcome and persistence gates must verify cutoff observability for daily bars, no stale
+backtest labels being treated as current ML signals, failed finalization for started attempts, valid
+observed/non-observed outcome row shapes, live metadata marker tokenization, report artifact/tool-run
+alignment, and finite JSON metadata writes.
+
 ### Cross-Cutting Integrity Gates
 
 Run these when contracts, providers, orchestration, reporting, storage, or local ML behavior changes:
@@ -250,7 +260,8 @@ python -m pytest tests/test_ml_dataset.py tests/test_timesfm_dataset.py tests/te
 ```
 
 These tests pin traceable provenance, evidence-reference integrity, provider degradation and cache
-semantics, report artifact manifests, neutral/contradictory synthesis, and ML leakage controls.
+semantics, report artifact manifests, neutral/contradictory synthesis, TimesFM latest-context
+inference, stale labeled-prediction rejection, and ML leakage controls.
 
 ### Codex Smoke
 

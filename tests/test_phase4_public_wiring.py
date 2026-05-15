@@ -81,6 +81,7 @@ def test_phase4_service_plan_and_mcp_registration_are_not_phase2_dummy_only(
         "render_prediction_report",
     }.issubset(plan_names)
     assert list(PHASE4_MCP_TOOL_NAMES) == server.registered
+    assert "phase4_candidate_synthesis" not in server.registered
     assert "run_dummy_universe_tool" not in server.registered
     assert "run_dummy_analysis_tool" not in server.registered
 

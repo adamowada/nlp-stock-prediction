@@ -160,4 +160,7 @@ the repository write policy before any artifact is indexed.
 Technical ML sidecars are conservative audit inputs. OHLCV timestamps are normalized across date and
 timezone-aware datetime values, impossible OHLC relationships are rejected at the provider contract,
 TimesFM train/validation/test splits include a purge that separates labels from later features, and
-model/evaluation hash mismatches degrade to an unavailable ML signal instead of producing support.
+raw TimesFM live inference uses a latest context-only window rather than a stale labeled test window.
+Model/evaluation hash mismatches degrade to an unavailable ML signal instead of producing support,
+and labeled technical-model predictions become stale sidecars when their feature date is older than
+the report `as_of` date.

@@ -126,8 +126,9 @@ NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py 
   --symbol TSLA
 ```
 
-The legacy-named smoke script starts a local MCP server, exposes the Phase 4 fixture-backed research
-tool suite to Codex, and writes ignored artifacts under local output directories.
+The legacy-named smoke script prepares a fresh ignored SQLite database, starts a local MCP server,
+exposes the Phase 4 research tool suite to Codex, and writes ignored artifacts under local output
+directories.
 
 ## Current Instrument Universe
 
@@ -175,6 +176,14 @@ date-only market artifact metadata deterministically, and keeps aged-out, stale,
 malformed, hash-mismatched, provider-replaced, and future/lookahead artifact states auditable.
 Standalone `artifact_freshness_review` and `evidence_aging_summary` audit artifacts can be written
 and indexed without recomputing or mutating calibration artifacts.
+
+Live outcome materialization uses only live-mode market artifacts, rejects same-day daily closes
+that were not observable at the cutoff, and marks started attempts as failed if a late validation or
+persistence step raises. SQLite outcome rows reject impossible observed/non-observed shapes, report
+artifact index rows must align with their tool run, and JSON metadata writes reject non-finite
+numbers. Provider hardening keeps X API limits within the real provider contract, routes Reddit
+public-page scraping through the shared HTML retry/cache path, and preserves timeout/cache-failure
+classification without substituting fixture or dummy data.
 
 The canonical public interface is phase-neutral:
 
@@ -275,7 +284,7 @@ python -m pip install -e ".[dev]"
 Run the common development checks:
 
 ```sh
-python -m pytest -m "not live_api and not live_scraping"
+python -m pytest -m "not live_api and not live_scraping and not codex_smoke and not llm"
 ruff check .
 ruff format --check .
 mypy .
@@ -300,8 +309,7 @@ The default test suite is deterministic and offline:
 
 ```sh
 python -m pytest
-python -m pytest -m "not live_api and not live_scraping"
-python -m pytest -m "not live_api and not live_scraping and not codex_smoke"
+python -m pytest -m "not live_api and not live_scraping and not codex_smoke and not llm"
 ```
 
 Run focused live groups only when credentials, network access, and explicit opt-in environment
