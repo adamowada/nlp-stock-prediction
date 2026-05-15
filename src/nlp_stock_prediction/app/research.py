@@ -36,10 +36,13 @@ class ResearchRequest:
 
     def to_run_config(self) -> RunConfig:
         offline = self.mode == "offline"
+        symbol = self.symbol.strip().upper()
+        if not symbol:
+            raise ValueError("Symbol is required.")
         return RunConfig(
             run_date=self.run_date,
             output_dir=self.output_dir,
-            symbol=self.symbol.strip().upper(),
+            symbol=symbol,
             fixture_dir=self.fixture_dir,
             cache_dir=self.cache_dir,
             offline=offline,

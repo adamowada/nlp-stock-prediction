@@ -14,7 +14,7 @@ from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
 from nlp_stock_prediction.reporting.json import load_json_report
 
-APP_STATE_SCHEMA_VERSION = "terminal-app-state.v1"
+APP_STATE_SCHEMA_VERSION = "terminal-app-state.v2"
 APP_STATE_PATH = Path("data/app-state.json")
 
 
@@ -198,8 +198,11 @@ class AppState:
             for item in _list(payload.get("codex_sessions"))
             if (session := CodexSessionRecord.from_json(item)) is not None
         )
+        settings = AppSettings.from_json(payload.get("settings"))
+        if payload.get("schema_version") != APP_STATE_SCHEMA_VERSION:
+            settings = _migrate_legacy_settings(settings)
         return cls(
-            settings=AppSettings.from_json(payload.get("settings")),
+            settings=settings,
             reports=_sort_reports(reports),
             selected_report_id=_optional_string(payload.get("selected_report_id")),
             codex_sessions=sessions,
@@ -327,6 +330,12 @@ def _status_summary(report: DailyReport) -> str:
 
 def _sort_reports(reports: tuple[ReportIndexEntry, ...]) -> tuple[ReportIndexEntry, ...]:
     return tuple(sorted(reports, key=lambda entry: entry.generated_at, reverse=True))
+
+
+def _migrate_legacy_settings(settings: AppSettings) -> AppSettings:
+    if settings.default_symbol == "TSLA":
+        return settings.with_updates(default_symbol="")
+    return settings
 
 
 def _database_path_from_report(report: DailyReport) -> Path | None:

@@ -86,8 +86,9 @@ The top-level commands are:
 | `evaluation` | Inspect or write evaluation-hardening artifacts for an existing research database and run ID. |
 
 `python main.py` and `python -m nlp_stock_prediction app` open the same app. The app defaults
-research to today's date, live mode, `reports/`, and the remembered symbol. Report summaries are
-concise by default; provider, evidence, and audit details are available from report submenus.
+research to today's date, live mode, and `reports/`; it asks for a symbol unless one is remembered in
+Settings. Report summaries are concise by default; provider, evidence, and audit details are
+available from report submenus.
 Agent Chat can summarize selected reports and use project MCP tools; independent web-search chat
 context is not audited report evidence unless those tools persist it.
 
@@ -99,9 +100,9 @@ For normal interactive use, start with the app:
 python main.py
 ```
 
-Choose `Research` to run live research with the current date, or choose the advanced Research prompt
-when you need offline fixtures or a historical report date. Choose `Reports` to view generated
-reports inside the app instead of browsing for files manually.
+Choose `Research` to run live research with the current date, enter the symbol when prompted, or use
+the advanced Research prompt when you need offline fixtures or a historical report date. Choose
+`Reports` to view generated reports inside the app instead of browsing for files manually.
 
 The safest first run is an offline report. Offline mode is deterministic and does not use network
 providers or live credentials:

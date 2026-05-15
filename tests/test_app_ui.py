@@ -57,7 +57,7 @@ def test_terminal_app_runs_research_with_today_live_defaults(tmp_path: Path) -> 
         seen_configs.append(config)
         return _fixture_bundle(tmp_path, config)
 
-    _prompts, ask = _input(["1", "1", "6"])
+    _prompts, ask = _input(["1", "1", "MSFT", "6"])
     console_output = StringIO()
     app = TerminalApp(
         repo_root=tmp_path,
@@ -72,6 +72,7 @@ def test_terminal_app_runs_research_with_today_live_defaults(tmp_path: Path) -> 
     assert seen_configs[0].source_mode == "live"
     assert seen_configs[0].live_providers is True
     assert seen_configs[0].offline is False
+    assert seen_configs[0].symbol == "MSFT"
     assert (tmp_path / "data" / "app-state.json").exists()
     assert "Research Complete" in console_output.getvalue()
 

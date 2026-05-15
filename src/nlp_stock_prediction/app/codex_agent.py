@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -87,12 +88,20 @@ class CodexAgentAdapter:
         self._python_executable = python_executable or Path(sys.executable)
 
     def health(self, settings: AppSettings, *, repo_root: Path | None = None) -> CodexHealth:
-        codex_available = shutil.which(settings.codex_executable) is not None
+        codex_path = _resolve_codex_executable(settings.codex_executable)
+        codex_available = codex_path is not None
         mcp_available = _python_has_mcp_server(self._python_executable, repo_root)
         if codex_available and mcp_available:
             return CodexHealth(True, True, "Codex agent chat is ready.")
         if not codex_available:
-            return CodexHealth(False, mcp_available, "Codex CLI is not available on PATH.")
+            return CodexHealth(
+                False,
+                mcp_available,
+                (
+                    "Codex CLI is not available. Add it to PATH, or set the Codex executable "
+                    "in Settings to the full codex.exe path."
+                ),
+            )
         return CodexHealth(
             True,
             False,
@@ -130,7 +139,11 @@ class CodexAgentAdapter:
         )
 
     def _base_command(self, request: CodexTurnRequest) -> list[str]:
-        command = [request.settings.codex_executable, "--ask-for-approval", "never"]
+        codex_executable = (
+            _resolve_codex_executable(request.settings.codex_executable)
+            or request.settings.codex_executable
+        )
+        command = [codex_executable, "--ask-for-approval", "never"]
         if request.settings.enable_web_search:
             command.append("--search")
         if request.settings.codex_model is not None:
@@ -349,6 +362,48 @@ def _path_arg(repo_root: Path, path: Path) -> str:
         return resolved.resolve().relative_to(repo_root.resolve()).as_posix()
     except ValueError:
         return resolved.as_posix()
+
+
+def _resolve_codex_executable(executable: str) -> str | None:
+    configured = executable.strip() or "codex"
+    configured_path = Path(configured)
+    if configured_path.is_absolute() or configured_path.parent != Path("."):
+        return str(configured_path) if configured_path.exists() else None
+
+    path_match = shutil.which(configured)
+    if path_match is not None:
+        return path_match
+
+    if configured.lower() not in {"codex", "codex.exe"}:
+        return None
+    for candidate in _codex_executable_candidates():
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _codex_executable_candidates() -> tuple[Path, ...]:
+    candidates: list[Path] = []
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        local_root = Path(local_app_data)
+        candidates.extend(
+            [
+                local_root / "OpenAI" / "Codex" / "bin" / "codex.exe",
+                local_root / "OpenAI" / "Codex" / "bin" / "codex",
+                local_root / "Microsoft" / "WindowsApps" / "codex.exe",
+            ]
+        )
+
+    for env_name in ("ProgramFiles", "ProgramW6432"):
+        program_files = os.environ.get(env_name)
+        if not program_files:
+            continue
+        windows_apps = Path(program_files) / "WindowsApps"
+        candidates.extend(windows_apps.glob("OpenAI.Codex_*/*/resources/codex.exe"))
+        candidates.extend(windows_apps.glob("OpenAI.Codex_*/*/resources/codex"))
+
+    return tuple(dict.fromkeys(candidates))
 
 
 def _python_has_mcp_server(python_executable: Path, repo_root: Path | None) -> bool:

@@ -9,6 +9,7 @@ from nlp_stock_prediction.app.codex_agent import (
     CodexAgentAdapter,
     CodexTurnRequest,
     ProcessResult,
+    _resolve_codex_executable,
     extract_session_id,
     parse_codex_jsonl,
 )
@@ -93,3 +94,16 @@ def test_codex_adapter_starts_and_resumes_session(tmp_path: Path) -> None:
     transcript = first.transcript_path.read_text(encoding="utf-8")
     assert "Summarize the selected report" in transcript
     assert "High-level conclusion from Codex." in transcript
+
+
+def test_codex_executable_falls_back_to_windows_install_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fallback = tmp_path / "OpenAI" / "Codex" / "bin" / "codex.exe"
+    fallback.parent.mkdir(parents=True)
+    fallback.write_text("", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr("nlp_stock_prediction.app.codex_agent.shutil.which", lambda _: None)
+
+    assert _resolve_codex_executable("codex") == str(fallback)

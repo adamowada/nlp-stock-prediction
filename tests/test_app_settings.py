@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 def test_app_settings_default_to_live_research() -> None:
     settings = AppSettings()
 
-    assert settings.default_symbol == "TSLA"
+    assert settings.default_symbol == ""
     assert settings.default_mode == "live"
     assert settings.output_dir == Path("reports")
     assert settings.cache_dir == Path("cache")
@@ -41,3 +41,14 @@ def test_app_state_persists_only_allow_listed_settings(tmp_path: Path) -> None:
     assert "OPENAI_API_KEY" not in payload["settings"]
     assert "NLP_STOCK_PREDICTION_X_BEARER_TOKEN" not in payload["settings"]
     assert load_app_state(tmp_path).settings.default_symbol == "MSFT"
+
+
+def test_legacy_tsla_default_symbol_is_cleared() -> None:
+    state = AppState.from_json(
+        {
+            "schema_version": "terminal-app-state.v1",
+            "settings": {"default_symbol": "TSLA", "default_mode": "live"},
+        }
+    )
+
+    assert state.settings.default_symbol == ""

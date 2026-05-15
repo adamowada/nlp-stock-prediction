@@ -82,8 +82,9 @@ python main.py
 ```
 
 The app opens a menu for research, report browsing, evaluation, settings, and Codex-agent chat.
-Research defaults to today's date, live providers, `reports/`, and the remembered default symbol.
-Use Settings or the Research advanced prompt when you want offline fixtures or a date override.
+Research defaults to today's date, live providers, and `reports/`; it asks for a symbol unless you
+remember one in Settings. Use Settings or the Research advanced prompt when you want offline fixtures
+or a date override.
 Agent Chat can read selected report artifacts and use project MCP tools; web search outside those
 tools is treated as unaudited chat context, not report evidence.
 

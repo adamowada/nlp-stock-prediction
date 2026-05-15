@@ -19,7 +19,7 @@ class AppSettings:
     accidental API-key-shaped values cannot be persisted as settings.
     """
 
-    default_symbol: str = "TSLA"
+    default_symbol: str = ""
     default_mode: AppMode = "live"
     output_dir: Path = Path("reports")
     cache_dir: Path = Path("cache")
@@ -33,7 +33,7 @@ class AppSettings:
         if not isinstance(payload, dict):
             return cls()
         return cls(
-            default_symbol=_string(payload.get("default_symbol"), cls.default_symbol).upper(),
+            default_symbol=_string(payload.get("default_symbol"), "").upper(),
             default_mode=_mode(payload.get("default_mode")),
             output_dir=Path(_string(payload.get("output_dir"), "reports")),
             cache_dir=Path(_string(payload.get("cache_dir"), "cache")),
@@ -44,7 +44,7 @@ class AppSettings:
         ).normalized()
 
     def normalized(self) -> AppSettings:
-        symbol = self.default_symbol.strip().upper() or "TSLA"
+        symbol = self.default_symbol.strip().upper()
         executable = self.codex_executable.strip() or "codex"
         return AppSettings(
             default_symbol=symbol,

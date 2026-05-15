@@ -131,6 +131,7 @@ class TerminalApp:
             elif choice not in {"1", "run", "default", "defaults"}:
                 self.console.print("[yellow]Choose a listed option.[/yellow]")
                 return
+            request = self._ensure_research_symbol(request)
             request = self._resolve_research_request(request)
             with self.console.status("Running research...", spinner="dots"):
                 bundle = run_research_request(
@@ -350,7 +351,10 @@ class TerminalApp:
             settings = self.state.settings
             if choice == "1":
                 settings = settings.with_updates(
-                    default_symbol=self._ask("Default symbol", default=settings.default_symbol)
+                    default_symbol=self._ask(
+                        "Remembered symbol (blank asks each run)",
+                        default=settings.default_symbol,
+                    )
                 )
             elif choice == "2":
                 mode = (
@@ -452,6 +456,14 @@ class TerminalApp:
         database_path = selected.resolve_database_path(self.repo_root)
         return database_path if database_path is not None else None
 
+    def _ensure_research_symbol(self, request: ResearchRequest) -> ResearchRequest:
+        if request.symbol.strip():
+            return request
+        symbol = self._ask("Symbol", default="").strip().upper()
+        if not symbol:
+            raise ValueError("Symbol is required.")
+        return replace(request, symbol=symbol)
+
     def _resolve_research_request(self, request: ResearchRequest) -> ResearchRequest:
         return ResearchRequest(
             symbol=request.symbol,
@@ -545,6 +557,7 @@ def _home_panel(state: AppState) -> Panel:
     selected_text = (
         f"{selected.symbol} {selected.report_date.isoformat()}" if selected is not None else "none"
     )
+    default_symbol = state.settings.default_symbol or "choose symbol"
     body = "\n".join(
         [
             "1 Research",
@@ -554,7 +567,7 @@ def _home_panel(state: AppState) -> Panel:
             "5 Settings",
             "6 Exit",
             "",
-            f"Default: {state.settings.default_symbol} / {state.settings.default_mode}",
+            f"Default: {default_symbol} / {state.settings.default_mode}",
             f"Selected report: {selected_text}",
         ]
     )
@@ -564,7 +577,7 @@ def _home_panel(state: AppState) -> Panel:
 def _research_panel(request: ResearchRequest) -> Panel:
     body = "\n".join(
         [
-            f"Symbol: {request.symbol}",
+            f"Symbol: {request.symbol or 'choose before run'}",
             f"Date: {request.run_date.isoformat()}",
             f"Mode: {request.mode}",
             f"Output: {request.output_dir}",
@@ -582,7 +595,7 @@ def _settings_panel(
     health = adapter.health(settings, repo_root=repo_root)
     body = "\n".join(
         [
-            f"Default symbol: {settings.default_symbol}",
+            f"Remembered symbol: {settings.default_symbol or 'ask each run'}",
             f"Default mode: {settings.default_mode}",
             f"Output directory: {settings.output_dir}",
             f"Cache directory: {settings.cache_dir}",
