@@ -421,6 +421,7 @@ def review_candidate_artifact_freshness(
     store: SQLiteStore,
     candidate: PredictionCandidateRecord,
     reviewed_at: datetime,
+    repo_root: Path | None = None,
     policy: FreshnessPolicy = DEFAULT_FRESHNESS_POLICY,
 ) -> tuple[ArtifactFreshnessReview, ...]:
     linked_artifacts = store.list_candidate_artifact_links(candidate.candidate_id)
@@ -442,12 +443,23 @@ def review_candidate_artifact_freshness(
         )
     )
     return tuple(
-        review_artifact_freshness(
-            artifact=store.get_artifact(artifact_id),
-            artifact_id=artifact_id,
-            reviewed_at=reviewed_at,
-            policy=policy,
-            source_evidence_ids=tuple(evidence_artifact_ids_by_artifact.get(artifact_id, ())),
+        (
+            review_artifact_file_freshness(
+                artifact=store.get_artifact(artifact_id),
+                artifact_id=artifact_id,
+                reviewed_at=reviewed_at,
+                repo_root=repo_root,
+                policy=policy,
+                source_evidence_ids=tuple(evidence_artifact_ids_by_artifact.get(artifact_id, ())),
+            )
+            if repo_root is not None
+            else review_artifact_freshness(
+                artifact=store.get_artifact(artifact_id),
+                artifact_id=artifact_id,
+                reviewed_at=reviewed_at,
+                policy=policy,
+                source_evidence_ids=tuple(evidence_artifact_ids_by_artifact.get(artifact_id, ())),
+            )
         )
         for artifact_id in artifact_ids
     )

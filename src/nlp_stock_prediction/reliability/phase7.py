@@ -20,13 +20,16 @@ from nlp_stock_prediction.contracts import (
 )
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.evaluation import ProviderFamily
+from nlp_stock_prediction.contracts.live_validation import (
+    require_live_metadata,
+    require_live_retrieval_method,
+    text_is_non_live,
+)
 from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.storage.records import EvidenceRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 _TRACE_FIELDS = frozenset({"source_url", "permalink", "raw_identifier", "raw_snapshot_id"})
-_LIVE_RETRIEVAL_METHODS = frozenset({RetrievalMethod.OFFICIAL_API, RetrievalMethod.PUBLIC_SCRAPE})
-_NON_LIVE_TEXT_MARKERS = ("fixture", "dummy", "smoke")
 
 _REQUIRED_FIELDS_BY_FAMILY: dict[str, tuple[str, ...]] = {
     "market_data": (
@@ -124,6 +127,53 @@ class ProviderReplacementSpec:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class SourceReliabilityPolicy:
+    """Scoring policy for live source reliability notes."""
+
+    minimum_confidence: float = 0.6
+    medium_confidence: float = 0.75
+    high_confidence: float = 0.85
+
+    def rating(
+        self,
+        *,
+        record: EvidenceRecord,
+        provenance: SourceProvenance,
+        freshness_status: FreshnessStatus,
+        observed_at: datetime | None,
+        limitations: tuple[str, ...],
+    ) -> str:
+        confidence = record.extraction_confidence
+        if freshness_status == FreshnessStatus.MISSING:
+            return "unavailable"
+        if confidence is None:
+            return "unknown"
+        if confidence < self.minimum_confidence:
+            return "low"
+        if freshness_status in {FreshnessStatus.STALE, FreshnessStatus.UNKNOWN}:
+            return "low"
+        if provenance.retrieval_method == RetrievalMethod.PUBLIC_SCRAPE:
+            return (
+                "medium"
+                if confidence >= self.high_confidence and observed_at is not None
+                else "low"
+            )
+        if provenance.retrieval_method == RetrievalMethod.OFFICIAL_API:
+            return "high" if confidence >= self.high_confidence and not limitations else "medium"
+        if (
+            record.source_reliability in {"provider_metric", "verified_market_data"}
+            and confidence >= self.high_confidence
+        ):
+            return "high"
+        if confidence >= self.medium_confidence:
+            return "medium"
+        return "low"
+
+
+DEFAULT_SOURCE_RELIABILITY_POLICY = SourceReliabilityPolicy()
+
+
 def build_source_reliability_note(record: EvidenceRecord) -> SourceReliabilityNote:
     """Build a live Phase 7 reliability note from one stored evidence row."""
 
@@ -155,7 +205,7 @@ def build_source_reliability_note(record: EvidenceRecord) -> SourceReliabilityNo
         provenance=provenance,
         freshness_status=freshness_status,
         observed_at=observed_at,
-        limitations=limitations,
+        limitations=tuple(limitations),
     )
     try:
         return SourceReliabilityNote(
@@ -464,19 +514,14 @@ def _require_live_source_evidence(
     record: EvidenceRecord,
     provenance: SourceProvenance,
 ) -> None:
-    for key in ("report_data_mode", "provider_mode", "input_data_mode"):
-        value = record.metadata.get(key)
-        if value is not None and value != "live":
-            raise ValueError(
-                f"live source reliability evidence {record.evidence_id} has non-live {key}"
-            )
-    if provenance.retrieval_method not in _LIVE_RETRIEVAL_METHODS:
-        raise ValueError(
-            "live source reliability evidence must come from an official API or public "
-            f"scraping provider: {provenance.retrieval_method.value}"
-        )
+    require_live_metadata("source reliability evidence", record.evidence_id, record.metadata)
+    require_live_retrieval_method(
+        record_type="source reliability evidence",
+        record_id=record.evidence_id,
+        retrieval_method=provenance.retrieval_method,
+    )
     for value in (record.provider, provenance.provider_name, provenance.source_url or ""):
-        if _text_is_non_live(value):
+        if text_is_non_live(value):
             raise ValueError(
                 f"live source reliability evidence {record.evidence_id} contains non-live "
                 f"provider provenance: {value}"
@@ -510,27 +555,15 @@ def _source_reliability_rating(
     provenance: SourceProvenance,
     freshness_status: FreshnessStatus,
     observed_at: datetime | None,
-    limitations: list[str],
+    limitations: tuple[str, ...],
 ) -> str:
-    confidence = record.extraction_confidence
-    if freshness_status == FreshnessStatus.MISSING:
-        return "unavailable"
-    if confidence is None:
-        return "unknown"
-    if freshness_status in {FreshnessStatus.STALE, FreshnessStatus.UNKNOWN}:
-        return "low"
-    if provenance.retrieval_method == RetrievalMethod.PUBLIC_SCRAPE:
-        return "medium" if confidence >= 0.85 and observed_at is not None else "low"
-    if provenance.retrieval_method == RetrievalMethod.OFFICIAL_API:
-        return "high" if confidence >= 0.85 and not limitations else "medium"
-    if (
-        record.source_reliability in {"provider_metric", "verified_market_data"}
-        and confidence >= 0.85
-    ):
-        return "high"
-    if confidence >= 0.75:
-        return "medium"
-    return "low"
+    return DEFAULT_SOURCE_RELIABILITY_POLICY.rating(
+        record=record,
+        provenance=provenance,
+        freshness_status=freshness_status,
+        observed_at=observed_at,
+        limitations=limitations,
+    )
 
 
 def _source_reliability_note_id(evidence_id: str) -> str:
@@ -539,11 +572,6 @@ def _source_reliability_note_id(evidence_id: str) -> str:
 
 def _stable_digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
-
-
-def _text_is_non_live(value: str) -> bool:
-    normalized = value.strip().lower()
-    return any(marker in normalized for marker in _NON_LIVE_TEXT_MARKERS)
 
 
 _DEFAULT_PROVIDER_REPLACEMENT_SPECS = (
@@ -625,7 +653,9 @@ _DEFAULT_PROVIDER_REPLACEMENT_SPECS = (
 
 
 __all__ = [
+    "DEFAULT_SOURCE_RELIABILITY_POLICY",
     "ProviderReplacementSpec",
+    "SourceReliabilityPolicy",
     "build_provider_compatibility_note",
     "build_provider_replacement_playbook",
     "build_source_reliability_note",

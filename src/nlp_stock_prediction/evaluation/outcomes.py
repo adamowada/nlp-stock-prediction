@@ -82,6 +82,7 @@ def build_prediction_evaluation_target(
     evaluation_window_end: datetime,
     target_id: str | None = None,
     report_date: date | None = None,
+    repo_root: Path | None = None,
 ) -> PredictionEvaluationTarget:
     """Freeze a stored prediction candidate using only records available by cutoff."""
 
@@ -120,6 +121,7 @@ def build_prediction_evaluation_target(
         store=store,
         candidate=candidate,
         reviewed_at=cutoff,
+        repo_root=repo_root,
     )
     freshness_metadata = phase7_freshness_metadata(
         reviewed_at=cutoff,

@@ -33,6 +33,7 @@ from nlp_stock_prediction.evaluation.drift import (
     load_calibration_summary_source,
     write_calibration_drift_check_artifact,
 )
+from nlp_stock_prediction.evaluation.execution import evaluation_artifact_execution
 from nlp_stock_prediction.evaluation.freshness import (
     DEFAULT_FRESHNESS_POLICY,
     ArtifactFreshnessReviewArtifactPayload,
@@ -134,6 +135,7 @@ __all__ = [
     "compute_walk_forward_folds",
     "evaluate_prediction_candidate",
     "evaluate_prediction_outcome",
+    "evaluation_artifact_execution",
     "freshness_limitations",
     "load_calibration_summary_source",
     "materialize_live_prediction_outcome_artifacts",

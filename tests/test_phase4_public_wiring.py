@@ -85,6 +85,17 @@ def test_phase4_service_plan_and_mcp_registration_are_not_phase2_dummy_only(
     assert "run_dummy_analysis_tool" not in server.registered
 
 
+@pytest.mark.unit
+def test_phase4_mcp_start_research_run_modes_are_explicit() -> None:
+    from nlp_stock_prediction.orchestration.phase4_mcp_registration import _mcp_report_data_mode
+
+    assert _mcp_report_data_mode("live") == "live"
+    assert _mcp_report_data_mode("offline") == "offline_fixture"
+    assert _mcp_report_data_mode("offline-fixture") == "offline_fixture"
+    with pytest.raises(ValueError, match="live"):
+        _mcp_report_data_mode("demo")
+
+
 @pytest.mark.integration
 def test_offline_pipeline_runs_real_phase4_public_flow(tmp_path: Path) -> None:
     bundle = generate_daily_report(

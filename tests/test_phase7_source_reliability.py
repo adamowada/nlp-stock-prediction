@@ -56,6 +56,21 @@ def test_official_api_evidence_builds_high_reliability_note() -> None:
     assert note.limitations == ()
 
 
+def test_low_confidence_official_api_evidence_builds_low_reliability_note() -> None:
+    evidence = _evidence_record(
+        provider="alpha-vantage-market-data",
+        source_kind=SourceKind.MARKET_DATA,
+        retrieval_method=RetrievalMethod.OFFICIAL_API,
+        extraction_confidence=0.42,
+        source_reliability="provider_metric",
+    )
+
+    note = build_source_reliability_note(evidence)
+
+    assert note.reliability == "low"
+    assert note.extraction_confidence == 0.42
+
+
 def test_public_scrape_missing_observed_timestamp_builds_limited_note() -> None:
     evidence = _evidence_record(
         provider="reddit-public-page",

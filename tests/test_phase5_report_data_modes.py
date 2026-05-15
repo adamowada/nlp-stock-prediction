@@ -42,6 +42,7 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
     find_non_live_report_input_violations,
     report_data_mode_from_run,
     report_data_mode_metadata,
+    require_live_metadata,
 )
 from nlp_stock_prediction.pipeline import (
     LIVE_ORCHESTRATION_DISABLED_MESSAGE,
@@ -447,6 +448,16 @@ def test_live_boundary_scans_candidate_instrument_provider_records(tmp_path: Pat
         and violation.value == "phase4-fixture-universe"
         for violation in violations
     )
+
+
+@pytest.mark.unit
+def test_shared_live_metadata_validation_rejects_non_live_mode_markers() -> None:
+    with pytest.raises(ValueError, match="non-live source_mode"):
+        require_live_metadata(
+            "market source query",
+            "query-msft",
+            {"report_data_mode": "live", "source_mode": "offline"},
+        )
 
 
 class _UnitLiveProviderFactory(Phase4LiveProviderFactoryProtocol):

@@ -41,6 +41,7 @@ from nlp_stock_prediction.evaluation.drift import (
     CalibrationDriftThresholds,
     write_calibration_drift_check_artifact,
 )
+from nlp_stock_prediction.evaluation.execution import evaluation_artifact_execution
 from nlp_stock_prediction.evaluation.freshness import (
     review_artifact_file_freshness,
     review_evidence_aging,
@@ -74,6 +75,7 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
     LIVE_REPORT_DATA_MODE,
     find_non_live_report_input_violations,
     report_data_mode_from_run,
+    report_data_mode_metadata_for_run_id,
 )
 from nlp_stock_prediction.reliability import (
     build_source_reliability_notes,
@@ -722,6 +724,7 @@ class Phase6Service:
                 "evaluation_window_end",
             ),
             report_date=_parse_optional_date(report_date, "report_date"),
+            repo_root=self.repo_root,
         )
         evidence = tuple(
             EvidenceReference(evidence_id=evidence_id)
@@ -817,17 +820,10 @@ class Phase6Service:
             created_at=created,
             material=source_outcome_evaluation_ids,
         )
-        self._record_successful_tool_run(
-            tool_run_id=tool_run_id,
-            run_id=run_id,
-            tool_name=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
-            tool_version=EVALUATION_OUTCOME_SUMMARY_TOOL_VERSION,
-            at=created,
-            inputs={
-                "run_id": run_id,
-                "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
-            },
-        )
+        inputs: JsonObject = {
+            "run_id": run_id,
+            "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
+        }
         artifact_id = _evaluation_artifact_id(
             prefix="outcome-summary",
             run_id=run_id,
@@ -846,30 +842,51 @@ class Phase6Service:
                 "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
             },
         }
-        artifact = ArtifactIndex.for_directory(
-            store=self.store,
-            repo_root=self.repo_root,
-            base_dir=self._artifact_dir_for_run(run_id=run_id, artifact_dir=required_artifact_dir),
-            created_at=created,
-            produced_by=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
-            tool_run_id=tool_run_id,
-            schema_version="outcome-review-summary-artifact.v1",
-        ).write_json(
-            artifact_id=artifact_id,
-            artifact_type="outcome_review_summary",
-            filename=(
-                "outcome-summary/"
-                f"{slug(run_id, allow_file_safe_punctuation=True)}-{artifact_id[-8:]}.json"
-            ),
-            payload=payload,
-            record_count=len(summaries),
-            metadata={
-                "run_id": run_id,
-                "summary_count": len(summaries),
-                "summary_ids": [summary.summary_id for summary in summaries],
-                "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
-            },
+        artifact_base_dir = self._artifact_dir_for_run(
+            run_id=run_id, artifact_dir=required_artifact_dir
         )
+        with evaluation_artifact_execution(
+            store=self.store,
+            artifact_roots=(artifact_base_dir,),
+            tool_run_id=tool_run_id,
+            run_id=run_id,
+            tool_name=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
+            tool_version=EVALUATION_OUTCOME_SUMMARY_TOOL_VERSION,
+            started_at=created,
+            inputs=inputs,
+        ):
+            artifact = ArtifactIndex.for_directory(
+                store=self.store,
+                repo_root=self.repo_root,
+                base_dir=artifact_base_dir,
+                created_at=created,
+                produced_by=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
+                tool_run_id=tool_run_id,
+                schema_version="outcome-review-summary-artifact.v1",
+            ).write_json(
+                artifact_id=artifact_id,
+                artifact_type="outcome_review_summary",
+                filename=(
+                    "outcome-summary/"
+                    f"{slug(run_id, allow_file_safe_punctuation=True)}-{artifact_id[-8:]}.json"
+                ),
+                payload=payload,
+                record_count=len(summaries),
+                metadata={
+                    "run_id": run_id,
+                    "summary_count": len(summaries),
+                    "summary_ids": [summary.summary_id for summary in summaries],
+                    "source_outcome_evaluation_ids": list(source_outcome_evaluation_ids),
+                },
+            )
+            self._record_successful_tool_run(
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=EVALUATION_OUTCOME_SUMMARY_TOOL_NAME,
+                tool_version=EVALUATION_OUTCOME_SUMMARY_TOOL_VERSION,
+                at=created,
+                inputs=inputs,
+            )
         return {
             "run_id": run_id,
             "tool_run_id": tool_run_id,
@@ -906,26 +923,38 @@ class Phase6Service:
             created_at=reviewed,
             material=artifact_ids,
         )
-        self._record_successful_tool_run(
+        inputs: JsonObject = {"run_id": run_id, "artifact_ids": list(artifact_ids)}
+        artifact_base_dir = self._artifact_dir_for_run(
+            run_id=run_id, artifact_dir=required_artifact_dir
+        )
+        with evaluation_artifact_execution(
+            store=self.store,
+            artifact_roots=(artifact_base_dir,),
             tool_run_id=tool_run_id,
             run_id=run_id,
             tool_name=EVALUATION_STALE_ARTIFACTS_TOOL_NAME,
             tool_version=EVALUATION_STALE_ARTIFACTS_TOOL_VERSION,
-            at=reviewed,
-            inputs={"run_id": run_id, "artifact_ids": list(artifact_ids)},
-        )
-        written = write_artifact_freshness_review_artifact(
-            store=self.store,
-            repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir_for_run(
-                run_id=run_id, artifact_dir=required_artifact_dir
-            ),
-            run_id=run_id,
-            reviews=reviews,
-            created_at=reviewed,
-            tool_run_id=tool_run_id,
-            metadata={"source_artifact_ids": list(artifact_ids)},
-        )
+            started_at=reviewed,
+            inputs=inputs,
+        ):
+            written = write_artifact_freshness_review_artifact(
+                store=self.store,
+                repo_root=self.repo_root,
+                artifact_dir=artifact_base_dir,
+                run_id=run_id,
+                reviews=reviews,
+                created_at=reviewed,
+                tool_run_id=tool_run_id,
+                metadata={"source_artifact_ids": list(artifact_ids)},
+            )
+            self._record_successful_tool_run(
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=EVALUATION_STALE_ARTIFACTS_TOOL_NAME,
+                tool_version=EVALUATION_STALE_ARTIFACTS_TOOL_VERSION,
+                at=reviewed,
+                inputs=inputs,
+            )
         freshness_counts: dict[str, int] = {}
         for review in reviews:
             freshness_counts[review.freshness_status] = (
@@ -963,26 +992,38 @@ class Phase6Service:
             created_at=reviewed,
             material=evidence_ids,
         )
-        self._record_successful_tool_run(
+        inputs: JsonObject = {"run_id": run_id, "evidence_ids": list(evidence_ids)}
+        artifact_base_dir = self._artifact_dir_for_run(
+            run_id=run_id, artifact_dir=required_artifact_dir
+        )
+        with evaluation_artifact_execution(
+            store=self.store,
+            artifact_roots=(artifact_base_dir,),
             tool_run_id=tool_run_id,
             run_id=run_id,
             tool_name=EVALUATION_EVIDENCE_AGING_TOOL_NAME,
             tool_version=EVALUATION_EVIDENCE_AGING_TOOL_VERSION,
-            at=reviewed,
-            inputs={"run_id": run_id, "evidence_ids": list(evidence_ids)},
-        )
-        written = write_evidence_aging_summary_artifact(
-            store=self.store,
-            repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir_for_run(
-                run_id=run_id, artifact_dir=required_artifact_dir
-            ),
-            run_id=run_id,
-            aging_records=reviews,
-            created_at=reviewed,
-            tool_run_id=tool_run_id,
-            metadata={"source_evidence_ids": list(evidence_ids)},
-        )
+            started_at=reviewed,
+            inputs=inputs,
+        ):
+            written = write_evidence_aging_summary_artifact(
+                store=self.store,
+                repo_root=self.repo_root,
+                artifact_dir=artifact_base_dir,
+                run_id=run_id,
+                aging_records=reviews,
+                created_at=reviewed,
+                tool_run_id=tool_run_id,
+                metadata={"source_evidence_ids": list(evidence_ids)},
+            )
+            self._record_successful_tool_run(
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=EVALUATION_EVIDENCE_AGING_TOOL_NAME,
+                tool_version=EVALUATION_EVIDENCE_AGING_TOOL_VERSION,
+                at=reviewed,
+                inputs=inputs,
+            )
         aging_counts: dict[str, int] = {}
         for review in reviews:
             aging_counts[review.age_status] = aging_counts.get(review.age_status, 0) + 1
@@ -1016,28 +1057,40 @@ class Phase6Service:
             created_at=created,
             material=tuple(note.note_id for note in notes),
         )
-        self._record_successful_tool_run(
+        inputs: JsonObject = {
+            "run_id": run_id,
+            "evidence_ids": [record.evidence_id for record in evidence_records],
+        }
+        artifact_base_dir = self._artifact_dir_for_run(
+            run_id=run_id, artifact_dir=required_artifact_dir
+        )
+        with evaluation_artifact_execution(
+            store=self.store,
+            artifact_roots=(artifact_base_dir,),
             tool_run_id=tool_run_id,
             run_id=run_id,
             tool_name=EVALUATION_SOURCE_RELIABILITY_TOOL_NAME,
             tool_version=EVALUATION_SOURCE_RELIABILITY_TOOL_VERSION,
-            at=created,
-            inputs={
-                "run_id": run_id,
-                "evidence_ids": [record.evidence_id for record in evidence_records],
-            },
-        )
-        artifacts = write_source_reliability_note_artifacts(
-            store=self.store,
-            repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir_for_run(
-                run_id=run_id, artifact_dir=required_artifact_dir
-            ),
-            run_id=run_id,
-            tool_run_id=tool_run_id,
-            notes=notes,
-            created_at=created,
-        )
+            started_at=created,
+            inputs=inputs,
+        ):
+            artifacts = write_source_reliability_note_artifacts(
+                store=self.store,
+                repo_root=self.repo_root,
+                artifact_dir=artifact_base_dir,
+                run_id=run_id,
+                tool_run_id=tool_run_id,
+                notes=notes,
+                created_at=created,
+            )
+            self._record_successful_tool_run(
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=EVALUATION_SOURCE_RELIABILITY_TOOL_NAME,
+                tool_version=EVALUATION_SOURCE_RELIABILITY_TOOL_VERSION,
+                at=created,
+                inputs=inputs,
+            )
         reliability_counts: dict[str, int] = {}
         for note in notes:
             reliability_counts[note.reliability] = reliability_counts.get(note.reliability, 0) + 1
@@ -1068,25 +1121,40 @@ class Phase6Service:
             created_at=created,
             material=tuple(playbook.playbook_id for playbook in playbooks),
         )
-        self._record_successful_tool_run(
+        inputs: JsonObject = {
+            "run_id": run_id,
+            "playbook_ids": [item.playbook_id for item in playbooks],
+        }
+        artifact_base_dir = self._artifact_dir_for_run(
+            run_id=run_id, artifact_dir=required_artifact_dir
+        )
+        with evaluation_artifact_execution(
+            store=self.store,
+            artifact_roots=(artifact_base_dir,),
             tool_run_id=tool_run_id,
             run_id=run_id,
             tool_name=EVALUATION_PROVIDER_PLAYBOOK_TOOL_NAME,
             tool_version=EVALUATION_PROVIDER_PLAYBOOK_TOOL_VERSION,
-            at=created,
-            inputs={"run_id": run_id, "playbook_ids": [item.playbook_id for item in playbooks]},
-        )
-        artifacts = write_provider_replacement_playbook_artifacts(
-            store=self.store,
-            repo_root=self.repo_root,
-            artifact_dir=self._artifact_dir_for_run(
-                run_id=run_id, artifact_dir=required_artifact_dir
-            ),
-            run_id=run_id,
-            tool_run_id=tool_run_id,
-            playbooks=playbooks,
-            created_at=created,
-        )
+            started_at=created,
+            inputs=inputs,
+        ):
+            artifacts = write_provider_replacement_playbook_artifacts(
+                store=self.store,
+                repo_root=self.repo_root,
+                artifact_dir=artifact_base_dir,
+                run_id=run_id,
+                tool_run_id=tool_run_id,
+                playbooks=playbooks,
+                created_at=created,
+            )
+            self._record_successful_tool_run(
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=EVALUATION_PROVIDER_PLAYBOOK_TOOL_NAME,
+                tool_version=EVALUATION_PROVIDER_PLAYBOOK_TOOL_VERSION,
+                at=created,
+                inputs=inputs,
+            )
         compatibility_counts: dict[str, int] = {}
         for playbook in playbooks:
             for note in playbook.compatibility_notes:
@@ -1412,7 +1480,7 @@ class Phase6Service:
                 status="successful",
                 started_at=at,
                 completed_at=at,
-                inputs=inputs,
+                inputs={**inputs, **report_data_mode_metadata_for_run_id(self.store, run_id)},
             )
         )
 

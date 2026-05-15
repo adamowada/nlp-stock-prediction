@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Protocol, cast
-from urllib.parse import urlencode
 
 from nlp_stock_prediction.contracts import (
     Direction,
@@ -25,8 +23,12 @@ from nlp_stock_prediction.contracts import (
     PredictionOutcomeStatus,
     PriceBar,
     ProviderStatus,
-    RetrievalMethod,
     SourceKind,
+)
+from nlp_stock_prediction.contracts.live_validation import (
+    require_live_metadata,
+    require_live_retrieval_method,
+    text_is_non_live,
 )
 from nlp_stock_prediction.evaluation.common import aware_utc, digest, slug
 from nlp_stock_prediction.evaluation.outcomes import (
@@ -35,6 +37,14 @@ from nlp_stock_prediction.evaluation.outcomes import (
     write_point_in_time_outcome_evaluation_artifacts,
 )
 from nlp_stock_prediction.ml.ohlcv import calendar_date
+from nlp_stock_prediction.orchestration.live_market_data import (
+    SUPPORTED_LIVE_MARKET_OUTCOME_ASSET_CLASSES,
+    LiveMarketDataSelector,
+    yahoo_finance_chart_source_url,
+)
+from nlp_stock_prediction.orchestration.live_market_data import (
+    LiveMarketDataSelection as LiveOutcomeMarketDataSelection,
+)
 from nlp_stock_prediction.orchestration.phase4_market_data import (
     PHASE4_MARKET_DATA_TOOL_NAME,
     MarketDataToolResult,
@@ -42,18 +52,7 @@ from nlp_stock_prediction.orchestration.phase4_market_data import (
     Phase4MarketDataTool,
     load_phase4_market_data_artifact,
 )
-from nlp_stock_prediction.providers._base import ProviderCache
-from nlp_stock_prediction.providers.candlecharts import (
-    CANDLECHARTS_ENDPOINT,
-    CandlechartsMarketDataProvider,
-)
-from nlp_stock_prediction.providers.market import (
-    ALPHA_VANTAGE_ENDPOINT,
-    AlphaVantageMarketDataProvider,
-    YahooFinanceChartMarketDataProvider,
-    yahoo_finance_chart_source_url,
-)
-from nlp_stock_prediction.providers.scraping import HtmlCache
+from nlp_stock_prediction.providers.market import YahooFinanceChartMarketDataProvider
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
     EvaluationAttemptRecord,
@@ -65,26 +64,7 @@ from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 PHASE7_LIVE_OUTCOME_TOOL_NAME = "phase7_live_outcome_materialization"
 PHASE7_LIVE_OUTCOME_TOOL_VERSION = "phase7.live-outcome-materialization.v1"
-SUPPORTED_LIVE_OUTCOME_ASSET_CLASSES = frozenset({"stock", "etf"})
-
-_ALPHA_VANTAGE_API_KEY_ENVS = (
-    "NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY",
-    "ALPHA_VANTAGE_API_KEY",
-    "MARKET_DATA_ALPHA_VANTAGE_API_KEY",
-)
-_LIVE_RETRIEVAL_METHODS = frozenset({RetrievalMethod.OFFICIAL_API, RetrievalMethod.PUBLIC_SCRAPE})
-_NON_LIVE_TEXT_MARKERS = ("fixture", "dummy", "smoke")
-
-
-@dataclass(frozen=True)
-class LiveOutcomeMarketDataSelection:
-    """One real market-data source the materializer may call."""
-
-    provider: MarketDataProvider
-    source_url: str | Path | None = None
-    role: str = "primary"
-    retrieval_method: RetrievalMethod | None = None
-    options: JsonObject = field(default_factory=dict)
+SUPPORTED_LIVE_OUTCOME_ASSET_CLASSES = SUPPORTED_LIVE_MARKET_OUTCOME_ASSET_CLASSES
 
 
 class LiveOutcomeProviderFactory(Protocol):
@@ -112,70 +92,14 @@ class DefaultLiveOutcomeProviderFactory:
         symbol: str,
         instrument: InstrumentRecord,
     ) -> tuple[LiveOutcomeMarketDataSelection, ...]:
-        if instrument.asset_class.strip().lower() not in SUPPORTED_LIVE_OUTCOME_ASSET_CLASSES:
-            return ()
-        normalized_symbol = _normalize_symbol(symbol)
-        selections: list[LiveOutcomeMarketDataSelection] = []
-        alpha_key = self._first_env(*_ALPHA_VANTAGE_API_KEY_ENVS)
-        selections.append(
-            LiveOutcomeMarketDataSelection(
-                provider=AlphaVantageMarketDataProvider(
-                    api_key=alpha_key,
-                    cache=self._json_cache(),
-                    now=self._provider_now,
-                ),
-                source_url=_alpha_vantage_source_url(normalized_symbol),
-                role="primary",
-                retrieval_method=RetrievalMethod.OFFICIAL_API,
-            )
+        return LiveMarketDataSelector(
+            cache_root=self.cache_root,
+            env=self.env,
+            now=self.now,
+        ).outcome_selections(
+            symbol=symbol,
+            asset_class=instrument.asset_class,
         )
-        selections.append(
-            LiveOutcomeMarketDataSelection(
-                provider=YahooFinanceChartMarketDataProvider(
-                    cache=self._json_cache(),
-                    now=self._provider_now,
-                ),
-                source_url=_yahoo_finance_chart_source_url(normalized_symbol),
-                role="fallback",
-                retrieval_method=RetrievalMethod.PUBLIC_SCRAPE,
-            )
-        )
-        selections.append(
-            LiveOutcomeMarketDataSelection(
-                provider=CandlechartsMarketDataProvider(
-                    allow_live=True,
-                    cache=self._html_cache(),
-                    now=self._provider_now,
-                ),
-                source_url=_candlecharts_source_url(normalized_symbol),
-                role="fallback",
-                retrieval_method=RetrievalMethod.PUBLIC_SCRAPE,
-            )
-        )
-        return tuple(selections)
-
-    def _json_cache(self) -> ProviderCache | None:
-        if self.cache_root is None:
-            return None
-        return ProviderCache(self.cache_root / "json")
-
-    def _html_cache(self) -> HtmlCache | None:
-        if self.cache_root is None:
-            return None
-        return HtmlCache(self.cache_root / "html")
-
-    def _first_env(self, *names: str) -> str | None:
-        env = os.environ if self.env is None else self.env
-        for name in names:
-            value = env.get(name)
-            if value is not None and value.strip():
-                return value.strip()
-        return None
-
-    def _provider_now(self) -> datetime:
-        if self.now is None:
-            return datetime.now(UTC)
-        return self.now()
 
 
 @dataclass(frozen=True)
@@ -255,6 +179,7 @@ def materialize_live_prediction_outcome_artifacts(
         evaluation_window_start=evaluation_window_start,
         evaluation_window_end=evaluation_window_end,
         report_date=report_date,
+        repo_root=repo_root,
     )
     candidate = store.get_prediction_candidate(candidate_id)
     if candidate is None:
@@ -813,8 +738,8 @@ def _load_live_market_artifact(
             "live market artifact tool run_id must match the evaluation target run_id: "
             f"{tool_run.run_id} != {target.run_id}"
         )
-    _require_live_metadata("market artifact", artifact.artifact_id, artifact.metadata)
-    _require_live_metadata("market tool run", tool_run.tool_run_id, tool_run.inputs)
+    require_live_metadata("market artifact", artifact.artifact_id, artifact.metadata)
+    require_live_metadata("market tool run", tool_run.tool_run_id, tool_run.inputs)
     path = artifact.path if artifact.path.is_absolute() else repo_root / artifact.path
     if not path.exists():
         raise ValueError(f"live market artifact file is missing: {path.as_posix()}")
@@ -853,11 +778,11 @@ def _validate_live_market_payload(
         raise ValueError(
             "live market artifact payload artifact_id must match the indexed artifact row."
         )
-    if payload.provenance.retrieval_method not in _LIVE_RETRIEVAL_METHODS:
-        raise ValueError(
-            "live market artifact must come from an official API or public scraping provider: "
-            f"{payload.provenance.retrieval_method.value}"
-        )
+    require_live_retrieval_method(
+        record_type="live market artifact",
+        record_id=artifact.artifact_id,
+        retrieval_method=payload.provenance.retrieval_method,
+    )
     if not payload.provenance.source_query_id:
         raise ValueError(f"live market artifact is missing source_query_id: {artifact.artifact_id}")
     if not payload.provenance.url or not payload.provenance.url.startswith(("http://", "https://")):
@@ -868,7 +793,7 @@ def _validate_live_market_payload(
         raise ValueError(
             f"live market artifact is missing raw provider identifiers: {artifact.artifact_id}"
         )
-    if _text_is_non_live(payload.provenance.provider_name):
+    if text_is_non_live(payload.provenance.provider_name):
         raise ValueError(
             f"live market artifact provider is not allowed: {payload.provenance.provider_name}"
         )
@@ -882,7 +807,7 @@ def _validate_live_market_payload(
         raise ValueError("live market artifact source query URL does not match payload URL")
     if source_query.provider != payload.provenance.provider_name:
         raise ValueError("live market artifact source query provider does not match payload")
-    _require_live_metadata(
+    require_live_metadata(
         "market source query", source_query.source_query_id, source_query.metadata
     )
 
@@ -941,29 +866,6 @@ def _attempt_identity(
             )
         )
     )
-
-
-def _require_live_metadata(record_type: str, record_id: str, metadata: JsonObject) -> None:
-    for key in ("report_data_mode", "provider_mode", "input_data_mode"):
-        value = metadata.get(key)
-        if value is not None and value != "live":
-            raise ValueError(f"{record_type} {record_id} has non-live {key}: {value!r}")
-    for key, value in metadata.items():
-        if isinstance(value, str) and _text_is_non_live(value):
-            raise ValueError(f"{record_type} {record_id} contains non-live metadata: {key}")
-        if isinstance(value, dict):
-            _require_live_metadata(record_type, record_id, value)
-        elif isinstance(value, list | tuple):
-            for item in value:
-                if isinstance(item, dict):
-                    _require_live_metadata(record_type, record_id, item)
-                elif isinstance(item, str) and _text_is_non_live(item):
-                    raise ValueError(f"{record_type} {record_id} contains non-live metadata: {key}")
-
-
-def _text_is_non_live(value: str) -> bool:
-    normalized = value.strip().lower()
-    return any(marker in normalized for marker in _NON_LIVE_TEXT_MARKERS)
 
 
 def _observed_result_for_direction(
@@ -1056,24 +958,6 @@ def _final_attempt_status(status: PredictionOutcomeStatus) -> str:
     if status == PredictionOutcomeStatus.STALE:
         return "stale"
     return "blocked"
-
-
-def _alpha_vantage_source_url(symbol: str) -> str:
-    return f"{ALPHA_VANTAGE_ENDPOINT}?" + urlencode(
-        {
-            "function": "TIME_SERIES_DAILY_ADJUSTED",
-            "symbol": symbol,
-            "outputsize": "compact",
-        }
-    )
-
-
-def _candlecharts_source_url(symbol: str) -> str:
-    return f"{CANDLECHARTS_ENDPOINT}?{urlencode({'symbol': symbol})}"
-
-
-def _yahoo_finance_chart_source_url(symbol: str) -> str:
-    return yahoo_finance_chart_source_url(symbol)
 
 
 __all__ = [

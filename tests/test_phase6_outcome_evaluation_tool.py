@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -266,6 +267,35 @@ def test_build_prediction_evaluation_target_freezes_cutoff_state(tmp_path: Path)
         "evidence-support",
         "evidence-with-late-artifact",
     ]
+
+
+@pytest.mark.unit
+def test_build_prediction_evaluation_target_reviews_current_artifact_file_state(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    artifact_path = tmp_path / "reports" / "run-phase6-outcome" / "audit" / "technicals.json"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_text('{"schema_version":"technical-package.v1"}\n', encoding="utf-8")
+
+    target = build_prediction_evaluation_target(
+        store=store,
+        run_id=RUN_ID,
+        candidate_id="candidate-msft-swing",
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        repo_root=tmp_path,
+    )
+
+    phase7_freshness = cast(dict[str, object], target.metadata["phase7_freshness"])
+    reviews = cast(list[dict[str, object]], phase7_freshness["artifact_freshness_reviews"])
+    cutoff_review = next(
+        review for review in reviews if review["artifact_id"] == "artifact-technical-cutoff"
+    )
+
+    assert cutoff_review["freshness_status"] == "hash_mismatch"
+    assert any("artifact-technical-cutoff: hash_mismatch" in item for item in target.limitations)
 
 
 @pytest.mark.unit

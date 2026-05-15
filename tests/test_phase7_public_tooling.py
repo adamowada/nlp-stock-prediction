@@ -307,6 +307,38 @@ def test_phase7_public_writer_tools_require_explicit_artifact_dir(tmp_path: Path
 
 
 @pytest.mark.unit
+def test_phase7_public_writer_tool_records_failure_after_artifact_write_error(
+    tmp_path: Path,
+) -> None:
+    service = _persist_outcome_evaluation(tmp_path)
+    audit_dir = tmp_path / "reports" / RUN_ID / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "evidence-aging").write_text("block nested artifact directory", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        service.evaluation_evidence_aging(
+            run_id=RUN_ID,
+            artifact_dir=audit_dir.as_posix(),
+            reviewed_at=EVALUATED_AT.isoformat(),
+        )
+
+    tool_runs = [
+        record
+        for record in service.store.list_tool_runs_for_run(RUN_ID)
+        if record.tool_name == "evaluation_evidence_aging"
+    ]
+    assert [record.status for record in tool_runs] == ["failed"]
+    assert tool_runs[0].inputs["report_data_mode"] == "live"
+    assert not any(
+        artifact.tool_run_id == tool_runs[0].tool_run_id
+        for artifact in service.store.list_artifacts_for_run(RUN_ID)
+    )
+    assert (audit_dir / "evidence-aging").read_text(encoding="utf-8") == (
+        "block nested artifact directory"
+    )
+
+
+@pytest.mark.unit
 def test_phase7_public_service_writes_source_reliability_notes(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _persist_live_evidence(store)

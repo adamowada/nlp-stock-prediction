@@ -18,7 +18,9 @@ from nlp_stock_prediction.contracts import (
     WarningSeverity,
 )
 from nlp_stock_prediction.reliability.phase7 import (
+    DEFAULT_SOURCE_RELIABILITY_POLICY,
     ProviderReplacementSpec,
+    SourceReliabilityPolicy,
     build_provider_compatibility_note,
     build_provider_replacement_playbook,
     build_source_reliability_note,
@@ -604,6 +606,7 @@ def result_from_exception(
 
 __all__ = [
     "DEFAULT_RETRY_POLICY",
+    "DEFAULT_SOURCE_RELIABILITY_POLICY",
     "ProviderAuthenticationError",
     "ProviderConfigurationError",
     "ProviderError",
@@ -616,6 +619,7 @@ __all__ = [
     "ProviderTimeoutError",
     "ProviderUpstreamError",
     "RetryPolicy",
+    "SourceReliabilityPolicy",
     "build_provider_compatibility_note",
     "build_provider_replacement_playbook",
     "build_source_reliability_note",
