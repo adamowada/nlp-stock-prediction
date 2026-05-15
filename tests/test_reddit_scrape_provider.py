@@ -20,7 +20,7 @@ from nlp_stock_prediction.providers.reddit_scrape import (
     RedditPublicPageProvider,
     StaticHtmlTransport,
 )
-from nlp_stock_prediction.providers.scraping import HtmlResponse
+from nlp_stock_prediction.providers.scraping import HtmlCache, HtmlResponse
 
 RUN_DATE = date(2026, 5, 11)
 FETCHED_AT = datetime(2026, 5, 11, 16, 0, tzinfo=UTC)
@@ -112,6 +112,23 @@ def test_public_page_provider_discovers_valid_six_ticker_card_from_fixture_html(
     assert result.data.candidates[0].provenance.retrieval_method == RetrievalMethod.PUBLIC_SCRAPE
     assert result.data.candidates[0].provenance.source_url == SUBREDDIT_URL
     assert result.warnings == ()
+
+
+@pytest.mark.contract
+def test_public_page_provider_reuses_shared_html_cache(tmp_path: Path) -> None:
+    transport = _CountingTransport(_html("public_page_devvit_card.html"))
+    provider = RedditPublicPageProvider(
+        transport=transport,
+        now=lambda: FETCHED_AT,
+        cache=HtmlCache(tmp_path),
+    )
+
+    first = provider.discover_tickers(_ticker_request())
+    second = provider.discover_tickers(_ticker_request())
+
+    assert first.status == ProviderStatus.OK
+    assert second.status == ProviderStatus.OK
+    assert transport.calls == 1
 
 
 @pytest.mark.contract

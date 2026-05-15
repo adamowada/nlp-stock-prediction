@@ -183,6 +183,28 @@ def test_apply_fundamental_agent_result_attaches_report_sidecar() -> None:
     assert "Fundamental agent:" in integrated.summary
 
 
+def test_apply_fundamental_agent_result_marks_close_conflict_mixed_without_confidence_boost() -> (
+    None
+):
+    provider = FixtureFundamentalAgentProvider(
+        payload=_valid_payload(signal="conflicts", confidence=0.62),
+        provider_name="fundamental-agent",
+        fetched_at=NOW,
+    )
+    result = provider.analyze_fundamentals(_request())
+    analysis = FundamentalAnalysis(
+        ticker="NVDA",
+        summary="Baseline fundamental analysis supports the setup.",
+        signal=AnalysisSignal.SUPPORTS,
+        confidence=0.56,
+    )
+
+    integrated = apply_fundamental_agent_result(analysis, result)
+
+    assert integrated.signal == AnalysisSignal.MIXED
+    assert integrated.confidence == 0.6
+
+
 def test_fixture_fundamental_agent_rejects_missing_claim_citations() -> None:
     payload = _valid_payload(
         claims=[

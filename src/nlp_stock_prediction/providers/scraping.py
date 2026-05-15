@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -94,7 +95,12 @@ class UrllibHtmlTransport:
                 error_type="http_error",
             ) from exc
         except URLError as exc:
-            raise ProviderTransportError(str(exc), retryable=True, error_type="url_error") from exc
+            error_type = (
+                "timeout"
+                if isinstance(getattr(exc, "reason", None), TimeoutError | socket.timeout)
+                else "url_error"
+            )
+            raise ProviderTransportError(str(exc), retryable=True, error_type=error_type) from exc
         except TimeoutError as exc:
             raise ProviderTransportError(str(exc), retryable=True, error_type="timeout") from exc
         except (OSError, UnicodeDecodeError, LookupError) as exc:
@@ -145,7 +151,10 @@ class HtmlCache:
         path = self.path_for(run_date, ticker, source, cache_key)
         if not path.exists():
             return None
-        html = path.read_text(encoding="utf-8")
+        try:
+            html = path.read_text(encoding="utf-8")
+        except OSError, UnicodeDecodeError:
+            return None
         metadata = _load_cache_metadata(self.metadata_path_for(run_date, ticker, source, cache_key))
         content_hash = content_sha256_for_html(html)
         raw_snapshot_id = _metadata_text(metadata, "raw_snapshot_id") or raw_snapshot_id_for_html(
@@ -489,7 +498,7 @@ def _load_cache_metadata(path: Path) -> dict[str, object]:
         return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except OSError, json.JSONDecodeError:
         return {}
     return raw if isinstance(raw, dict) else {}
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from nlp_stock_prediction.contracts.base import JsonObject, JsonValue
 from nlp_stock_prediction.contracts.enums import RetrievalMethod
 
@@ -66,8 +68,7 @@ def require_live_retrieval_method(
 
 
 def text_is_non_live(value: str) -> bool:
-    normalized = value.strip().lower()
-    return any(marker in normalized for marker in NON_LIVE_TEXT_MARKERS)
+    return _text_contains_non_live_token(value)
 
 
 def _non_live_text_fields(metadata: JsonObject) -> list[tuple[str, str]]:
@@ -82,7 +83,7 @@ def _non_live_text_value_fields(field: str, value: JsonValue) -> list[tuple[str,
         field_key = _field_key(field)
         if field_key in LIVE_METADATA_MODE_KEYS and _mode_value_is_non_live(value):
             return [(field, value)]
-        if text_is_non_live(value):
+        if _text_contains_non_live_token(value):
             return [(field, value)]
     if isinstance(value, dict):
         return [
@@ -106,6 +107,11 @@ def _field_key(field: str) -> str:
 def _mode_value_is_non_live(value: str) -> bool:
     normalized = value.strip().lower().replace("-", "_")
     return normalized in NON_LIVE_MODE_MARKERS
+
+
+def _text_contains_non_live_token(value: str) -> bool:
+    tokens = {token for token in re.split(r"[^a-z0-9_]+", value.strip().lower()) if token}
+    return any(marker in tokens for marker in NON_LIVE_TEXT_MARKERS)
 
 
 __all__ = [

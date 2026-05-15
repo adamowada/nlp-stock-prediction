@@ -60,7 +60,7 @@ def test_codex_smoke_command_exposes_mcp_server_and_search(tmp_path: Path) -> No
     assert _option_value(command, "--output-last-message") == str(config.final_message_path)
     assert "Do not import project modules directly" in command[-1]
     assert "phase4_universe_discovery" in command[-1]
-    assert "phase4_candidate_synthesis" in command[-1]
+    assert "phase4_prediction_candidate_synthesis" in command[-1]
     assert "phase4_prediction_evaluation" in command[-1]
     assert "render_prediction_report" in command[-1]
 
@@ -175,7 +175,7 @@ def test_codex_smoke_prepares_isolated_database(tmp_path: Path) -> None:
 
     smoke.prepare_clean_database(config)
 
-    assert not database_path.exists()
+    assert database_path.exists()
     assert not database_path.with_name(f"{database_path.name}-wal").exists()
 
 
@@ -235,10 +235,7 @@ def test_codex_smoke_disables_bytecode_writes_for_subprocess(
         "nlp_stock_prediction.orchestration.codex_smoke.shutil.which",
         lambda _name: "codex",
     )
-    monkeypatch.setattr(
-        "nlp_stock_prediction.orchestration.codex_smoke.importlib.util.find_spec",
-        lambda _name: object(),
-    )
+    monkeypatch.setattr(smoke, "_python_has_mcp", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(smoke, "prepare_clean_run_dir", lambda _config: None)
     monkeypatch.setattr(smoke, "prepare_clean_database", lambda _config: None)
     monkeypatch.setattr(smoke, "require_clean_tracked_status", lambda _repo_root: "")

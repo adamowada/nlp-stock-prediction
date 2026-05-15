@@ -83,7 +83,10 @@ def test_top_level_package_and_module_entrypoint_import_cleanly() -> None:
                 "import nlp_stock_prediction; "
                 "import nlp_stock_prediction.__main__ as entrypoint; "
                 "import nlp_stock_prediction.cli as cli; "
-                "assert nlp_stock_prediction.__version__ == '0.1.0'; "
+                "import pathlib, tomllib; "
+                "expected = tomllib.loads(pathlib.Path('pyproject.toml').read_text())"
+                "['project']['version']; "
+                "assert nlp_stock_prediction.__version__ == expected; "
                 "assert entrypoint.main is cli.main"
             ),
         ],

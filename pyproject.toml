@@ -38,7 +38,13 @@ packages = ["src/nlp_stock_prediction"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = ["--strict-config", "--strict-markers", "-ra"]
+addopts = [
+  "--strict-config",
+  "--strict-markers",
+  "-ra",
+  "-m",
+  "not live_api and not live_scraping and not codex_smoke and not llm",
+]
 markers = [
   "unit: Pure logic and small modules.",
   "schema: Pydantic models and serialization.",

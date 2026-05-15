@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -293,15 +294,30 @@ def materialize_live_prediction_outcome_artifacts(
             if inspection.status == PredictionOutcomeStatus.STALE:
                 outcome_status = PredictionOutcomeStatus.STALE
     else:
-        selections = (
-            provider_factory or DefaultLiveOutcomeProviderFactory(now=lambda: evaluated)
-        ).market_data_selections(
-            symbol=target.symbol,
-            instrument=instrument,
-        )
-        if not selections:
+        selections = provider_factory or DefaultLiveOutcomeProviderFactory(now=lambda: evaluated)
+        try:
+            selected_providers = selections.market_data_selections(
+                symbol=target.symbol,
+                instrument=instrument,
+            )
+        except Exception as exc:
+            _record_live_outcome_failure(
+                store=store,
+                attempt_id=attempt_id,
+                run_id=run_id,
+                source_run_id=candidate.run_id,
+                tool_run_id=tool_run_id,
+                target=target,
+                started_at=created,
+                completed_at=evaluated,
+                message=f"Live outcome provider selection failed: {exc}",
+                provider_attempts=tuple(provider_attempts),
+                market_artifact_ids=tuple(observed_market_artifact_ids),
+            )
+            raise
+        if not selected_providers:
             limitations.append("No live market-data providers are configured for this instrument.")
-        for index, selection in enumerate(selections, start=1):
+        for index, selection in enumerate(selected_providers, start=1):
             try:
                 tool_result = _fetch_market_artifact(
                     store=store,
@@ -358,12 +374,28 @@ def materialize_live_prediction_outcome_artifacts(
     result_value: float | None = None
     baseline_value: float | None = None
     if observation is not None:
-        _record_outcome_evidence(
-            store=store,
-            tool_run_id=tool_run_id,
-            target=target,
-            observation=observation,
-        )
+        try:
+            _record_outcome_evidence(
+                store=store,
+                tool_run_id=tool_run_id,
+                target=target,
+                observation=observation,
+            )
+        except Exception as exc:
+            _record_live_outcome_failure(
+                store=store,
+                attempt_id=attempt_id,
+                run_id=run_id,
+                source_run_id=candidate.run_id,
+                tool_run_id=tool_run_id,
+                target=target,
+                started_at=created,
+                completed_at=evaluated,
+                message=f"Live outcome evidence recording failed: {exc}",
+                provider_attempts=tuple(provider_attempts),
+                market_artifact_ids=tuple(observed_market_artifact_ids),
+            )
+            raise
         evidence_ids = (observation.evidence_id,)
         observed_result = observation.observed_result
         observed_at = observation.observed_at
@@ -378,48 +410,64 @@ def materialize_live_prediction_outcome_artifacts(
             "No live market-data artifact contained both cutoff and post-window bars."
         )
 
-    written = write_point_in_time_outcome_evaluation_artifacts(
-        store=store,
-        repo_root=repo_root,
-        artifact_dir=artifact_dir,
-        run_id=run_id,
-        target=target,
-        status=outcome_status,
-        observed_result=observed_result,
-        observed_at=observed_at,
-        result_summary=result_summary,
-        result_value=result_value,
-        baseline_value=baseline_value,
-        outcome_evidence=tuple(
-            EvidenceReference(evidence_id=evidence_id) for evidence_id in evidence_ids
-        ),
-        market_artifact_ids=tuple(dict.fromkeys(observed_market_artifact_ids)),
-        limitations=tuple(dict.fromkeys(limitations)),
-        metadata=cast(
-            JsonObject,
-            {
-                "source": PHASE7_LIVE_OUTCOME_TOOL_NAME,
-                "provider_attempts": provider_attempts,
-            },
-        ),
-        created_at=created,
-        evaluated_at=evaluated,
-        tool_run_id=tool_run_id,
-        record_tool_run=False,
-        evaluation_attempt_id=attempt_id,
-        outcome_id=outcome_id,
-        outcome_evaluation_id=outcome_evaluation_id,
-        outcome_artifact_filename=(
-            "prediction-outcomes/live/"
-            f"{slug(candidate_id, fallback='candidate', allow_file_safe_punctuation=True)}-"
-            f"{run_identity[:8]}.json"
-        ),
-        outcome_evaluation_artifact_filename=(
-            "prediction-outcome-evaluations/live/"
-            f"{slug(candidate_id, fallback='candidate', allow_file_safe_punctuation=True)}-"
-            f"{run_identity[:8]}.json"
-        ),
-    )
+    try:
+        written = write_point_in_time_outcome_evaluation_artifacts(
+            store=store,
+            repo_root=repo_root,
+            artifact_dir=artifact_dir,
+            run_id=run_id,
+            target=target,
+            status=outcome_status,
+            observed_result=observed_result,
+            observed_at=observed_at,
+            result_summary=result_summary,
+            result_value=result_value,
+            baseline_value=baseline_value,
+            outcome_evidence=tuple(
+                EvidenceReference(evidence_id=evidence_id) for evidence_id in evidence_ids
+            ),
+            market_artifact_ids=tuple(dict.fromkeys(observed_market_artifact_ids)),
+            limitations=tuple(dict.fromkeys(limitations)),
+            metadata=cast(
+                JsonObject,
+                {
+                    "source": PHASE7_LIVE_OUTCOME_TOOL_NAME,
+                    "provider_attempts": provider_attempts,
+                },
+            ),
+            created_at=created,
+            evaluated_at=evaluated,
+            tool_run_id=tool_run_id,
+            record_tool_run=False,
+            evaluation_attempt_id=attempt_id,
+            outcome_id=outcome_id,
+            outcome_evaluation_id=outcome_evaluation_id,
+            outcome_artifact_filename=(
+                "prediction-outcomes/live/"
+                f"{slug(candidate_id, fallback='candidate', allow_file_safe_punctuation=True)}-"
+                f"{run_identity[:8]}.json"
+            ),
+            outcome_evaluation_artifact_filename=(
+                "prediction-outcome-evaluations/live/"
+                f"{slug(candidate_id, fallback='candidate', allow_file_safe_punctuation=True)}-"
+                f"{run_identity[:8]}.json"
+            ),
+        )
+    except Exception as exc:
+        _record_live_outcome_failure(
+            store=store,
+            attempt_id=attempt_id,
+            run_id=run_id,
+            source_run_id=candidate.run_id,
+            tool_run_id=tool_run_id,
+            target=target,
+            started_at=created,
+            completed_at=evaluated,
+            message=f"Live outcome artifact persistence failed: {exc}",
+            provider_attempts=tuple(provider_attempts),
+            market_artifact_ids=tuple(observed_market_artifact_ids),
+        )
+        raise
 
     final_status = _final_attempt_status(outcome_status)
     _record_attempt(
@@ -563,12 +611,11 @@ def _inspect_market_payload(
     for warning in artifact_payload.warnings:
         limitations.append(f"{provider} warning: {warning.message}")
 
-    evaluated_date = evaluated_at.date()
     bars = tuple(
         bar
         for bar in artifact_payload.bars
         if _normalize_symbol(bar.ticker) == _normalize_symbol(target.symbol)
-        and calendar_date(bar.timestamp) <= evaluated_date
+        and _bar_observed_at(bar) <= evaluated_at
     )
     if not bars:
         return _InspectionResult(
@@ -581,8 +628,15 @@ def _inspect_market_payload(
 
     cutoff_date = target.point_in_time_cutoff.date()
     result_date = target.evaluation_window_end.date()
-    baseline_candidates = [bar for bar in bars if calendar_date(bar.timestamp) <= cutoff_date]
-    result_candidates = [bar for bar in bars if calendar_date(bar.timestamp) >= result_date]
+    baseline_candidates = [
+        bar for bar in bars if _bar_observed_at(bar) <= target.point_in_time_cutoff
+    ]
+    result_candidates = [
+        bar
+        for bar in bars
+        if calendar_date(bar.timestamp) >= result_date
+        and _bar_observed_at(bar) >= target.evaluation_window_end
+    ]
     if not baseline_candidates:
         return _InspectionResult(
             observation=None,
@@ -708,6 +762,64 @@ def _record_attempt(
             metadata=metadata,
         )
     )
+
+
+def _record_live_outcome_failure(
+    *,
+    store: SQLiteStore,
+    attempt_id: str,
+    run_id: str,
+    source_run_id: str | None,
+    tool_run_id: str,
+    target: PredictionEvaluationTarget,
+    started_at: datetime,
+    completed_at: datetime,
+    message: str,
+    provider_attempts: tuple[JsonObject, ...],
+    market_artifact_ids: tuple[str, ...],
+) -> None:
+    metadata = cast(
+        JsonObject,
+        {
+            "target_id": target.target_id,
+            "error": message,
+            "market_artifact_ids": list(market_artifact_ids),
+            "provider_attempts": list(provider_attempts),
+        },
+    )
+    with suppress(Exception):
+        _record_attempt(
+            store=store,
+            attempt_id=attempt_id,
+            run_id=run_id,
+            source_run_id=source_run_id,
+            tool_run_id=tool_run_id,
+            target=target,
+            outcome_id=None,
+            status="failed",
+            started_at=started_at,
+            completed_at=completed_at,
+            metadata=metadata,
+        )
+    with suppress(Exception):
+        store.record_tool_run(
+            ToolRunRecord(
+                tool_run_id=tool_run_id,
+                run_id=run_id,
+                tool_name=PHASE7_LIVE_OUTCOME_TOOL_NAME,
+                tool_version=PHASE7_LIVE_OUTCOME_TOOL_VERSION,
+                status="failed",
+                started_at=started_at,
+                completed_at=completed_at,
+                inputs={
+                    "candidate_id": target.candidate_id,
+                    "target_id": target.target_id,
+                    "symbol": target.symbol,
+                    "market_artifact_ids": list(market_artifact_ids),
+                },
+                error_message=message,
+            )
+        )
 
 
 def _load_live_market_artifact(

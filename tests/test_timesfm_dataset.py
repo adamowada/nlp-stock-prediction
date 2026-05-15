@@ -91,6 +91,8 @@ def test_timesfm_dataset_uses_adjusted_close_when_complete_and_hashes_are_stable
     assert first_window.horizon_start == bars[4].timestamp
     assert first_window.horizon_end == bars[5].timestamp
     assert first_window.context_end_index < first_window.horizon_start_index
+    assert dataset.latest_context_window.context_values == _adjusted_values(bars[-4:])
+    assert dataset.latest_context_window.context_end == bars[-1].timestamp
     assert dataset.metadata["normalization"] == "none_timesfm_internal_instance_normalization"
     assert dataset.metadata["target_policy"] == "auto_adjusted_close_else_close"
     assert dataset.metadata["split_counts"] == {
@@ -130,6 +132,20 @@ def test_timesfm_dataset_context_windows_do_not_include_future_labels() -> None:
         assert max(context_indices) + 1 == min(future_indices)
         assert len(window.context_values) == 4
         assert len(window.future_values) == 2
+
+
+@pytest.mark.unit
+def test_timesfm_dataset_latest_context_reaches_latest_bar_without_label_leakage() -> None:
+    bars = _bars()
+    dataset = build_timesfm_dataset("TSLA", bars, config=_config())
+    latest = dataset.latest_context_window
+
+    assert latest.context_start_index == len(bars) - 4
+    assert latest.context_end_index == len(bars) - 1
+    assert latest.context_start == bars[-4].timestamp
+    assert latest.context_end == bars[-1].timestamp
+    assert latest.context_values == tuple(float(bar.close) for bar in bars[-4:])
+    assert dataset.test_windows[-1].context_end_index < latest.context_end_index
 
 
 @pytest.mark.unit

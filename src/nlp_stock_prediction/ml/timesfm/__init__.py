@@ -11,6 +11,7 @@ from nlp_stock_prediction.ml.timesfm.contracts import (
 )
 from nlp_stock_prediction.ml.timesfm.dataset import (
     ResolvedTargetField,
+    TimesFmContextWindow,
     TimesFmDataset,
     TimesFmDatasetConfig,
     TimesFmWindow,
@@ -19,6 +20,7 @@ from nlp_stock_prediction.ml.timesfm.dataset import (
 
 __all__ = [
     "ResolvedTargetField",
+    "TimesFmContextWindow",
     "TimesFmDataset",
     "TimesFmDatasetConfig",
     "TimesFmForecastArtifact",

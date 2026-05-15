@@ -161,17 +161,22 @@ def compute_calibration_drift_check(
             drift_status="not_evaluable",
             limitations=tuple(dict.fromkeys(limitations)),
         )
+    prior_resolved_count, current_resolved_count = _resolved_counts_for_scope(
+        prior_summary=prior_summary,
+        current_summary=current_summary,
+        signal_family=signal_family,
+    )
     if (
-        prior_summary.resolved_count < thresholds.min_resolved_count
-        or current_summary.resolved_count < thresholds.min_resolved_count
+        prior_resolved_count < thresholds.min_resolved_count
+        or current_resolved_count < thresholds.min_resolved_count
     ):
         return CalibrationDriftCheck(
             **base_kwargs,
             drift_status="insufficient_history",
             limitations=(
                 "Calibration drift requires more resolved history before metric movement "
-                f"is evaluable: prior={prior_summary.resolved_count}, "
-                f"current={current_summary.resolved_count}, "
+                f"is evaluable: prior={prior_resolved_count}, "
+                f"current={current_resolved_count}, "
                 f"minimum={thresholds.min_resolved_count}.",
             ),
         )
@@ -552,6 +557,12 @@ def _metric_deltas(
     current_summary: CalibrationSummary,
     signal_family: SignalArtifactFamily | None,
 ) -> JsonObject:
+    if signal_family is not None:
+        prior_family = _family_summary(prior_summary, signal_family)
+        current_family = _family_summary(current_summary, signal_family)
+        if prior_family is None or current_family is None:
+            return {}
+        return _family_scoped_metric_deltas(prior_family, current_family)
     deltas: JsonObject = {}
     metric_pairs = (
         ("brier_score", prior_summary.brier_score, current_summary.brier_score),
@@ -580,6 +591,35 @@ def _metric_deltas(
     )
     if family_deltas:
         deltas["signal_family_deltas"] = cast(JsonValue, family_deltas)
+    return deltas
+
+
+def _resolved_counts_for_scope(
+    *,
+    prior_summary: CalibrationSummary,
+    current_summary: CalibrationSummary,
+    signal_family: SignalArtifactFamily | None,
+) -> tuple[int, int]:
+    if signal_family is None:
+        return prior_summary.resolved_count, current_summary.resolved_count
+    prior_family = _family_summary(prior_summary, signal_family)
+    current_family = _family_summary(current_summary, signal_family)
+    return (
+        0 if prior_family is None else prior_family.resolved_count,
+        0 if current_family is None else current_family.resolved_count,
+    )
+
+
+def _family_scoped_metric_deltas(
+    prior: SignalFamilyCalibrationSummary,
+    current: SignalFamilyCalibrationSummary,
+) -> JsonObject:
+    deltas = _family_delta(prior, current)
+    deltas["sample_count_delta"] = current.prediction_count - prior.prediction_count
+    deltas["prior_sample_count"] = prior.prediction_count
+    deltas["current_sample_count"] = current.prediction_count
+    deltas["prior_resolved_count"] = prior.resolved_count
+    deltas["current_resolved_count"] = current.resolved_count
     return deltas
 
 

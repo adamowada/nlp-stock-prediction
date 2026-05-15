@@ -50,12 +50,14 @@ def decimal_from_value(value: Decimal | float | int | str | None) -> Decimal | N
     if isinstance(value, float):
         return Decimal(str(value)) if value == value else None
     text = value.strip().replace(",", "")
+    is_percentage = text.endswith("%")
     if text.endswith("%"):
-        text = text[:-1]
+        text = text[:-1].strip()
     try:
-        return Decimal(text)
+        parsed = Decimal(text)
     except InvalidOperation:
         return None
+    return parsed / Decimal("100") if is_percentage else parsed
 
 
 def metric_values_from_provider(metrics: Sequence[ProviderMetric]) -> tuple[MetricValue, ...]:

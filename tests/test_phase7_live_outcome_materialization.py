@@ -262,6 +262,44 @@ def test_live_outcome_materialization_fetches_provider_artifact_and_scores_windo
 
 
 @pytest.mark.unit
+def test_live_outcome_materialization_does_not_use_same_day_close_before_cutoff(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(
+        bars=(
+            (date(2026, 5, 12), Decimal("99")),
+            (date(2026, 5, 13), Decimal("100")),
+            (date(2026, 5, 18), Decimal("103")),
+        )
+    )
+
+    result = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=datetime(2026, 5, 13, 12, 30, tzinfo=UTC),
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=_StaticSelectionFactory(
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
+        ),
+    )
+
+    assert result.outcome.status == PredictionOutcomeStatus.OBSERVED
+    assert result.outcome.baseline_value == 99.0
+    assert result.outcome.result_value == 103.0
+
+
+@pytest.mark.unit
 def test_live_outcome_materialization_can_reuse_existing_market_artifact(
     tmp_path: Path,
 ) -> None:
@@ -402,6 +440,58 @@ def test_live_outcome_materialization_records_unavailable_provider_without_short
     assert result.outcome_evidence_ids == ()
     assert "unconfigured" in " ".join(result.outcome.limitations).lower()
     assert store.get_prediction_outcome(result.outcome.outcome_id) is not None
+
+
+@pytest.mark.unit
+def test_live_outcome_materialization_marks_started_attempt_failed_on_late_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(
+        bars=((date(2026, 5, 13), Decimal("100")), (date(2026, 5, 18), Decimal("103")))
+    )
+
+    def fail_write(**_kwargs: object) -> object:
+        raise ValueError("late validation failed")
+
+    monkeypatch.setattr(
+        "nlp_stock_prediction.evaluation.live_outcomes."
+        "write_point_in_time_outcome_evaluation_artifacts",
+        fail_write,
+    )
+
+    with pytest.raises(ValueError, match="late validation failed"):
+        materialize_live_prediction_outcome_artifacts(
+            store=store,
+            repo_root=tmp_path,
+            artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+            run_id=RUN_ID,
+            candidate_id=CANDIDATE_ID,
+            point_in_time_cutoff=CUTOFF,
+            evaluation_window_start=WINDOW_START,
+            evaluation_window_end=WINDOW_END,
+            evaluated_at=EVALUATED_AT,
+            provider_factory=_StaticSelectionFactory(
+                LiveOutcomeMarketDataSelection(
+                    provider=provider,
+                    source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                    role="primary",
+                    retrieval_method=RetrievalMethod.OFFICIAL_API,
+                )
+            ),
+        )
+
+    attempts = store.list_evaluation_attempts_for_run(RUN_ID)
+    attempt = attempts[0]
+    assert attempt.status == "failed"
+    assert "late validation failed" in str(attempt.metadata["error"])
+    assert attempt.tool_run_id is not None
+    tool_run = store.get_tool_run(attempt.tool_run_id)
+    assert tool_run is not None
+    assert tool_run.status == "failed"
+    assert tool_run.error_message is not None
+    assert "late validation failed" in tool_run.error_message
 
 
 @pytest.mark.unit

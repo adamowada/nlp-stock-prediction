@@ -112,12 +112,14 @@ class XRecentSearchProvider:
                 credential_state=CredentialState.CONFIGURED,
             )
         query = request.query or build_x_recent_search_query(ticker or "")
+        requested_limit = request.limit or self._default_limit
+        api_limit = _x_recent_search_api_limit(requested_limit)
         url = append_query_params(
             self._endpoint,
             {
                 "query": query,
                 "sort_order": self._sort_order,
-                "max_results": request.limit or self._default_limit,
+                "max_results": api_limit,
                 "tweet.fields": "created_at,public_metrics,lang,author_id",
             },
         )
@@ -159,6 +161,7 @@ class XRecentSearchProvider:
                 url,
                 fetched_at,
                 self._sort_order,
+                requested_limit,
             )
         except ProviderTransportError as exc:
             return transport_error_result(
@@ -219,6 +222,7 @@ class XRecentSearchProvider:
         source_url: str,
         fetched_at: datetime,
         sort_order: str,
+        requested_limit: int,
     ) -> tuple[tuple[SourceEvidence, ...], tuple[ProviderWarning, ...]]:
         if "data" not in payload and "meta" in payload:
             return (), ()
@@ -320,7 +324,7 @@ class XRecentSearchProvider:
                     metadata={"provider": self.provider_name},
                 )
             )
-        return tuple(evidence), tuple(warnings)
+        return tuple(evidence[:requested_limit]), tuple(warnings)
 
 
 def _author_hash(author_id: object) -> str | None:
@@ -360,6 +364,10 @@ def _validate_limit(limit: int) -> int:
     if limit < 10 or limit > 100:
         raise ValueError("X recent-search default_limit must be between 10 and 100")
     return limit
+
+
+def _x_recent_search_api_limit(limit: int) -> int:
+    return max(10, min(limit, 100))
 
 
 def _is_x_recent_search_cacheable(payload: dict[str, object]) -> bool:

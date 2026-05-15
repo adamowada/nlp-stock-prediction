@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+from urllib.error import URLError
 
 import pytest
 
@@ -29,6 +30,7 @@ from nlp_stock_prediction.providers._base import (
     MalformedProviderResponse,
     ProviderCache,
     ProviderTransportError,
+    UrllibJsonTransport,
 )
 from nlp_stock_prediction.providers.execution import ProviderExecutionContext
 from nlp_stock_prediction.providers.fred import FredMacroProvider
@@ -259,6 +261,50 @@ def test_x_provider_defaults_to_relevancy_and_fifty_posts() -> None:
     assert result.status == ProviderStatus.OK
     assert "sort_order=relevancy" in transport.calls[0]
     assert "max_results=50" in transport.calls[0]
+
+
+@pytest.mark.contract
+def test_x_provider_clamps_api_limit_and_slices_results_locally() -> None:
+    payload = _fixture("x", "recent_tsla.json")
+    first = cast(list[dict[str, object]], payload["data"])[0]
+    payload["data"] = [
+        {**first, "id": f"178900000000000000{index}", "text": f"$TSLA post {index}"}
+        for index in range(12)
+    ]
+    transport = _FakeJsonTransport({"tweets/search/recent": JsonResponse(payload=payload)})
+    provider = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+
+    result = provider.fetch_social_posts(
+        EvidenceRequest(
+            request_id="x-tsla-small-limit-2026-05-11",
+            run_date=RUN_DATE,
+            tickers=("TSLA",),
+            limit=3,
+        )
+    )
+
+    assert "max_results=10" in transport.calls[0]
+    assert result.data is not None
+    assert len(result.data) == 3
+
+
+@pytest.mark.unit
+def test_urllib_json_transport_classifies_wrapped_socket_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout_urlopen(*_args: object, **_kwargs: object) -> object:
+        raise URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr("nlp_stock_prediction.providers._base.urlopen", timeout_urlopen)
+
+    with pytest.raises(ProviderTransportError) as exc:
+        UrllibJsonTransport().get_json("https://example.com/data.json")
+
+    assert exc.value.error_type == "timeout"
 
 
 @pytest.mark.contract

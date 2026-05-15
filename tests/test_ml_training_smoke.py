@@ -14,7 +14,13 @@ from typing import cast
 import pytest
 
 from nlp_stock_prediction.analysis import apply_technical_ml_signal, build_technical_ml_signal
-from nlp_stock_prediction.contracts import AnalysisSignal, JsonObject, PriceBar, TechnicalAnalysis
+from nlp_stock_prediction.contracts import (
+    AnalysisSignal,
+    FreshnessStatus,
+    JsonObject,
+    PriceBar,
+    TechnicalAnalysis,
+)
 from nlp_stock_prediction.ml.dataset import TechnicalDatasetConfig, build_technical_dataset
 from nlp_stock_prediction.ml.training import (
     TrainingConfig,
@@ -198,6 +204,35 @@ def test_technical_ml_signal_rejects_evaluation_model_hash_mismatch() -> None:
     assert signal.status == "unavailable"
     assert signal.warning_ids == ("ml-technical-signal:model_hash_mismatch",)
     assert signal.metadata["evaluation_model_hash"] == "f" * 64
+
+
+@pytest.mark.unit
+def test_technical_ml_signal_marks_labeled_backtest_predictions_stale() -> None:
+    dataset = build_technical_dataset(
+        "AMD",
+        _training_bars(),
+        config=TechnicalDatasetConfig(feature_window=5, label_horizon_sessions=2),
+    )
+    result = train_technical_model(
+        dataset,
+        config=TrainingConfig(epochs=20, seed=19, requested_device="cpu"),
+    )
+    evaluation = evaluate_model(result.model, dataset.rows[-8:])
+    latest_feature_end = max(prediction.feature_end for prediction in evaluation.predictions)
+
+    signal = build_technical_ml_signal(
+        model=result.model,
+        evaluation=evaluation,
+        as_of=latest_feature_end + timedelta(days=1),
+        min_validation_accuracy=0.0,
+        min_confidence=0.0,
+    )
+
+    assert signal.status == "stale"
+    assert signal.freshness_status == FreshnessStatus.STALE
+    assert signal.signal == AnalysisSignal.UNKNOWN
+    assert signal.calibrated_confidence == 0.0
+    assert "ml-technical-signal:stale_labeled_prediction" in signal.warning_ids
 
 
 @pytest.mark.unit

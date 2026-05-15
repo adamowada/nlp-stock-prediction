@@ -95,6 +95,7 @@ class Phase4LiveProviderFactory:
         return RedditPublicPageProvider(
             allow_live_scraping=True,
             user_agent=self._scrape_user_agent(),
+            cache=self._html_cache(),
         )
 
     def x_provider(self, symbol: str) -> XProvider | None:

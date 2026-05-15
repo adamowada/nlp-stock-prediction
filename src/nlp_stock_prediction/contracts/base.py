@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from math import isfinite
@@ -147,6 +147,21 @@ class ContractModel(BaseModel):
     def model_post_init(self, _context: object) -> None:
         for field_name, value in self.__dict__.items():
             object.__setattr__(self, field_name, _freeze_json_value(value))
+
+    def model_copy(
+        self,
+        *,
+        update: Mapping[str, Any] | None = None,
+        deep: bool = False,
+    ) -> Self:
+        if update is None:
+            copied = super().model_copy(update=None, deep=deep)
+            for field_name, value in copied.__dict__.items():
+                object.__setattr__(copied, field_name, _freeze_json_value(value))
+            return copied
+        data = self.model_dump(mode="python", round_trip=True)
+        data.update(dict(update))
+        return self.__class__.model_validate(data)
 
 
 def ensure_utc_timestamp(value: datetime) -> datetime:

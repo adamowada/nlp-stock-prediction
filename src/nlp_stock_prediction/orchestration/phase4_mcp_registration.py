@@ -21,7 +21,7 @@ PHASE4_MCP_TOOL_NAMES: tuple[str, ...] = (
     "phase4_news_catalyst",
     "phase4_fundamentals",
     "phase4_sector_macro",
-    "phase4_candidate_synthesis",
+    "phase4_prediction_candidate_synthesis",
     "phase4_prediction_evaluation",
     "render_prediction_report",
     "inspect_research_run",
@@ -90,7 +90,7 @@ def register_phase4_mcp_tools(server: Any, service: Phase4Service) -> None:
 
         return dict(service.phase4_sector_macro(run_id=run_id, symbol=symbol))
 
-    def phase4_candidate_synthesis(run_id: str, symbol: str) -> dict[str, object]:
+    def phase4_prediction_candidate_synthesis(run_id: str, symbol: str) -> dict[str, object]:
         """Synthesize conservative prediction candidates from stored evidence."""
 
         return dict(service.phase4_candidate_synthesis(run_id=run_id, symbol=symbol))
@@ -120,7 +120,7 @@ def register_phase4_mcp_tools(server: Any, service: Phase4Service) -> None:
         "phase4_news_catalyst": phase4_news_catalyst,
         "phase4_fundamentals": phase4_fundamentals,
         "phase4_sector_macro": phase4_sector_macro,
-        "phase4_candidate_synthesis": phase4_candidate_synthesis,
+        "phase4_prediction_candidate_synthesis": phase4_prediction_candidate_synthesis,
         "phase4_prediction_evaluation": phase4_prediction_evaluation,
         "render_prediction_report": render_prediction_report,
         "inspect_research_run": inspect_research_run,

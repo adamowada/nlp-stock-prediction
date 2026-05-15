@@ -194,6 +194,26 @@ def test_provider_replaced_evidence_links_old_and_new_sources(tmp_path: Path) ->
 
 
 @pytest.mark.unit
+def test_missing_source_freshness_remains_missing_even_when_recent(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    evidence = store.get_evidence("evidence-msft-provider-replaced")
+    assert evidence is not None
+    evidence = EvidenceRecord(
+        **{
+            **evidence.__dict__,
+            "metadata": {},
+            "freshness_status": FreshnessStatus.MISSING.value,
+        }
+    )
+
+    record = review_evidence_aging(evidence=evidence, reviewed_at=REVIEWED_AT)
+
+    assert record.age_status == "missing"
+    assert record.freshness_status == FreshnessStatus.MISSING
+    assert any("missing freshness" in item for item in record.limitations)
+
+
+@pytest.mark.unit
 def test_target_freezing_carries_structured_aging_and_freshness_metadata(
     tmp_path: Path,
 ) -> None:

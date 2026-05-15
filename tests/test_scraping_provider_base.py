@@ -4,17 +4,19 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
+from urllib.error import URLError
 
 import pytest
 
 from nlp_stock_prediction.contracts import WarningCode, WarningSeverity
-from nlp_stock_prediction.providers._base import MalformedProviderResponse
+from nlp_stock_prediction.providers._base import MalformedProviderResponse, ProviderTransportError
 from nlp_stock_prediction.providers.scraping import (
     DEFAULT_HTML_MAX_BYTES,
     DEFAULT_SCRAPE_USER_AGENT,
     HtmlCache,
     HtmlResponse,
     HtmlTextRequirement,
+    UrllibHtmlTransport,
     build_scraping_headers,
     configured_scrape_min_delay_seconds,
     configured_scrape_user_agent,
@@ -126,6 +128,37 @@ def test_fetch_html_reuses_cache_without_second_transport_call(tmp_path: Path) -
     assert len(transport.calls) == 1
     assert transport.headers[0] == {"User-Agent": "fixture-agent/1.0"}
     assert tmp_path.joinpath("2026-05-11", "all", "apnews-hub").exists()
+
+
+def test_html_cache_treats_corrupt_cache_entry_as_miss(tmp_path: Path) -> None:
+    cache = HtmlCache(tmp_path)
+    path = cache.path_for(RUN_DATE, None, "apnews-hub", "corrupt")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff\xfe")
+
+    assert (
+        cache.load_html(
+            run_date=RUN_DATE,
+            ticker=None,
+            source="apnews-hub",
+            cache_key="corrupt",
+        )
+        is None
+    )
+
+
+def test_urllib_html_transport_classifies_wrapped_socket_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout_urlopen(*_args: object, **_kwargs: object) -> object:
+        raise URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr("nlp_stock_prediction.providers.scraping.urlopen", timeout_urlopen)
+
+    with pytest.raises(ProviderTransportError) as exc:
+        UrllibHtmlTransport().get_html("https://example.com/")
+
+    assert exc.value.error_type == "timeout"
 
 
 def test_parse_html_document_extracts_visible_text_canonical_url_and_links() -> None:

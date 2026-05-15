@@ -419,8 +419,7 @@ def test_report_authored_fields_reject_trading_instructions_but_source_text_is_e
 
     assert safe_report.evidence_sources[0].text == "Buy TSLA now, the article claims."
 
-    trade_instruction_candidate = evaluated_candidate.model_copy(
-        update={"thesis": "Buy TSLA now because the fixture catalyst is strong."}
-    )
     with pytest.raises(ValidationError, match="imperative trading language"):
-        _report(candidate=trade_instruction_candidate, source=source, artifact=artifact)
+        evaluated_candidate.model_copy(
+            update={"thesis": "Buy TSLA now because the fixture catalyst is strong."}
+        )

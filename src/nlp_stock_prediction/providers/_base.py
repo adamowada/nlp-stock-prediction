@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import socket
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -116,7 +117,12 @@ class UrllibJsonTransport:
                 error_type="http_error",
             ) from exc
         except URLError as exc:
-            raise ProviderTransportError(str(exc), retryable=True, error_type="url_error") from exc
+            error_type = (
+                "timeout"
+                if isinstance(getattr(exc, "reason", None), TimeoutError | socket.timeout)
+                else "url_error"
+            )
+            raise ProviderTransportError(str(exc), retryable=True, error_type=error_type) from exc
         except TimeoutError as exc:
             raise ProviderTransportError(str(exc), retryable=True, error_type="timeout") from exc
         except (OSError, UnicodeDecodeError, LookupError) as exc:

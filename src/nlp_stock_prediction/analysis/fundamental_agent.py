@@ -39,11 +39,16 @@ def apply_fundamental_agent_result(
         warning_ids=_warning_ids(result),
         confidence_inputs=response.confidence_inputs,
     )
+    combined_signal = _combine_signal(analysis, response)
     return analysis.model_copy(
         update={
             "summary": f"{analysis.summary} Fundamental agent: {response.summary}",
-            "signal": _combine_signal(analysis, response),
-            "confidence": max(analysis.confidence, response.confidence),
+            "signal": combined_signal,
+            "confidence": _combined_confidence(
+                analysis=analysis,
+                response=response,
+                combined_signal=combined_signal,
+            ),
             "metrics": (
                 *analysis.metrics,
                 analysis_metric(
@@ -81,7 +86,28 @@ def _combine_signal(
         return analysis.signal
     if response.confidence >= analysis.confidence + 0.15:
         return response.signal
+    if AnalysisSignal.UNKNOWN in {analysis.signal, response.signal}:
+        return analysis.signal if response.signal == AnalysisSignal.UNKNOWN else response.signal
+    if AnalysisSignal.NEUTRAL in {analysis.signal, response.signal}:
+        return AnalysisSignal.MIXED
+    if {analysis.signal, response.signal} <= {AnalysisSignal.SUPPORTS, AnalysisSignal.CONFLICTS}:
+        return AnalysisSignal.MIXED
     return analysis.signal
+
+
+def _combined_confidence(
+    *,
+    analysis: FundamentalAnalysis,
+    response: FundamentalNlpAnalysisResponse,
+    combined_signal: AnalysisSignal,
+) -> float:
+    if analysis.signal == response.signal:
+        return max(analysis.confidence, response.confidence)
+    if combined_signal == response.signal:
+        return response.confidence
+    if combined_signal == AnalysisSignal.MIXED:
+        return min(max(analysis.confidence, response.confidence), 0.6)
+    return analysis.confidence
 
 
 def _merge_evidence_refs(

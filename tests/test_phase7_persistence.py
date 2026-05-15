@@ -262,7 +262,7 @@ def test_phase7_attempts_preserve_repeated_outcome_reviews_without_overwrite(
         evaluation_window_start=datetime(2026, 5, 7, 20, 0, tzinfo=UTC),
         evaluation_window_end=datetime(2026, 5, 14, 20, 0, tzinfo=UTC),
         status="observed",
-        observed_result="confirmed",
+        observed_result="supported",
         observed_at=datetime(2026, 5, 14, 20, 0, tzinfo=UTC),
         result_summary="MSFT closed above the comparison value.",
         result_value=425.8,
@@ -365,6 +365,8 @@ def test_phase7_calibration_source_links_and_drift_records_are_queryable(
             evaluation_window_start=datetime(2026, 5, 7, 20, 0, tzinfo=UTC),
             evaluation_window_end=datetime(2026, 5, 14, 20, 0, tzinfo=UTC),
             status="observed",
+            observed_result="supported",
+            observed_at=datetime(2026, 5, 14, 20, 0, tzinfo=UTC),
         )
     )
     store.append_prediction_outcome_evaluation(
@@ -452,6 +454,62 @@ def test_phase7_calibration_source_links_and_drift_records_are_queryable(
         artifact.artifact_id
         for artifact in store.list_artifacts_for_run("run-msft-evaluation-2026-05-14")
     }
+
+
+@pytest.mark.unit
+def test_phase7_prediction_outcomes_reject_impossible_result_shapes(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.initialize()
+    _seed_prediction_and_evaluation_runs(store)
+
+    with pytest.raises(ValueError, match="cannot resolve before window end"):
+        store.upsert_prediction_outcome(
+            PredictionOutcomeRecord(
+                outcome_id="outcome-msft-too-early",
+                candidate_id="candidate-msft-directional-2026-05-07",
+                instrument_id="equity:NASDAQ:MSFT",
+                symbol="MSFT",
+                prediction_type="directional",
+                horizon="swing",
+                evaluation_window_start=datetime(2026, 5, 7, 20, 0, tzinfo=UTC),
+                evaluation_window_end=datetime(2026, 5, 14, 20, 0, tzinfo=UTC),
+                status="observed",
+                observed_result="supported",
+                observed_at=datetime(2026, 5, 14, 19, 0, tzinfo=UTC),
+            )
+        )
+
+    with pytest.raises(ValueError, match="non-observed prediction outcomes"):
+        store.upsert_prediction_outcome(
+            PredictionOutcomeRecord(
+                outcome_id="outcome-msft-pending-with-result",
+                candidate_id="candidate-msft-directional-2026-05-07",
+                instrument_id="equity:NASDAQ:MSFT",
+                symbol="MSFT",
+                prediction_type="directional",
+                horizon="swing",
+                evaluation_window_start=datetime(2026, 5, 7, 20, 0, tzinfo=UTC),
+                evaluation_window_end=datetime(2026, 5, 14, 20, 0, tzinfo=UTC),
+                status="pending",
+                observed_result="supported",
+                limitations=("Evaluation window has not completed.",),
+            )
+        )
+
+    with pytest.raises(ValueError, match="require limitations"):
+        store.upsert_prediction_outcome(
+            PredictionOutcomeRecord(
+                outcome_id="outcome-msft-unavailable-without-limitation",
+                candidate_id="candidate-msft-directional-2026-05-07",
+                instrument_id="equity:NASDAQ:MSFT",
+                symbol="MSFT",
+                prediction_type="directional",
+                horizon="swing",
+                evaluation_window_start=datetime(2026, 5, 7, 20, 0, tzinfo=UTC),
+                evaluation_window_end=datetime(2026, 5, 14, 20, 0, tzinfo=UTC),
+                status="unavailable",
+            )
+        )
 
 
 @pytest.mark.unit
@@ -554,6 +612,8 @@ def test_phase7_failed_tool_cleanup_keeps_prior_successful_attempts(
             evaluation_window_start=datetime(2026, 5, 7, 20, 0, tzinfo=UTC),
             evaluation_window_end=datetime(2026, 5, 14, 20, 0, tzinfo=UTC),
             status="observed",
+            observed_result="supported",
+            observed_at=datetime(2026, 5, 14, 20, 0, tzinfo=UTC),
         )
     )
     store.append_prediction_outcome_evaluation(

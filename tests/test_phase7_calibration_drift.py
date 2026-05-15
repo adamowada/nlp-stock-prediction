@@ -121,6 +121,44 @@ def test_calibration_drift_degraded_when_current_errors_worsen() -> None:
     assert drift.metric_deltas["accuracy_delta"] == pytest.approx(-0.3)
 
 
+def test_calibration_drift_signal_family_uses_family_scoped_metrics() -> None:
+    prior = _summary(
+        "calibration-prior-family-good",
+        as_of=PRIOR_AS_OF,
+        brier_score=0.05,
+        expected_calibration_error=0.03,
+        accuracy=0.91,
+    )
+    current_overall_degraded = _summary(
+        "calibration-current-family-overall-degraded",
+        as_of=CURRENT_AS_OF,
+        brier_score=0.18,
+        expected_calibration_error=0.16,
+        accuracy=0.61,
+    )
+    current = current_overall_degraded.model_copy(update={"signal_families": prior.signal_families})
+
+    drift = compute_calibration_drift_check(
+        prior_summary=prior,
+        current_summary=current,
+        created_at=CREATED_AT,
+        as_of=DRIFT_AS_OF,
+        source_calibration_artifact_ids=(
+            "artifact-calibration-prior-family-good",
+            "artifact-calibration-current-family-overall-degraded",
+        ),
+        thresholds=THRESHOLDS,
+        signal_family=SignalArtifactFamily.TECHNICALS,
+    )
+
+    assert drift.drift_status == "stable"
+    assert drift.metric_deltas["brier_score_delta"] == pytest.approx(0.0)
+    assert drift.metric_deltas["prior_brier_score"] == pytest.approx(
+        prior.signal_families[0].brier_score
+    )
+    assert "expected_calibration_error_delta" not in drift.metric_deltas
+
+
 def test_calibration_drift_conflicting_metric_movement_is_inconclusive() -> None:
     drift = compute_calibration_drift_check(
         prior_summary=_summary(

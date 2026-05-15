@@ -354,6 +354,11 @@ def review_evidence_aging(
         limitations.append("Evidence source already reported stale freshness.")
         retrieved_at_for_record = retrieved_at
         published_at_for_record = published_at
+    elif source_freshness == FreshnessStatus.MISSING:
+        age_status = "missing"
+        limitations.append("Evidence source reported missing freshness metadata.")
+        retrieved_at_for_record = retrieved_at
+        published_at_for_record = published_at
     elif reviewed - age_basis > policy.evidence_max_age:
         age_status = "aged_out"
         source_freshness = FreshnessStatus.STALE

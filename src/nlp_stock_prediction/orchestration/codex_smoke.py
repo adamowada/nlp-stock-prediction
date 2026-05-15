@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import shutil
@@ -78,7 +77,7 @@ def build_codex_prompt(config: CodexSmokeConfig) -> str:
             "7. phase4_news_catalyst",
             "8. phase4_fundamentals",
             "9. phase4_sector_macro",
-            "10. phase4_candidate_synthesis",
+            "10. phase4_prediction_candidate_synthesis",
             "11. phase4_prediction_evaluation",
             "12. render_prediction_report",
             "13. inspect_research_run",
@@ -204,7 +203,7 @@ def run_codex_smoke(config: CodexSmokeConfig) -> None:
         raise RuntimeError(f"Set {RUN_CODEX_SMOKE_ENV}=1 to run the real Codex smoke test.")
     if shutil.which(config.codex_executable) is None:
         raise RuntimeError("Codex CLI is not available on PATH.")
-    if importlib.util.find_spec("mcp") is None:
+    if not _python_has_mcp(config.python_executable, cwd=config.repo_root):
         raise RuntimeError(
             'Install the optional smoke extra first: python -m pip install -e ".[codex-smoke]"'
         )
@@ -288,6 +287,20 @@ def prepare_clean_database(config: CodexSmokeConfig) -> None:
     ):
         if path.exists():
             path.unlink()
+    from nlp_stock_prediction.storage import initialize_research_database
+
+    initialize_research_database(database_path)
+
+
+def _python_has_mcp(python_executable: Path, *, cwd: Path) -> bool:
+    completed = subprocess.run(
+        [str(python_executable), "-c", "import mcp"],
+        cwd=cwd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return completed.returncode == 0
 
 
 def expected_run_id(config: CodexSmokeConfig) -> str:

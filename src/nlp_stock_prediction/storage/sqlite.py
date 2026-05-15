@@ -12,7 +12,12 @@ from pathlib import Path, PureWindowsPath
 from typing import cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
-from nlp_stock_prediction.contracts.enums import PredictionType, TimeHorizon
+from nlp_stock_prediction.contracts.enums import (
+    PredictionOutcomeResult,
+    PredictionOutcomeStatus,
+    PredictionType,
+    TimeHorizon,
+)
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
     CalibrationDriftCheckRecord,
@@ -583,6 +588,7 @@ class SQLiteStore:
                 )
             artifact = _artifact_from_row(artifact_row)
             _validate_report_artifact_matches_ledger(record, artifact)
+            _validate_report_artifact_run_alignment(connection, record)
             connection.execute(
                 """
                 INSERT INTO report_artifact_index (
@@ -923,18 +929,6 @@ class SQLiteStore:
                    )
                 """,
                 (tool_run_id, tool_run_id, tool_run_id),
-            )
-            connection.execute(
-                """
-                DELETE FROM calibration_runs
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM json_each(calibration_runs.source_outcome_evaluation_ids_json) AS source
-                    LEFT JOIN prediction_outcome_evaluations AS evaluation
-                        ON evaluation.outcome_evaluation_id = source.value
-                    WHERE evaluation.outcome_evaluation_id IS NULL
-                )
-                """
             )
             connection.execute(
                 """
@@ -1436,6 +1430,13 @@ class SQLiteStore:
         _validate_required(record.horizon, "horizon")
         _validate_required(record.status, "status")
         _validate_live_data_modes(record.data_mode, record.provider_mode)
+        _validate_choice(
+            record.prediction_type,
+            "prediction_type",
+            {item.value for item in PredictionType},
+        )
+        _validate_choice(record.horizon, "horizon", {item.value for item in TimeHorizon})
+        _validate_prediction_outcome_shape(record)
         if record.evaluation_window_end <= record.evaluation_window_start:
             raise ValueError("prediction outcome evaluation window end must be after start")
         now = _utc_now()
@@ -3334,6 +3335,50 @@ def _validate_report_artifact_matches_ledger(
         )
 
 
+def _validate_report_artifact_run_alignment(
+    connection: sqlite3.Connection,
+    record: ReportArtifactRecord,
+) -> None:
+    if record.tool_run_id is None:
+        return
+    tool_run = connection.execute(
+        "SELECT run_id FROM tool_runs WHERE tool_run_id = ?",
+        (record.tool_run_id,),
+    ).fetchone()
+    if tool_run is None:
+        raise ValueError("report artifact tool_run_id must reference an existing tool run")
+    if tool_run["run_id"] is not None and _row_text(tool_run, "run_id") != record.run_id:
+        raise ValueError("report artifact run_id must match artifact tool run")
+
+
+def _validate_prediction_outcome_shape(record: PredictionOutcomeRecord) -> None:
+    _validate_choice(
+        record.status,
+        "status",
+        {item.value for item in PredictionOutcomeStatus},
+    )
+    if record.observed_result is not None:
+        _validate_choice(
+            record.observed_result,
+            "observed_result",
+            {item.value for item in PredictionOutcomeResult},
+        )
+    if record.status == PredictionOutcomeStatus.OBSERVED.value:
+        if record.observed_result is None or record.observed_at is None:
+            raise ValueError("observed prediction outcomes require observed_result and observed_at")
+        if record.observed_at < record.evaluation_window_end:
+            raise ValueError("fixed-window prediction outcomes cannot resolve before window end")
+        return
+    if record.observed_result is not None:
+        raise ValueError("non-observed prediction outcomes must not include observed_result")
+    if record.observed_at is not None:
+        raise ValueError("non-observed prediction outcomes must not include observed_at")
+    if record.result_value is not None or record.baseline_value is not None:
+        raise ValueError("non-observed prediction outcomes must not include observed values")
+    if not record.limitations:
+        raise ValueError("non-observed prediction outcomes require limitations")
+
+
 def _validate_confidence(value: float | None) -> None:
     if value is None:
         return
@@ -3660,15 +3705,15 @@ def _parse_optional_datetime(value: str | None) -> datetime | None:
 
 
 def _dump_json(value: JsonObject) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _dump_json_array(value: Iterable[str]) -> str:
-    return json.dumps(tuple(value), sort_keys=True, separators=(",", ":"))
+    return json.dumps(tuple(value), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _dump_json_object_array(value: Iterable[JsonObject]) -> str:
-    return json.dumps(tuple(value), sort_keys=True, separators=(",", ":"))
+    return json.dumps(tuple(value), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _load_json_object(value: str) -> JsonObject:

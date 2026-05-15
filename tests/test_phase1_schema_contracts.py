@@ -153,21 +153,20 @@ def _report(*, include_sources: bool = True) -> DailyReport:
 
 
 @pytest.mark.schema
-def test_external_source_provenance_accepts_explicit_unknown_freshness() -> None:
-    provenance = SourceProvenance(
-        provider_name="fixture-news",
-        source_kind=SourceKind.NEWS_ARTICLE,
-        retrieval_method=RetrievalMethod.FIXTURE,
-        fetched_at=_now(),
-        observed_at=datetime(2026, 5, 12, 18, 0, tzinfo=UTC),
-        source_url="https://example.com/future-timestamp",
-        permalink="https://example.com/future-timestamp",
-        raw_identifier="fixture-future-timestamp",
-        raw_snapshot_id="raw-fixture-future-timestamp",
-        freshness_status=FreshnessStatus.UNKNOWN,
-    )
-
-    assert provenance.freshness_status == FreshnessStatus.UNKNOWN
+def test_external_source_provenance_rejects_future_unknown_observation() -> None:
+    with pytest.raises(ValidationError, match="observed_at must not be after fetched_at"):
+        SourceProvenance(
+            provider_name="fixture-news",
+            source_kind=SourceKind.NEWS_ARTICLE,
+            retrieval_method=RetrievalMethod.FIXTURE,
+            fetched_at=_now(),
+            observed_at=datetime(2026, 5, 12, 18, 0, tzinfo=UTC),
+            source_url="https://example.com/future-timestamp",
+            permalink="https://example.com/future-timestamp",
+            raw_identifier="fixture-future-timestamp",
+            raw_snapshot_id="raw-fixture-future-timestamp",
+            freshness_status=FreshnessStatus.UNKNOWN,
+        )
 
 
 @pytest.mark.schema
@@ -229,8 +228,9 @@ def test_daily_report_requires_every_cited_evidence_source_even_when_sources_emp
 
 @pytest.mark.schema
 def test_daily_report_without_candidates_requires_structured_insufficient_evidence() -> None:
-    candidate_free = _report().model_copy(
-        update={
+    payload = _report().model_dump(mode="python")
+    payload.update(
+        {
             "prediction_candidates": (),
             "material_claim_traces": (),
             "instrument_sections": (
@@ -238,14 +238,13 @@ def test_daily_report_without_candidates_requires_structured_insufficient_eviden
                     instrument_id="instrument:equity:us:tsla",
                     symbol="TSLA",
                     evidence=(EvidenceReference(evidence_id="evidence-tsla-1"),),
-                ),
+                ).model_dump(mode="python"),
             ),
         }
     )
 
-    assert candidate_free.insufficient_evidence is None
     with pytest.raises(ValidationError, match="structured insufficient_evidence"):
-        DailyReport.model_validate(candidate_free.model_dump(mode="python"))
+        DailyReport.model_validate(payload)
 
 
 @pytest.mark.schema
@@ -293,6 +292,15 @@ def test_prediction_candidate_requires_change_trigger_context() -> None:
 def test_prediction_candidate_rejects_trading_instruction_synonyms() -> None:
     payload = _candidate().model_dump(mode="python")
     payload["thesis"] = "Investors should accumulate TSLA."
+
+    with pytest.raises(ValidationError, match="trading language"):
+        PredictionCandidate.model_validate(payload)
+
+
+@pytest.mark.schema
+def test_prediction_candidate_rejects_lowercase_ticker_trading_instruction() -> None:
+    payload = _candidate().model_dump(mode="python")
+    payload["thesis"] = "Buy tsla before the next catalyst."
 
     with pytest.raises(ValidationError, match="trading language"):
         PredictionCandidate.model_validate(payload)
@@ -440,53 +448,43 @@ def test_dissenting_evidence_requires_source_or_artifact_reference() -> None:
 
 @pytest.mark.schema
 def test_daily_report_validates_related_instrument_evidence_ids() -> None:
-    report = _report().model_copy(
-        update={
-            "instruments": (
-                _instrument().model_copy(
-                    update={
-                        "related_instruments": (
-                            RelatedInstrument(
-                                instrument_id="instrument:sector:consumer-discretionary",
-                                relationship="sector_proxy",
-                                rationale="Sector proxy used for context.",
-                                evidence_ids=("missing-sector-evidence",),
-                            ),
-                        )
-                    }
-                ),
-            )
-        }
+    payload = _report().model_dump(mode="python")
+    instrument_payload = _instrument().model_dump(mode="python")
+    instrument_payload["related_instruments"] = (
+        RelatedInstrument(
+            instrument_id="instrument:sector:consumer-discretionary",
+            relationship="sector_proxy",
+            rationale="Sector proxy used for context.",
+            evidence_ids=("missing-sector-evidence",),
+        ).model_dump(mode="python"),
     )
+    payload["instruments"] = (instrument_payload,)
 
     with pytest.raises(ValidationError, match="related instrument evidence_ids"):
-        DailyReport.model_validate(report.model_dump(mode="python"))
+        DailyReport.model_validate(payload)
 
 
 @pytest.mark.schema
 def test_daily_report_validates_resolution_selected_ids_against_report_instruments() -> None:
-    report = _report().model_copy(
-        update={
-            "instrument_resolutions": (
-                InstrumentResolution(
-                    query="NVDA",
-                    status=InstrumentResolutionStatus.RESOLVED,
-                    matches=(
-                        Instrument(
-                            instrument_id="instrument:equity:us:nvda",
-                            symbol="NVDA",
-                            display_name="NVIDIA Corp.",
-                            asset_class=AssetClass.STOCK,
-                        ),
-                    ),
-                    selected_instrument_id="instrument:equity:us:nvda",
+    payload = _report().model_dump(mode="python")
+    payload["instrument_resolutions"] = (
+        InstrumentResolution(
+            query="NVDA",
+            status=InstrumentResolutionStatus.RESOLVED,
+            matches=(
+                Instrument(
+                    instrument_id="instrument:equity:us:nvda",
+                    symbol="NVDA",
+                    display_name="NVIDIA Corp.",
+                    asset_class=AssetClass.STOCK,
                 ),
-            )
-        }
+            ),
+            selected_instrument_id="instrument:equity:us:nvda",
+        ).model_dump(mode="python"),
     )
 
     with pytest.raises(ValidationError, match="instrument_resolutions"):
-        DailyReport.model_validate(report.model_dump(mode="python"))
+        DailyReport.model_validate(payload)
 
 
 @pytest.mark.schema
