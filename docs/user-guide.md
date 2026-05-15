@@ -91,7 +91,10 @@ Settings. Report summaries are concise by default; provider, evidence, and audit
 available from report submenus. In an interactive terminal, menu commands clear and redraw the current
 screen so tables, report summaries, and command output do not accumulate as scrollback.
 Agent Chat can summarize selected reports and use project MCP tools; independent web-search chat
-context is not audited report evidence unless those tools persist it.
+context is not audited report evidence unless those tools persist it. While Codex is working, Agent
+Chat shows a `Thinking` animation with a sanitized activity trace of observable events such as tool
+use, response drafting, and retries. It does not expose private chain-of-thought; ask for a reasoning
+summary when you want the rationale behind an answer.
 
 ## Quick Start: Generate Your First Report
 

@@ -9,15 +9,19 @@ from datetime import date
 from pathlib import Path
 from typing import Protocol
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.json import JSON
+from rich.live import Live
 from rich.panel import Panel
+from rich.spinner import Spinner
 from rich.table import Table
+from rich.text import Text
 
 from nlp_stock_prediction.app.codex_agent import (
     CodexAgentAdapter,
     CodexAgentError,
     CodexTurnRequest,
+    CodexTurnResult,
 )
 from nlp_stock_prediction.app.evaluation import (
     EVALUATION_COMMAND_SPECS,
@@ -53,6 +57,7 @@ from nlp_stock_prediction.pipeline import generate_daily_report
 from nlp_stock_prediction.storage import initialize_research_database
 
 InputFunc = Callable[[str], str]
+_MAX_CODEX_ACTIVITY_LINES = 10
 
 
 class EvaluationServiceFactory(Protocol):
@@ -308,7 +313,7 @@ class TerminalApp:
                 return
             self._clear_screen()
             try:
-                result = self.codex_adapter.send(
+                result = self._send_codex_turn_with_activity(
                     self._codex_turn_request(
                         message=message,
                         selected=selected,
@@ -325,7 +330,7 @@ class TerminalApp:
                     )
                     session = None
                     try:
-                        result = self.codex_adapter.send(
+                        result = self._send_codex_turn_with_activity(
                             self._codex_turn_request(
                                 message=message,
                                 selected=selected,
@@ -525,6 +530,32 @@ class TerminalApp:
             ),
         )
 
+    def _send_codex_turn_with_activity(self, request: CodexTurnRequest) -> CodexTurnResult:
+        activity = _CodexActivity()
+        with Live(
+            activity.render(),
+            console=self.console,
+            refresh_per_second=8,
+            transient=False,
+        ) as live:
+
+            def handle_event(event: dict[str, object]) -> None:
+                activity.record_event(event)
+                live.update(activity.render())
+
+            try:
+                result = self.codex_adapter.send(
+                    request,
+                    on_event=handle_event,
+                )
+            except CodexAgentError:
+                activity.record_status("Codex turn failed.")
+                live.update(activity.render(done=True))
+                raise
+            activity.record_status("Response ready.")
+            live.update(activity.render(done=True))
+            return result
+
     def _evaluation_extra_write_roots(
         self,
         selected: ReportIndexEntry | None,
@@ -657,6 +688,114 @@ def _looks_like_stale_codex_session(message: str) -> bool:
         marker in normalized
         for marker in ("not found", "no such", "could not", "cannot", "invalid", "resume")
     )
+
+
+class _CodexActivity:
+    def __init__(self) -> None:
+        self._lines: list[str] = []
+        self.record_status("Starting Codex turn.")
+
+    def record_event(self, event: dict[str, object]) -> None:
+        line = _codex_activity_line(event)
+        if line is not None:
+            self.record_status(line)
+
+    def record_status(self, message: str) -> None:
+        line = message.strip()
+        if not line or (self._lines and self._lines[-1] == line):
+            return
+        self._lines.append(line)
+
+    def render(self, *, done: bool = False) -> Panel:
+        status = (
+            Text("Response ready", style="green")
+            if done
+            else Spinner("dots", text=Text("Thinking", style="cyan"))
+        )
+        body = Group(
+            status,
+            Text("\n".join(self._lines[-_MAX_CODEX_ACTIVITY_LINES:]), style="dim"),
+        )
+        return Panel(
+            body,
+            title="Codex Activity",
+            border_style="green" if done else "cyan",
+        )
+
+
+def _codex_activity_line(event: dict[str, object]) -> str | None:
+    event_type = _string_field(event, "type", "event", "kind")
+    item = _dict_field(event, "item") or _dict_field(event, "payload")
+    item_type = _string_field(item, "type") if item is not None else None
+    combined = " ".join(value for value in (event_type, item_type) if value).lower()
+    name = _string_field(event, "tool_name", "toolName", "name", "server", "function")
+    if name is None and item is not None:
+        name = _string_field(item, "tool_name", "toolName", "name", "server", "function")
+
+    if "error" in combined:
+        return "Codex reported an error."
+    if ("session" in combined or "thread" in combined) and any(
+        marker in combined for marker in ("start", "config")
+    ):
+        return "Session connected."
+    if "turn" in combined and any(marker in combined for marker in ("start", "begin")):
+        return "Turn started."
+    if any(marker in combined for marker in ("tool", "function_call", "mcp")):
+        return _tool_activity_line(name)
+    if any(marker in combined for marker in ("reason", "thinking")):
+        return "Reasoning privately and checking the evidence."
+    if any(marker in combined for marker in ("assistant", "message", "response", "output")):
+        return "Drafting the response."
+    if event_type:
+        return f"Observed Codex event: {_humanize_event_type(event_type)}."
+    return None
+
+
+def _tool_activity_line(name: str | None) -> str:
+    display_name = _display_name(name)
+    if display_name is None:
+        return "Using a tool."
+    normalized = display_name.lower()
+    if "shell" in normalized:
+        return "Running local shell command."
+    if "web" in normalized or "search" in normalized:
+        return "Checking web context."
+    if "mcp" in normalized:
+        return "Using project MCP tool."
+    return f"Using tool: {display_name}."
+
+
+def _string_field(payload: dict[str, object] | None, *keys: str) -> str | None:
+    if payload is None:
+        return None
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _dict_field(payload: dict[str, object], key: str) -> dict[str, object] | None:
+    value = payload.get(key)
+    return value if isinstance(value, dict) else None
+
+
+def _display_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    name = value.strip().splitlines()[0]
+    if not name:
+        return None
+    if len(name) > 60:
+        return f"{name[:57]}..."
+    return name
+
+
+def _humanize_event_type(value: str) -> str:
+    label = value.replace("_", " ").replace("-", " ").strip()
+    if not label:
+        return "event"
+    return label[:80]
 
 
 __all__ = ["TerminalApp", "run_app"]

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from nlp_stock_prediction.app.ui import TerminalApp
+from nlp_stock_prediction.app.ui import TerminalApp, _codex_activity_line, _CodexActivity
 from nlp_stock_prediction.cli import build_parser
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
@@ -133,6 +133,36 @@ def test_terminal_app_clears_screen_between_menu_commands(tmp_path: Path) -> Non
     assert rendered.count(clear_sequence) >= 3
     assert rendered.index("Research Defaults") > rendered.index(clear_sequence)
     assert "Choose a listed option." in rendered
+
+
+def test_codex_activity_renders_thinking_status_without_private_content() -> None:
+    activity = _CodexActivity()
+    activity.record_event(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "function_call",
+                "name": "shell_command",
+                "arguments": "private chain-of-thought should not render",
+            },
+        }
+    )
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, color_system=None)
+
+    console.print(activity.render())
+
+    rendered = output.getvalue()
+    assert "Thinking" in rendered
+    assert "Running local shell command." in rendered
+    assert "private chain-of-thought" not in rendered
+
+
+def test_codex_activity_summarizes_reasoning_events() -> None:
+    assert (
+        _codex_activity_line({"type": "item.started", "item": {"type": "reasoning"}})
+        == "Reasoning privately and checking the evidence."
+    )
 
 
 @pytest.mark.integration

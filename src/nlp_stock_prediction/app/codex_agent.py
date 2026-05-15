@@ -7,6 +7,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,12 +28,30 @@ class ProcessResult:
     stderr: str
 
 
+StdoutLineHandler = Callable[[str], None]
+CodexEventHandler = Callable[[dict[str, object]], None]
+
+
 class ProcessRunner(Protocol):
-    def run(self, command: list[str], *, cwd: Path) -> ProcessResult: ...
+    def run(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        on_stdout_line: StdoutLineHandler | None = None,
+    ) -> ProcessResult: ...
 
 
 class SubprocessRunner:
-    def run(self, command: list[str], *, cwd: Path) -> ProcessResult:
+    def run(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        on_stdout_line: StdoutLineHandler | None = None,
+    ) -> ProcessResult:
+        if on_stdout_line is not None:
+            return self._run_streaming(command, cwd=cwd, on_stdout_line=on_stdout_line)
         completed = subprocess.run(
             command,
             cwd=cwd,
@@ -45,6 +65,46 @@ class SubprocessRunner:
             returncode=completed.returncode,
             stdout=completed.stdout or "",
             stderr=completed.stderr or "",
+        )
+
+    def _run_streaming(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        on_stdout_line: StdoutLineHandler,
+    ) -> ProcessResult:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+
+        def read_stderr() -> None:
+            if process.stderr is None:
+                return
+            for line in process.stderr:
+                stderr_lines.append(line)
+
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+        stderr_thread.start()
+        if process.stdout is not None:
+            for line in process.stdout:
+                stdout_lines.append(line)
+                on_stdout_line(line)
+        returncode = process.wait()
+        stderr_thread.join()
+        return ProcessResult(
+            returncode=returncode,
+            stdout="".join(stdout_lines),
+            stderr="".join(stderr_lines),
         )
 
 
@@ -108,7 +168,12 @@ class CodexAgentAdapter:
             'Install the MCP extra first: python -m pip install -e ".[codex-smoke]"',
         )
 
-    def send(self, request: CodexTurnRequest) -> CodexTurnResult:
+    def send(
+        self,
+        request: CodexTurnRequest,
+        *,
+        on_event: CodexEventHandler | None = None,
+    ) -> CodexTurnResult:
         request.session_dir.mkdir(parents=True, exist_ok=True)
         transcript_path = request.transcript_path or request.session_dir / "transcript.jsonl"
         turn_index = _next_turn_index(transcript_path)
@@ -120,7 +185,11 @@ class CodexAgentAdapter:
             else self._start_command(request, prompt, last_message_path)
         )
         _append_transcript(transcript_path, role="user", content=request.user_message)
-        result = self._runner.run(command, cwd=request.repo_root)
+        result = self._runner.run(
+            command,
+            cwd=request.repo_root,
+            on_stdout_line=_event_stream_handler(on_event) if on_event is not None else None,
+        )
         if result.returncode != 0:
             _append_transcript(transcript_path, role="error", content=result.stderr.strip())
             raise CodexAgentError(result.stderr.strip() or "Codex chat turn failed.")
@@ -230,6 +299,14 @@ def parse_codex_jsonl(payload: str | None) -> tuple[dict[str, object], ...]:
     return tuple(events)
 
 
+def _event_stream_handler(on_event: CodexEventHandler) -> StdoutLineHandler:
+    def handle_line(line: str) -> None:
+        for event in parse_codex_jsonl(line):
+            on_event(event)
+
+    return handle_line
+
+
 def extract_session_id(events: tuple[dict[str, object], ...]) -> str | None:
     for event in events:
         value = _session_id_from_object(event)
@@ -292,6 +369,11 @@ def _build_prompt(request: CodexTurnRequest) -> str:
             "chat context rather than report evidence."
         ),
         "Keep conclusions high-level and concise unless the user asks for audit detail.",
+        (
+            "Do not reveal private chain-of-thought. If the user asks how you are thinking, "
+            "provide concise reasoning summaries, visible assumptions, and observable "
+            "tool/activity details instead."
+        ),
         "Do not provide trading instructions, position sizing, or buy/sell commands.",
         f"Research database: {_path_arg(request.repo_root, request.database_path)}",
     ]
@@ -430,11 +512,13 @@ def _python_has_mcp_server(python_executable: Path, repo_root: Path | None) -> b
 __all__ = [
     "CodexAgentAdapter",
     "CodexAgentError",
+    "CodexEventHandler",
     "CodexHealth",
     "CodexTurnRequest",
     "CodexTurnResult",
     "ProcessResult",
     "ProcessRunner",
+    "StdoutLineHandler",
     "extract_session_id",
     "parse_codex_jsonl",
 ]
