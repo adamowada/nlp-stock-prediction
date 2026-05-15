@@ -154,15 +154,71 @@ def test_codex_activity_renders_thinking_status_without_private_content() -> Non
 
     rendered = output.getvalue()
     assert "Thinking" in rendered
-    assert "Running local shell command." in rendered
+    assert "Finished tool: shell_command." in rendered
     assert "private chain-of-thought" not in rendered
 
 
 def test_codex_activity_summarizes_reasoning_events() -> None:
     assert (
-        _codex_activity_line({"type": "item.started", "item": {"type": "reasoning"}})
-        == "Reasoning privately and checking the evidence."
+        _codex_activity_line(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "reasoning",
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": "Checking report evidence and provider health.",
+                        }
+                    ],
+                },
+            }
+        )
+        == "Reasoning: Checking report evidence and provider health."
     )
+
+
+def test_codex_activity_names_mcp_tool_and_safe_arguments() -> None:
+    assert _codex_activity_line(
+        {
+            "type": "item.started",
+            "item": {
+                "type": "mcp_tool_call",
+                "server": "nlp-stock-prediction",
+                "tool": "inspect_research_run",
+                "arguments": (
+                    '{"run_id":"phase4-2026-05-14-nflx","include_artifacts":true,'
+                    '"api_key":"secret"}'
+                ),
+                "status": "in_progress",
+            },
+        }
+    ) == (
+        "Started MCP tool: inspect_research_run(run_id=phase4-2026-05-14-nflx, "
+        "include_artifacts=true, api_key=<redacted>)."
+    )
+
+
+def test_codex_activity_summarizes_shell_command_completion() -> None:
+    assert (
+        _codex_activity_line(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "command_execution",
+                    "command": "Get-Location",
+                    "exit_code": 0,
+                    "status": "completed",
+                },
+            }
+        )
+        == "Finished shell command (exit 0): Get-Location."
+    )
+
+
+def test_codex_activity_suppresses_unhelpful_item_lifecycle_events() -> None:
+    assert _codex_activity_line({"type": "item.started", "item": {"type": "unknown"}}) is None
+    assert _codex_activity_line({"type": "item.completed", "item": {"type": "unknown"}}) is None
 
 
 @pytest.mark.integration

@@ -57,7 +57,21 @@ from nlp_stock_prediction.pipeline import generate_daily_report
 from nlp_stock_prediction.storage import initialize_research_database
 
 InputFunc = Callable[[str], str]
-_MAX_CODEX_ACTIVITY_LINES = 10
+_MAX_CODEX_ACTIVITY_LINES = 14
+_MAX_ACTIVITY_LINE_LENGTH = 120
+_MAX_ACTIVITY_VALUE_LENGTH = 48
+_SENSITIVE_ACTIVITY_MARKERS = (
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer",
+    "credential",
+    "password",
+    "secret",
+    "token",
+    "user_agent",
+    "user-agent",
+)
 
 
 class EvaluationServiceFactory(Protocol):
@@ -727,42 +741,261 @@ def _codex_activity_line(event: dict[str, object]) -> str | None:
     event_type = _string_field(event, "type", "event", "kind")
     item = _dict_field(event, "item") or _dict_field(event, "payload")
     item_type = _string_field(item, "type") if item is not None else None
-    combined = " ".join(value for value in (event_type, item_type) if value).lower()
-    name = _string_field(event, "tool_name", "toolName", "name", "server", "function")
-    if name is None and item is not None:
-        name = _string_field(item, "tool_name", "toolName", "name", "server", "function")
 
-    if "error" in combined:
-        return "Codex reported an error."
-    if ("session" in combined or "thread" in combined) and any(
-        marker in combined for marker in ("start", "config")
-    ):
+    if event_type == "thread.started":
         return "Session connected."
-    if "turn" in combined and any(marker in combined for marker in ("start", "begin")):
+    if event_type == "turn.started":
         return "Turn started."
-    if any(marker in combined for marker in ("tool", "function_call", "mcp")):
-        return _tool_activity_line(name)
-    if any(marker in combined for marker in ("reason", "thinking")):
-        return "Reasoning privately and checking the evidence."
-    if any(marker in combined for marker in ("assistant", "message", "response", "output")):
-        return "Drafting the response."
-    if event_type:
+    if event_type == "turn.completed":
+        return _turn_completed_line(event)
+    if event_type is not None and "error" in event_type.lower():
+        return "Codex reported an error."
+
+    if item is not None:
+        phase = _activity_phase(event_type, _string_field(item, "status"))
+        if item_type == "command_execution":
+            return _command_activity_line(item, phase)
+        if _is_tool_item(item_type):
+            return _tool_activity_line(event, item, phase)
+        if item_type == "reasoning":
+            return _reasoning_activity_line(item)
+        if item_type == "agent_message":
+            return "Final response drafted." if phase == "Finished" else None
+        if event_type is not None and event_type.startswith("item."):
+            return None
+
+    if event_type is not None:
         return f"Observed Codex event: {_humanize_event_type(event_type)}."
     return None
 
 
-def _tool_activity_line(name: str | None) -> str:
-    display_name = _display_name(name)
-    if display_name is None:
-        return "Using a tool."
-    normalized = display_name.lower()
-    if "shell" in normalized:
-        return "Running local shell command."
-    if "web" in normalized or "search" in normalized:
-        return "Checking web context."
-    if "mcp" in normalized:
-        return "Using project MCP tool."
-    return f"Using tool: {display_name}."
+def _activity_phase(event_type: str | None, status: str | None) -> str:
+    normalized_status = (status or "").lower()
+    normalized_event = (event_type or "").lower()
+    if normalized_status in {"failed", "error"}:
+        return "Failed"
+    if normalized_status in {"completed", "succeeded", "success"}:
+        return "Finished"
+    if normalized_status in {"in_progress", "running", "started"}:
+        return "Started"
+    if normalized_event.endswith(".completed"):
+        return "Finished"
+    if normalized_event.endswith(".started"):
+        return "Started"
+    return "Observed"
+
+
+def _command_activity_line(item: dict[str, object], phase: str) -> str:
+    command = _display_name(_string_field(item, "command"))
+    exit_code = item.get("exit_code")
+    if phase == "Finished":
+        suffix = f" (exit {exit_code})" if isinstance(exit_code, int) else ""
+        return _activity_sentence(f"Finished shell command{suffix}", command)
+    if phase == "Failed":
+        suffix = f" (exit {exit_code})" if isinstance(exit_code, int) else ""
+        return _activity_sentence(f"Failed shell command{suffix}", command)
+    return _activity_sentence("Running shell command", command)
+
+
+def _tool_activity_line(
+    event: dict[str, object],
+    item: dict[str, object],
+    phase: str,
+) -> str:
+    name = _tool_name(event, item)
+    server = _string_field(item, "server") or _string_field(event, "server")
+    arguments = _argument_summary(_arguments_payload(item) or _arguments_payload(event))
+    result = _result_summary(item) if phase in {"Finished", "Failed"} else None
+    if name is None:
+        name = f"MCP tool on {server}" if server is not None else "tool"
+    prefix = f"{phase} MCP tool" if server is not None else f"{phase} tool"
+    detail = f"{name}{arguments}"
+    if result is not None:
+        detail = f"{detail}; {result}"
+    return _activity_sentence(prefix, detail)
+
+
+def _tool_name(event: dict[str, object], item: dict[str, object]) -> str | None:
+    for payload in (item, event):
+        name = _string_field(
+            payload,
+            "tool_name",
+            "toolName",
+            "name",
+            "function",
+            "tool",
+            "command",
+        )
+        if name is not None:
+            return _display_name(name)
+    return None
+
+
+def _is_tool_item(item_type: str | None) -> bool:
+    if item_type is None:
+        return False
+    normalized = item_type.lower()
+    return any(marker in normalized for marker in ("tool", "function_call", "mcp"))
+
+
+def _reasoning_activity_line(item: dict[str, object]) -> str:
+    summary = _reasoning_summary(item)
+    if summary is not None:
+        return _activity_sentence("Reasoning", summary)
+    return "Reasoning through evidence and next steps."
+
+
+def _reasoning_summary(item: dict[str, object]) -> str | None:
+    summary = item.get("summary")
+    if not isinstance(summary, list):
+        return None
+    texts: list[str] = []
+    for entry in summary:
+        if not isinstance(entry, dict):
+            continue
+        text = _string_field(entry, "text")
+        if text is not None:
+            texts.append(text)
+    if not texts:
+        return None
+    return _display_name(" ".join(texts))
+
+
+def _turn_completed_line(event: dict[str, object]) -> str:
+    usage = _dict_field(event, "usage")
+    if usage is None:
+        return "Turn completed."
+    output_tokens = usage.get("output_tokens")
+    reasoning_tokens = usage.get("reasoning_output_tokens")
+    details: list[str] = []
+    if isinstance(output_tokens, int):
+        details.append(f"output {output_tokens}")
+    if isinstance(reasoning_tokens, int):
+        details.append(f"reasoning {reasoning_tokens}")
+    if not details:
+        return "Turn completed."
+    return f"Turn completed ({', '.join(details)} tokens)."
+
+
+def _arguments_payload(payload: dict[str, object]) -> object | None:
+    for key in ("arguments", "args", "input", "parameters"):
+        value = payload.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _argument_summary(payload: object | None) -> str:
+    arguments = _coerce_mapping(payload)
+    if not arguments:
+        return ""
+    parts: list[str] = []
+    for key, value in arguments.items():
+        if len(parts) >= 4:
+            parts.append("...")
+            break
+        if _is_sensitive_activity_key(key):
+            parts.append(f"{key}=<redacted>")
+            continue
+        parts.append(f"{key}={_format_activity_value(value)}")
+    return f"({', '.join(parts)})" if parts else ""
+
+
+def _result_summary(item: dict[str, object]) -> str | None:
+    if (error := _string_field(item, "error")) is not None:
+        return f"error={_display_name(error)}"
+    for key in ("result", "output"):
+        value = item.get(key)
+        if value is not None:
+            return _structured_result_summary(value)
+    output = _string_field(item, "aggregated_output")
+    if output is not None:
+        text = _first_nonempty_line(output)
+        return f"output={text}" if text is not None else None
+    return None
+
+
+def _structured_result_summary(value: object) -> str | None:
+    mapping = _coerce_mapping(value)
+    if mapping:
+        preferred = (
+            "status",
+            "run_id",
+            "symbol",
+            "report_path",
+            "markdown_path",
+            "json_path",
+            "evidence_count",
+            "candidate_count",
+            "artifact_count",
+            "warning_count",
+        )
+        parts = [
+            f"{key}={_format_activity_value(mapping[key])}"
+            for key in preferred
+            if key in mapping and not _is_sensitive_activity_key(key)
+        ]
+        if parts:
+            return ", ".join(parts[:4])
+    if isinstance(value, str):
+        text = _first_nonempty_line(value)
+        if text is not None:
+            return f"result={text}"
+    return None
+
+
+def _coerce_mapping(value: object | None) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def _format_activity_value(value: object) -> str:
+    if isinstance(value, str):
+        return _redacted_or_display_value(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if value is None:
+        return "null"
+    if isinstance(value, list):
+        return f"{len(value)} items"
+    if isinstance(value, dict):
+        return f"{len(value)} fields"
+    return _redacted_or_display_value(str(value))
+
+
+def _redacted_or_display_value(value: str) -> str:
+    if _looks_sensitive_activity_text(value):
+        return "<redacted>"
+    return _display_name(value, max_length=_MAX_ACTIVITY_VALUE_LENGTH) or ""
+
+
+def _first_nonempty_line(value: str) -> str | None:
+    for line in value.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return _redacted_or_display_value(stripped)
+    return None
+
+
+def _activity_sentence(prefix: str, detail: str | None) -> str:
+    if detail is None:
+        return f"{prefix}."
+    trimmed = _display_name(
+        detail,
+        max_length=max(20, _MAX_ACTIVITY_LINE_LENGTH - len(prefix) - 3),
+    )
+    if not trimmed:
+        return f"{prefix}."
+    return f"{prefix}: {trimmed.rstrip('.')}."
 
 
 def _string_field(payload: dict[str, object] | None, *keys: str) -> str | None:
@@ -780,14 +1013,24 @@ def _dict_field(payload: dict[str, object], key: str) -> dict[str, object] | Non
     return value if isinstance(value, dict) else None
 
 
-def _display_name(value: str | None) -> str | None:
+def _is_sensitive_activity_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return any(marker in normalized for marker in _SENSITIVE_ACTIVITY_MARKERS)
+
+
+def _looks_sensitive_activity_text(value: str) -> bool:
+    normalized = value.lower()
+    return any(marker in normalized for marker in _SENSITIVE_ACTIVITY_MARKERS)
+
+
+def _display_name(value: str | None, *, max_length: int = _MAX_ACTIVITY_LINE_LENGTH) -> str | None:
     if value is None:
         return None
-    name = value.strip().splitlines()[0]
+    name = " ".join(value.strip().split())
     if not name:
         return None
-    if len(name) > 60:
-        return f"{name[:57]}..."
+    if len(name) > max_length:
+        return f"{name[: max_length - 3]}..."
     return name
 
 
