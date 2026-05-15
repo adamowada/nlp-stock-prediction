@@ -43,6 +43,24 @@ def analyze_fundamentals(
         balance_score,
     )
     known_scores = tuple(score for score in component_scores if score is not None)
+    if not known_scores:
+        return FundamentalAnalysis(
+            ticker=snapshot.ticker,
+            summary=(
+                "Unknown fundamental context: valuation, profitability, growth, "
+                "and balance sheet data are unavailable."
+            ),
+            signal=AnalysisSignal.UNKNOWN,
+            confidence=0.0,
+            metrics=metric_values_from_provider(snapshot.metrics),
+            valuation_summary=valuation_summary,
+            profitability_summary=profitability_summary,
+            growth_summary=growth_summary,
+            balance_sheet_risk=balance_summary,
+            earnings_timing=earnings_timing,
+            notable_filings=notable_filings,
+            assumptions=("Fundamental signal is unavailable until provider metrics are present.",),
+        )
     confidence = round(min(1.0, 0.25 + (len(known_scores) * 0.17)), 4)
     average_score = sum(known_scores) / len(known_scores) if known_scores else 0.5
     signal = _fundamental_signal(

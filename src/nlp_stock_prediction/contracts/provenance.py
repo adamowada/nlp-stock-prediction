@@ -78,11 +78,7 @@ class SourceProvenance(ContractModel):
 
     @model_validator(mode="after")
     def validate_external_traceability(self) -> SourceProvenance:
-        if (
-            self.observed_at is not None
-            and self.observed_at > self.fetched_at
-            and self.freshness_status != FreshnessStatus.UNKNOWN
-        ):
+        if self.observed_at is not None and self.observed_at > self.fetched_at:
             raise ValueError("source provenance observed_at must not be after fetched_at")
         if self.source_kind == SourceKind.INTERNAL_ANALYSIS:
             return self

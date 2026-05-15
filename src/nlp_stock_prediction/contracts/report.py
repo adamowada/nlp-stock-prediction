@@ -421,7 +421,13 @@ class AuditArtifact(ContractModel):
         "prediction_evaluation",
         "prediction_outcome",
         "prediction_outcome_evaluation",
+        "outcome_review_summary",
+        "artifact_freshness_review",
+        "evidence_aging_summary",
+        "source_reliability_note",
+        "provider_replacement_playbook",
         "calibration_summary",
+        "calibration_drift_check",
         "signal_family_ablation",
         "walk_forward_evaluation",
         "audit_manifest",
@@ -968,11 +974,11 @@ def _iter_report_evidence_references(report: DailyReport) -> tuple[EvidenceRefer
 
 _TRADING_INSTRUCTION_PATTERNS = (
     r"\b(buy|sell)\s+(?!or\b|instruction\b|guidance\b|language\b)"
-    r"(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
-    r"\b(purchase|acquire|accumulate)\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
-    r"\bload\s+up\s+on\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
-    r"\b(trim|liquidate|cover)\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
-    r"\breduce\s+exposure\s+(to|in)\s+(?-i:[A-Z][A-Z0-9./-]{0,12})\b",
+    r"[A-Z][A-Z0-9./-]{0,12}\b",
+    r"\b(purchase|acquire|accumulate)\s+[A-Z][A-Z0-9./-]{0,12}\b",
+    r"\bload\s+up\s+on\s+[A-Z][A-Z0-9./-]{0,12}\b",
+    r"\b(trim|liquidate|cover)\s+[A-Z][A-Z0-9./-]{0,12}\b",
+    r"\breduce\s+exposure\s+(to|in)\s+[A-Z][A-Z0-9./-]{0,12}\b",
     r"\b(buy|sell|short)\s+the\s+(stock|shares?|coin|token|etf|contract|instrument)\b",
     r"\b(purchase|acquire|accumulate|load\s+up\s+on)\s+the\s+"
     r"(stock|shares?|coin|token|etf|contract|instrument)\b",

@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
+from typing import Literal
 
 from nlp_stock_prediction.contracts.base import JsonObject
+
+type EvaluationDataMode = Literal["live"]
 
 
 @dataclass(frozen=True)
@@ -166,6 +169,27 @@ class PredictionCandidateRecord:
 
 
 @dataclass(frozen=True)
+class EvaluationAttemptRecord:
+    evaluation_attempt_id: str
+    run_id: str
+    attempt_kind: str
+    subject_id: str
+    status: str
+    started_at: datetime
+    source_run_id: str | None = None
+    tool_run_id: str | None = None
+    candidate_id: str | None = None
+    outcome_id: str | None = None
+    calibration_id: str | None = None
+    instrument_id: str | None = None
+    symbol: str | None = None
+    completed_at: datetime | None = None
+    data_mode: EvaluationDataMode = "live"
+    provider_mode: EvaluationDataMode = "live"
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class PredictionEvaluationRecord:
     evaluation_id: str
     candidate_id: str
@@ -177,11 +201,14 @@ class PredictionEvaluationRecord:
     status: str
     score: float
     run_id: str | None = None
+    evaluation_attempt_id: str | None = None
     direction: str | None = None
     baseline_comparison: JsonObject = field(default_factory=dict)
     evidence_counts: JsonObject = field(default_factory=dict)
     signal_counts: JsonObject = field(default_factory=dict)
     artifact_id: str | None = None
+    data_mode: EvaluationDataMode = "live"
+    provider_mode: EvaluationDataMode = "live"
     metadata: JsonObject = field(default_factory=dict)
 
 
@@ -196,12 +223,15 @@ class PredictionOutcomeRecord:
     evaluation_window_end: datetime
     status: str
     horizon: str = "unknown"
+    evaluation_attempt_id: str | None = None
     observed_result: str | None = None
     observed_at: datetime | None = None
     result_summary: str | None = None
     result_value: float | None = None
     baseline_value: float | None = None
     limitations: tuple[str, ...] = ()
+    data_mode: EvaluationDataMode = "live"
+    provider_mode: EvaluationDataMode = "live"
     metadata: JsonObject = field(default_factory=dict)
 
 
@@ -215,10 +245,13 @@ class PredictionOutcomeEvaluationRecord:
     evaluated_at: datetime
     status: str
     run_id: str | None = None
+    evaluation_attempt_id: str | None = None
     quality_score: float | None = None
     baseline_comparison: JsonObject = field(default_factory=dict)
     artifact_id: str | None = None
     limitations: tuple[str, ...] = ()
+    data_mode: EvaluationDataMode = "live"
+    provider_mode: EvaluationDataMode = "live"
     metadata: JsonObject = field(default_factory=dict)
 
 
@@ -259,6 +292,15 @@ class OutcomeEvaluationArtifactLinkRecord:
 
 
 @dataclass(frozen=True)
+class CalibrationSourceOutcomeEvaluationLinkRecord:
+    calibration_id: str
+    outcome_evaluation_id: str
+    relationship: str = "source_outcome_evaluation"
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
 class CalibrationRunRecord:
     calibration_id: str
     run_id: str
@@ -266,10 +308,37 @@ class CalibrationRunRecord:
     created_at: datetime
     point_in_time_cutoff: datetime
     tool_run_id: str | None = None
+    evaluation_attempt_id: str | None = None
     cohort_query: JsonObject = field(default_factory=dict)
     source_outcome_evaluation_ids: tuple[str, ...] = ()
     artifact_id: str | None = None
     limitations: tuple[str, ...] = ()
+    data_mode: EvaluationDataMode = "live"
+    provider_mode: EvaluationDataMode = "live"
+    metadata: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CalibrationDriftCheckRecord:
+    drift_check_id: str
+    run_id: str
+    created_at: datetime
+    as_of: datetime
+    drift_status: str
+    evaluation_attempt_id: str | None = None
+    tool_run_id: str | None = None
+    prior_calibration_id: str | None = None
+    current_calibration_id: str | None = None
+    prediction_type: str | None = None
+    horizon: str | None = None
+    signal_family: str | None = None
+    metric_deltas: JsonObject = field(default_factory=dict)
+    source_calibration_artifact_ids: tuple[str, ...] = ()
+    source_outcome_evaluation_ids: tuple[str, ...] = ()
+    artifact_id: str | None = None
+    limitations: tuple[str, ...] = ()
+    data_mode: EvaluationDataMode = "live"
+    provider_mode: EvaluationDataMode = "live"
     metadata: JsonObject = field(default_factory=dict)
 
 

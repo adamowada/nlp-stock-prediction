@@ -17,18 +17,89 @@ from nlp_stock_prediction.contracts.base import (
 )
 from nlp_stock_prediction.contracts.enums import (
     Direction,
+    FreshnessStatus,
     PredictionOutcomeEvaluationStatus,
     PredictionOutcomeResult,
     PredictionOutcomeStatus,
     PredictionStatus,
     PredictionType,
+    RetrievalMethod,
     SignalArtifactFamily,
+    SourceKind,
     TimeHorizon,
 )
 from nlp_stock_prediction.contracts.provenance import EvidenceReference
 from nlp_stock_prediction.contracts.signal_artifacts import (
     SignalArtifactType,
     validate_signal_artifact_family_type,
+)
+
+type Phase7LiveDataMode = Literal["live"]
+type EvidenceAgeStatus = Literal[
+    "fresh",
+    "aged_out",
+    "stale",
+    "missing",
+    "unknown",
+    "superseded",
+    "provider_replaced",
+    "malformed",
+]
+type ArtifactFreshnessReviewStatus = Literal[
+    "fresh",
+    "stale",
+    "missing",
+    "unknown",
+    "malformed",
+    "hash_mismatch",
+    "aged_out",
+    "superseded",
+    "provider_replaced",
+]
+type SourceReliabilityRating = Literal["high", "medium", "low", "unknown", "unavailable"]
+type ProviderFamily = Literal[
+    "market_data",
+    "news",
+    "social",
+    "fundamentals",
+    "macro",
+    "scraping",
+    "unknown",
+]
+type ProviderCompatibilityStatus = Literal[
+    "compatible",
+    "compatible_with_limitations",
+    "incompatible",
+    "not_evaluable",
+    "unknown",
+]
+type CalibrationDriftStatus = Literal[
+    "stable",
+    "watch",
+    "degraded",
+    "improved",
+    "inconclusive",
+    "insufficient_history",
+    "not_evaluable",
+]
+
+_RESOLVED_OUTCOME_EVALUATION_STATUSES = frozenset(
+    {
+        PredictionOutcomeEvaluationStatus.CONFIRMED,
+        PredictionOutcomeEvaluationStatus.MISSED,
+        PredictionOutcomeEvaluationStatus.MIXED,
+        PredictionOutcomeEvaluationStatus.INCONCLUSIVE,
+    }
+)
+_RESOLVED_DRIFT_STATUSES = frozenset({"stable", "watch", "degraded", "improved"})
+_REPORT_COUPLING_MARKERS = frozenset(
+    {
+        "inline_report_calculation",
+        "report_calculation",
+        "candidate_score_adjustment",
+        "trading_performance",
+        "pnl",
+    }
 )
 
 
@@ -642,6 +713,380 @@ class CalibrationSummary(ContractModel):
         return self
 
 
+class SourceReliabilityNote(ContractModel):
+    """Auditable reliability note for one source evidence item."""
+
+    schema_version: NonEmptyStr = "source-reliability-note.v1"
+    note_id: NonEmptyStr
+    evidence_id: NonEmptyStr
+    provider: NonEmptyStr
+    source_type: SourceKind
+    retrieval_method: RetrievalMethod
+    retrieved_at: AwareDatetime
+    observed_at: AwareDatetime | None = None
+    source_url: str | None = None
+    permalink: str | None = None
+    raw_identifier: str | None = None
+    raw_snapshot_id: str | None = None
+    freshness_status: FreshnessStatus
+    extraction_confidence: Confidence | None = None
+    reliability: SourceReliabilityRating
+    evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    related_artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    report_data_mode: Phase7LiveDataMode = "live"
+    provider_mode: Phase7LiveDataMode = "live"
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_source_reliability_note(self) -> SourceReliabilityNote:
+        if self.observed_at is not None and self.observed_at > self.retrieved_at:
+            raise ValueError("source reliability observed_at must not be after retrieved_at")
+        if _external_source_requires_trace(self.source_type, self.retrieval_method) and not (
+            self.source_url or self.permalink or self.raw_identifier or self.raw_snapshot_id
+        ):
+            raise ValueError("external source reliability notes require traceability")
+        if self.reliability in {"unknown", "unavailable", "low"} and not self.limitations:
+            raise ValueError("limited source reliability notes require limitations")
+        _validate_unique("source reliability evidence_ids", self.evidence_ids)
+        _validate_unique("source reliability related_artifact_ids", self.related_artifact_ids)
+        _validate_phase7_metadata(self.metadata)
+        return self
+
+
+class EvidenceAgingRecord(ContractModel):
+    """Structured review of how one prior evidence item aged across report runs."""
+
+    schema_version: NonEmptyStr = "evidence-aging-record.v1"
+    aging_record_id: NonEmptyStr
+    evidence_id: NonEmptyStr
+    provider: NonEmptyStr
+    source_type: SourceKind
+    retrieved_at: AwareDatetime | None = None
+    published_at: AwareDatetime | None = None
+    reviewed_at: AwareDatetime
+    age_status: EvidenceAgeStatus
+    freshness_status: FreshnessStatus = FreshnessStatus.UNKNOWN
+    source_reliability_note_id: str | None = None
+    source_artifact_id: str | None = None
+    replacement_provider: str | None = None
+    replacement_evidence_id: str | None = None
+    limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    report_data_mode: Phase7LiveDataMode = "live"
+    provider_mode: Phase7LiveDataMode = "live"
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_evidence_aging_record(self) -> EvidenceAgingRecord:
+        if (
+            self.published_at is not None
+            and self.retrieved_at is not None
+            and self.published_at > self.retrieved_at
+        ):
+            raise ValueError("evidence aging published_at must not be after retrieved_at")
+        if self.retrieved_at is not None and self.retrieved_at > self.reviewed_at:
+            raise ValueError("evidence aging retrieved_at must not be after reviewed_at")
+        if self.age_status != "fresh" and not self.limitations:
+            raise ValueError("non-fresh evidence aging records require limitations")
+        if self.age_status == "provider_replaced" and not (
+            self.replacement_provider or self.replacement_evidence_id
+        ):
+            raise ValueError("provider-replaced evidence requires a replacement reference")
+        _validate_phase7_metadata(self.metadata)
+        return self
+
+
+class ArtifactFreshnessReview(ContractModel):
+    """Structured freshness review for an artifact used by evaluation hardening."""
+
+    schema_version: NonEmptyStr = "artifact-freshness-review.v1"
+    freshness_review_id: NonEmptyStr
+    artifact_id: NonEmptyStr
+    artifact_type: NonEmptyStr
+    provider: NonEmptyStr | None = None
+    produced_by: str | None = None
+    reviewed_at: AwareDatetime
+    created_at: AwareDatetime | None = None
+    as_of: AwareDatetime | None = None
+    observed_at: AwareDatetime | None = None
+    freshness_status: ArtifactFreshnessReviewStatus
+    sha256: str | None = None
+    expected_sha256: str | None = None
+    source_evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    source_artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    report_data_mode: Phase7LiveDataMode = "live"
+    provider_mode: Phase7LiveDataMode = "live"
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_artifact_freshness_review(self) -> ArtifactFreshnessReview:
+        if self.created_at is not None and self.created_at > self.reviewed_at:
+            raise ValueError("artifact freshness created_at must not be after reviewed_at")
+        if self.as_of is not None and self.created_at is not None and self.as_of > self.created_at:
+            raise ValueError("artifact freshness as_of must not be after created_at")
+        if self.observed_at is not None and self.observed_at > self.reviewed_at:
+            raise ValueError("artifact freshness observed_at must not be after reviewed_at")
+        if self.freshness_status == "fresh" and self.as_of is None and self.observed_at is None:
+            raise ValueError("fresh artifact reviews require as_of or observed_at")
+        if self.freshness_status != "fresh" and not self.limitations:
+            raise ValueError("non-fresh artifact reviews require limitations")
+        if self.freshness_status == "hash_mismatch" and not (self.sha256 and self.expected_sha256):
+            raise ValueError("hash-mismatch artifact reviews require actual and expected hashes")
+        _validate_unique("artifact freshness source_evidence_ids", self.source_evidence_ids)
+        _validate_unique("artifact freshness source_artifact_ids", self.source_artifact_ids)
+        _validate_phase7_metadata(self.metadata)
+        return self
+
+
+class ProviderCompatibilityNote(ContractModel):
+    """Compatibility check for replacing one provider with another."""
+
+    schema_version: NonEmptyStr = "provider-compatibility-note.v1"
+    compatibility_note_id: NonEmptyStr
+    provider_family: ProviderFamily
+    source_provider: NonEmptyStr
+    replacement_provider: NonEmptyStr
+    checked_at: AwareDatetime
+    compatibility_status: ProviderCompatibilityStatus
+    required_fields: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    preserved_fields: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    missing_fields: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    expected_artifact_type: str | None = None
+    replacement_artifact_type: str | None = None
+    source_schema_version: str | None = None
+    replacement_schema_version: str | None = None
+    source_reliability_note_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    report_data_mode: Phase7LiveDataMode = "live"
+    provider_mode: Phase7LiveDataMode = "live"
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_provider_compatibility_note(self) -> ProviderCompatibilityNote:
+        _validate_unique("provider compatibility required_fields", self.required_fields)
+        _validate_unique("provider compatibility preserved_fields", self.preserved_fields)
+        _validate_unique("provider compatibility missing_fields", self.missing_fields)
+        _validate_unique(
+            "provider compatibility source_reliability_note_ids",
+            self.source_reliability_note_ids,
+        )
+        if self.compatibility_status == "compatible":
+            if self.missing_fields:
+                raise ValueError("compatible provider notes must not include missing_fields")
+            missing_required = tuple(
+                field for field in self.required_fields if field not in self.preserved_fields
+            )
+            if missing_required:
+                raise ValueError("compatible provider notes must preserve required_fields")
+        elif not self.limitations:
+            raise ValueError("limited provider compatibility notes require limitations")
+        if self.missing_fields and self.compatibility_status == "compatible":
+            raise ValueError("compatible provider notes must not include missing_fields")
+        _validate_phase7_metadata(self.metadata)
+        return self
+
+
+class ProviderReplacementPlaybook(ContractModel):
+    """Operational playbook for provider replacement without losing provenance."""
+
+    schema_version: NonEmptyStr = "provider-replacement-playbook.v1"
+    playbook_id: NonEmptyStr
+    provider_family: ProviderFamily
+    source_provider: NonEmptyStr
+    replacement_provider: NonEmptyStr
+    created_at: AwareDatetime
+    compatibility_notes: tuple[ProviderCompatibilityNote, ...] = Field(default_factory=tuple)
+    required_provenance_fields: tuple[NonEmptyStr, ...]
+    artifact_schema_versions: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    credential_requirements: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    unsupported_modes: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    report_data_mode: Phase7LiveDataMode = "live"
+    provider_mode: Phase7LiveDataMode = "live"
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_provider_replacement_playbook(self) -> ProviderReplacementPlaybook:
+        if not self.compatibility_notes:
+            raise ValueError("provider replacement playbooks require compatibility notes")
+        _validate_unique(
+            "provider replacement compatibility notes",
+            tuple(note.compatibility_note_id for note in self.compatibility_notes),
+        )
+        _validate_unique(
+            "provider replacement required_provenance_fields",
+            self.required_provenance_fields,
+        )
+        _validate_unique(
+            "provider replacement artifact_schema_versions",
+            self.artifact_schema_versions,
+        )
+        _validate_unique(
+            "provider replacement credential_requirements",
+            self.credential_requirements,
+        )
+        for note in self.compatibility_notes:
+            if note.provider_family != self.provider_family:
+                raise ValueError("provider playbook note family must match playbook")
+            if note.source_provider != self.source_provider:
+                raise ValueError("provider playbook note source_provider must match playbook")
+            if note.replacement_provider != self.replacement_provider:
+                raise ValueError("provider playbook note replacement_provider must match playbook")
+        if not any(
+            note.compatibility_status in {"compatible", "compatible_with_limitations"}
+            for note in self.compatibility_notes
+        ):
+            raise ValueError("compatible playbooks require at least one compatible provider note")
+        if (
+            any(
+                note.compatibility_status == "compatible_with_limitations"
+                for note in self.compatibility_notes
+            )
+            and not self.limitations
+        ):
+            raise ValueError("limited provider replacement playbooks require limitations")
+        _validate_phase7_metadata(self.metadata)
+        return self
+
+
+class OutcomeReviewSummary(ContractModel):
+    """Cross-run summary of a prior outcome review and its aging context."""
+
+    schema_version: NonEmptyStr = "outcome-review-summary.v1"
+    summary_id: NonEmptyStr
+    run_id: NonEmptyStr
+    candidate_id: NonEmptyStr
+    instrument_id: NonEmptyStr
+    symbol: NonEmptyStr
+    prediction_type: PredictionType
+    horizon: TimeHorizon = TimeHorizon.UNKNOWN
+    direction: Direction = Direction.UNKNOWN
+    created_at: AwareDatetime
+    prior_run_id: str | None = None
+    outcome_id: NonEmptyStr
+    outcome_evaluation_id: NonEmptyStr
+    outcome_status: PredictionOutcomeStatus
+    outcome_evaluation_status: PredictionOutcomeEvaluationStatus
+    quality_score: Confidence | None = None
+    outcome_evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    evidence_aging_records: tuple[EvidenceAgingRecord, ...] = Field(default_factory=tuple)
+    artifact_freshness_reviews: tuple[ArtifactFreshnessReview, ...] = Field(default_factory=tuple)
+    source_reliability_notes: tuple[SourceReliabilityNote, ...] = Field(default_factory=tuple)
+    source_calibration_artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    report_data_mode: Phase7LiveDataMode = "live"
+    provider_mode: Phase7LiveDataMode = "live"
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_outcome_review_summary(self) -> OutcomeReviewSummary:
+        resolved = self.outcome_evaluation_status in _RESOLVED_OUTCOME_EVALUATION_STATUSES
+        if resolved:
+            if self.outcome_status != PredictionOutcomeStatus.OBSERVED:
+                raise ValueError("resolved outcome summaries require observed outcomes")
+            if self.quality_score is None:
+                raise ValueError("resolved outcome summaries require quality_score")
+            if not (
+                self.outcome_evidence_ids
+                or self.artifact_ids
+                or self.evidence_aging_records
+                or self.artifact_freshness_reviews
+            ):
+                raise ValueError("resolved outcome summaries require evidence or artifacts")
+        else:
+            if self.quality_score is not None:
+                raise ValueError("unresolved outcome summaries must not report quality_score")
+            if not self.limitations:
+                raise ValueError("unresolved outcome summaries require limitations")
+        _validate_unique("outcome summary outcome_evidence_ids", self.outcome_evidence_ids)
+        _validate_unique("outcome summary artifact_ids", self.artifact_ids)
+        _validate_unique(
+            "outcome summary source_calibration_artifact_ids",
+            self.source_calibration_artifact_ids,
+        )
+        _validate_unique(
+            "outcome summary evidence aging records",
+            tuple(record.aging_record_id for record in self.evidence_aging_records),
+        )
+        _validate_unique(
+            "outcome summary artifact freshness reviews",
+            tuple(review.freshness_review_id for review in self.artifact_freshness_reviews),
+        )
+        _validate_unique(
+            "outcome summary source reliability notes",
+            tuple(note.note_id for note in self.source_reliability_notes),
+        )
+        _validate_phase7_metadata(self.metadata)
+        return self
+
+
+class CalibrationDriftCheck(ContractModel):
+    """Separate audit artifact describing calibration movement between cohorts."""
+
+    schema_version: NonEmptyStr = "calibration-drift-check.v1"
+    drift_check_id: NonEmptyStr
+    cohort_id: NonEmptyStr
+    created_at: AwareDatetime
+    as_of: AwareDatetime
+    prior_calibration_id: str | None = None
+    current_calibration_id: str | None = None
+    prediction_type: PredictionType | None = None
+    horizon: TimeHorizon | None = None
+    signal_family: SignalArtifactFamily | None = None
+    drift_status: CalibrationDriftStatus
+    metric_deltas: JsonObject = Field(default_factory=dict)
+    source_calibration_artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    source_outcome_evaluation_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    provider_compatibility_note_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    evidence_aging_record_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    artifact_freshness_review_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    report_data_mode: Phase7LiveDataMode = "live"
+    provider_mode: Phase7LiveDataMode = "live"
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_calibration_drift_check(self) -> CalibrationDriftCheck:
+        if self.created_at < self.as_of:
+            raise ValueError("calibration drift created_at must not be before as_of")
+        if self.drift_status in _RESOLVED_DRIFT_STATUSES:
+            if not self.prior_calibration_id or not self.current_calibration_id:
+                raise ValueError("resolved calibration drift requires prior and current summaries")
+            if not self.metric_deltas:
+                raise ValueError("resolved calibration drift requires metric_deltas")
+            if len(self.source_calibration_artifact_ids) < 2:
+                raise ValueError("resolved calibration drift requires source calibration artifacts")
+        else:
+            if self.metric_deltas:
+                raise ValueError("unresolved calibration drift must not report metric_deltas")
+            if not self.limitations:
+                raise ValueError("unresolved calibration drift requires limitations")
+        _validate_unique(
+            "calibration drift source_calibration_artifact_ids",
+            self.source_calibration_artifact_ids,
+        )
+        _validate_unique(
+            "calibration drift source_outcome_evaluation_ids",
+            self.source_outcome_evaluation_ids,
+        )
+        _validate_unique(
+            "calibration drift provider_compatibility_note_ids",
+            self.provider_compatibility_note_ids,
+        )
+        _validate_unique(
+            "calibration drift evidence_aging_record_ids",
+            self.evidence_aging_record_ids,
+        )
+        _validate_unique(
+            "calibration drift artifact_freshness_review_ids",
+            self.artifact_freshness_review_ids,
+        )
+        _validate_calibration_drift_metadata(self.metadata)
+        return self
+
+
 class PredictionEvaluationArtifactPayload(ContractModel):
     """Stable JSON payload written by the Phase 4 evaluation tool."""
 
@@ -676,6 +1121,50 @@ def _validate_target_outcome_alignment(
 def _validate_unique(label: str, values: tuple[object, ...]) -> None:
     if len(set(values)) != len(values):
         raise ValueError(f"{label} must be unique")
+
+
+def _external_source_requires_trace(
+    source_type: SourceKind,
+    retrieval_method: RetrievalMethod,
+) -> bool:
+    return not (
+        source_type == SourceKind.INTERNAL_ANALYSIS
+        or retrieval_method in {RetrievalMethod.DERIVED, RetrievalMethod.LLM}
+    )
+
+
+def _validate_phase7_metadata(metadata: JsonObject) -> None:
+    _validate_metadata_key_policy(metadata)
+
+
+def _validate_calibration_drift_metadata(metadata: JsonObject) -> None:
+    if _metadata_contains_report_coupling_marker(metadata):
+        raise ValueError(
+            "calibration drift artifacts must remain separate from report calculations"
+        )
+    _validate_phase7_metadata(metadata)
+
+
+def _validate_metadata_key_policy(value: object) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in _REPORT_COUPLING_MARKERS:
+                raise ValueError("Phase 7 metadata must not include report-coupled fields")
+            _validate_metadata_key_policy(item)
+    elif isinstance(value, list | tuple):
+        for item in value:
+            _validate_metadata_key_policy(item)
+
+
+def _metadata_contains_report_coupling_marker(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            key in _REPORT_COUPLING_MARKERS or _metadata_contains_report_coupling_marker(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(_metadata_contains_report_coupling_marker(item) for item in value)
+    return False
 
 
 def _validate_outcome_evaluation_result_alignment(
@@ -715,10 +1204,14 @@ def _has_calibration_metrics(summary: CalibrationSummary) -> bool:
 
 
 __all__ = [
+    "ArtifactFreshnessReview",
     "BaselineComparison",
     "CalibrationBin",
+    "CalibrationDriftCheck",
     "CalibrationSummary",
     "EvaluationEvidenceCounts",
+    "EvidenceAgingRecord",
+    "OutcomeReviewSummary",
     "PredictionEvaluation",
     "PredictionEvaluationArtifactPayload",
     "PredictionEvaluationTarget",
@@ -727,8 +1220,11 @@ __all__ = [
     "PredictionOutcomeEvaluation",
     "PredictionOutcomeEvaluationArtifactPayload",
     "PredictionQualityLanguage",
+    "ProviderCompatibilityNote",
+    "ProviderReplacementPlaybook",
     "SignalArtifactCounts",
     "SignalArtifactReference",
     "SignalFamilyAblation",
     "SignalFamilyCalibrationSummary",
+    "SourceReliabilityNote",
 ]

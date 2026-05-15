@@ -137,7 +137,10 @@ def test_derived_external_provenance_still_requires_traceable_source() -> None:
 
 
 @pytest.mark.schema
-def test_source_provenance_rejects_future_observation_time() -> None:
+@pytest.mark.parametrize("freshness_status", (FreshnessStatus.FRESH, FreshnessStatus.UNKNOWN))
+def test_source_provenance_rejects_future_observation_time(
+    freshness_status: FreshnessStatus,
+) -> None:
     with pytest.raises(ValidationError, match="observed_at"):
         SourceProvenance(
             provider_name="fixture-news",
@@ -148,7 +151,7 @@ def test_source_provenance_rejects_future_observation_time() -> None:
             source_url="https://example.test/news",
             raw_identifier="news-1",
             raw_snapshot_id="raw-news-1",
-            freshness_status=FreshnessStatus.FRESH,
+            freshness_status=freshness_status,
         )
 
 
@@ -256,6 +259,18 @@ def test_provider_result_rejects_inconsistent_failure_shapes() -> None:
 def test_json_contracts_reject_non_serializable_metadata() -> None:
     with pytest.raises(ValidationError):
         ProviderMetric(name="bad-metadata", value=1, metadata={"object": object()})
+
+
+@pytest.mark.schema
+def test_contract_model_copy_revalidates_updates_and_refreezes_json_metadata() -> None:
+    metric = ProviderMetric(name="net_margin", value="15%", metadata={"source": ["live"]})
+
+    copied = metric.model_copy(update={"metadata": {"nested": ["live"]}})
+
+    with pytest.raises(TypeError):
+        copied.metadata["nested"] = []
+    with pytest.raises(ValidationError, match="value must be a string"):
+        metric.model_copy(update={"name": 123})
 
 
 @pytest.mark.unit

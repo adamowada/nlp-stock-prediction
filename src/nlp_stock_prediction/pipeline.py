@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from nlp_stock_prediction.contracts import DailyReport
 from nlp_stock_prediction.contracts.providers import RunConfig
@@ -72,7 +72,7 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
         audit_dir=audit_manifest_path.parent,
         audit_manifest_path=audit_manifest_path,
         report=report,
-        tool_records=cast(Any, service.store.list_tool_runs_for_run(str(result["run_id"]))),
+        tool_records=service.store.list_tool_runs_for_run(str(result["run_id"])),
     )
 
 

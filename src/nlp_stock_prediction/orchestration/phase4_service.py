@@ -971,16 +971,21 @@ class Phase4Service:
                 "research run already exists; Phase 4 full flows do not implicitly resume "
                 f"stored evidence: {run_id}"
             )
-        self.phase4_universe_discovery(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_market_data(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_technical_package(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_social_evidence(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_news_catalyst(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_fundamentals(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_sector_macro(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_candidate_synthesis(run_id=run_id, symbol=normalized_symbol)
-        self.phase4_prediction_evaluation(run_id=run_id, symbol=normalized_symbol)
-        report = self.render_prediction_report(run_id=run_id, symbol=normalized_symbol)
+        try:
+            self.phase4_universe_discovery(run_id=run_id, symbol=normalized_symbol)
+            self.phase4_market_data(run_id=run_id, symbol=normalized_symbol)
+            self.phase4_technical_package(run_id=run_id, symbol=normalized_symbol)
+            self.phase4_social_evidence(run_id=run_id, symbol=normalized_symbol)
+            self.phase4_news_catalyst(run_id=run_id, symbol=normalized_symbol)
+            self.phase4_fundamentals(run_id=run_id, symbol=normalized_symbol)
+            self.phase4_sector_macro(run_id=run_id, symbol=normalized_symbol)
+            self.phase4_candidate_synthesis(run_id=run_id, symbol=normalized_symbol)
+            self.phase4_prediction_evaluation(run_id=run_id, symbol=normalized_symbol)
+            report = self.render_prediction_report(run_id=run_id, symbol=normalized_symbol)
+        except Exception as exc:
+            self._finalize_research_run(run_id, status="failed", error_message=str(exc))
+            raise
+        self._finalize_research_run(run_id, status="completed")
         return {"run_id": run_id, "symbol": normalized_symbol, "report": report}
 
     def phase4_candidate_synthesis(self, *, run_id: str, symbol: str) -> JsonObject:
@@ -1029,6 +1034,29 @@ class Phase4Service:
             inputs={"symbol": normalized_symbol, "evidence_count": evidence_count},
             action=action,
         ).payload
+
+    def _finalize_research_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        error_message: str | None = None,
+    ) -> None:
+        run = self._require_run(run_id)
+        metadata = dict(run.metadata)
+        if error_message is not None:
+            metadata["error_message"] = error_message
+        self.store.upsert_research_run(
+            ResearchRunRecord(
+                run_id=run.run_id,
+                run_kind=run.run_kind,
+                objective=run.objective,
+                status=status,
+                started_at=run.started_at,
+                completed_at=_phase4_timestamp_for_run(run),
+                metadata=metadata,
+            )
+        )
 
     def render_prediction_report(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)

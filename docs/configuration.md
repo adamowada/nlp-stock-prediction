@@ -51,7 +51,9 @@ Implemented modes:
   source adapters only, records missing credentials or upstream failures as tool/provider warnings,
   and refuses stored fixture, dummy, or smoke inputs. If a live run has no admissible stored evidence
   or candidates, the report renders structured insufficient evidence rather than falling back to
-  fixtures or dummy data.
+  fixtures or dummy data. Stock/ETF market data prefers Alpha Vantage when configured and otherwise
+  uses the public Yahoo Finance chart endpoint; unavailable upstreams remain visible as provider
+  warnings.
 
 Direct non-offline pipeline calls still fail unless `source_mode="live"` or `live_providers=True` is
 set, so callers cannot accidentally route live requests to fixture or dummy data.
@@ -208,8 +210,10 @@ NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT
 
 `NLP_STOCK_PREDICTION_SEC_CIK_MAP` accepts comma-separated `SYMBOL=CIK` entries for SEC EDGAR
 lookups. The live path also honors `ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`,
-`FRED_API_KEY`, and `X_BEARER_TOKEN` as fallback names. Missing optional credentials are surfaced in
-the run graph and final report instead of being replaced with fixture data.
+`FRED_API_KEY`, and `X_BEARER_TOKEN` as fallback names. When Alpha Vantage is not configured, live
+stock/ETF market data can use the credential-free Yahoo Finance chart endpoint. Missing optional
+credentials are surfaced in the run graph and final report instead of being replaced with fixture
+data.
 
 ## Internet Search
 
@@ -226,6 +230,47 @@ recorded with:
 
 Repeatable provider integrations should still be implemented as tools when they become important to
 regular reports.
+
+## Evaluation Reliability And Provider Replacement
+
+Live report rendering writes Phase 7 reliability audit artifacts for live-mode inputs:
+
+- `source_reliability_note` artifacts are derived from stored evidence rows and their provenance.
+  They preserve provider name, retrieval method, freshness status, extraction confidence, source
+  URL/permalink/raw identifiers, related artifacts, and explicit limitations. They describe source
+  quality; they do not make the source claim true.
+- `provider_replacement_playbook` artifacts describe provider-family replacement requirements for
+  market data, news, social, fundamentals, macro, and public scraping paths. Each playbook records
+  required provenance fields, provider ID mapping, artifact schema expectations, freshness
+  semantics, credential requirements, unsupported modes, and compatibility limitations.
+
+Provider replacement is allowed only when provenance compatibility is preserved. Replacement paths
+that cannot preserve source URLs/permalinks, raw identifiers, timestamps, artifact type/schema, or
+freshness semantics must be rejected or surfaced as not evaluable. Missing credentials, rate limits,
+stale data, malformed payloads, and unavailable live providers remain visible as provider health
+warnings and must not fall back to fixture, dummy, smoke, scaffold, or fabricated inputs.
+Live outcome materialization also preserves cutoff observability: a same-day daily bar is not usable
+as a cutoff baseline until its close would have been observable, and any started attempt that fails
+late validation is finalized as failed in the run graph rather than left running.
+
+## Evaluation CLI
+
+The public evaluation interface is exposed through the canonical module invocation, not a console
+script:
+
+```sh
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 inspect --run-id <run-id>
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 stale-artifacts --run-id <run-id> --artifact-root reports/<run-id>/audit
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 provider-playbook --run-id <run-id> --artifact-root reports/<run-id>/audit
+```
+
+Every evaluation command requires `--database` and `--run-id`. The database path must already exist;
+missing paths are rejected instead of silently creating a new run database. Commands that write audit
+artifacts require `--artifact-root`, which is resolved through the same repository write policy used
+by report generation. The local Codex MCP server uses the same explicit existing database boundary.
+Available subcommands are `inspect`, `materialize-outcome`, `load-outcomes`, `outcome-summary`,
+`stale-artifacts`, `evidence-aging`, `source-reliability`, `provider-playbook`, `calibration`,
+`walk-forward`, `ablation`, and `calibration-drift`.
 
 ## Instrument Universe
 

@@ -404,7 +404,7 @@ def _render_prior_outcome_review(review: PriorOutcomeReview) -> list[str]:
     original_report_date = (
         review.original_report_date.isoformat() if review.original_report_date else "none"
     )
-    return [
+    lines = [
         f"- `{_markdown_code(review.review_id)}` "
         f"{_markdown_text(review.status)}: "
         f"{_markdown_text(review.summary)}",
@@ -416,8 +416,63 @@ def _render_prior_outcome_review(review: PriorOutcomeReview) -> list[str]:
         f"  - Outcome evidence: {_format_evidence_ids(review.outcome_evidence)}",
         f"  - Artifacts: {_format_code_list(review.artifact_ids)}",
         f"  - Limitations: {_format_list(review.limitations)}",
-        f"  - Metadata: {_format_metadata(review.metadata)}",
     ]
+    lines.extend(_render_prior_outcome_freshness(review.metadata))
+    lines.append(f"  - Metadata: {_format_metadata(review.metadata)}")
+    return lines
+
+
+def _render_prior_outcome_freshness(metadata: object) -> list[str]:
+    if not isinstance(metadata, dict):
+        return []
+    phase7_freshness = metadata.get("phase7_freshness")
+    if not isinstance(phase7_freshness, dict):
+        return []
+    lines: list[str] = []
+    aged_evidence = _prior_freshness_items(
+        phase7_freshness.get("evidence_aging_records"),
+        id_key="evidence_id",
+        status_keys=("age_status", "freshness_status"),
+    )
+    if aged_evidence:
+        lines.append(f"  - Aged evidence: {_format_list(aged_evidence)}")
+    artifact_reviews = _prior_freshness_items(
+        phase7_freshness.get("artifact_freshness_reviews"),
+        id_key="artifact_id",
+        status_keys=("freshness_status", "status"),
+    )
+    if artifact_reviews:
+        lines.append(f"  - Artifact freshness: {_format_list(artifact_reviews)}")
+    return lines
+
+
+def _prior_freshness_items(
+    value: object,
+    *,
+    id_key: str,
+    status_keys: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    items: list[str] = []
+    for record in value:
+        if not isinstance(record, dict):
+            continue
+        record_id = record.get(id_key)
+        if not isinstance(record_id, str) or not record_id:
+            continue
+        status = next(
+            (
+                str(record[key])
+                for key in status_keys
+                if isinstance(record.get(key), str) and str(record[key]).strip()
+            ),
+            "unknown",
+        )
+        if status == "fresh":
+            continue
+        items.append(f"{record_id} ({status})")
+    return tuple(items)
 
 
 def _render_material_claim_trace(trace: MaterialClaimTrace) -> list[str]:

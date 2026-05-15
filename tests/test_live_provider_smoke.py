@@ -4,7 +4,7 @@ import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from types import TracebackType
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
@@ -20,6 +20,7 @@ from nlp_stock_prediction.contracts import (
 )
 from nlp_stock_prediction.providers.apnews import APNewsProvider
 from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
+from nlp_stock_prediction.providers.market import YahooFinanceChartMarketDataProvider
 from nlp_stock_prediction.providers.reddit_scrape import RedditPublicPageProvider
 from nlp_stock_prediction.providers.social import XRecentSearchProvider
 
@@ -83,6 +84,13 @@ def _require_http_url(url: str, *, env_name: str) -> None:
         pytest.fail(
             f"{env_name} must be an http:// or https:// URL for the live scraping smoke check."
         )
+
+
+def _recent_market_smoke_date() -> date:
+    current = datetime.now(UTC).date()
+    while current.weekday() >= 5:
+        current -= timedelta(days=1)
+    return current
 
 
 def _fetch_live_url(
@@ -178,13 +186,36 @@ def test_live_x_recent_search_smoke() -> None:
     result = provider.fetch_social_posts(
         EvidenceRequest(
             request_id="live-x-aapl-smoke",
-            run_date=date(2026, 5, 11),
+            run_date=_recent_market_smoke_date(),
             tickers=("AAPL",),
         )
     )
 
     assert result.status in {ProviderStatus.OK, ProviderStatus.EMPTY, ProviderStatus.STALE}
     assert result.health.credential_state.value == "configured"
+
+
+@pytest.mark.live_api
+def test_live_yahoo_finance_chart_market_data_smoke() -> None:
+    _require_live_tests_enabled("Yahoo Finance chart live API")
+    provider = YahooFinanceChartMarketDataProvider()
+
+    result = provider.fetch_daily_candles(
+        MarketDataRequest(
+            request_id="live-yahoo-aapl-smoke",
+            run_date=_recent_market_smoke_date(),
+            tickers=("AAPL",),
+        )
+    )
+
+    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL, ProviderStatus.STALE}:
+        pytest.fail(
+            "Yahoo Finance chart live market-data smoke did not return usable daily candles: "
+            + "; ".join(warning.message for warning in result.warnings)
+        )
+    assert result.data is not None
+    assert result.data.bars
+    assert result.health.credential_state.value == "not_required"
 
 
 @pytest.mark.live_scraping
@@ -195,18 +226,18 @@ def test_live_reddit_public_page_shape_smoke() -> None:
     result = provider.discover_tickers(
         TickerDiscoveryRequest(
             request_id="live-reddit-wsb-smoke",
-            run_date=date(2026, 5, 11),
+            run_date=_recent_market_smoke_date(),
             source_url="https://www.reddit.com/r/wallstreetbets/",
         )
     )
 
-    assert result.status in {
-        ProviderStatus.OK,
-        ProviderStatus.PARTIAL,
-        ProviderStatus.STALE,
-        ProviderStatus.FAILED,
-        ProviderStatus.UNAUTHORIZED,
-    }
+    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL}:
+        pytest.fail(
+            "Reddit public-page live scraping smoke did not return usable ticker output: "
+            + "; ".join(warning.message for warning in result.warnings)
+        )
+    assert result.data is not None
+    assert result.data.candidates
 
 
 @pytest.mark.live_scraping
@@ -217,19 +248,19 @@ def test_live_apnews_public_hub_shape_smoke() -> None:
     result = provider.fetch_articles(
         EvidenceRequest(
             request_id="live-apnews-financial-markets-smoke",
-            run_date=date(2026, 5, 11),
+            run_date=_recent_market_smoke_date(),
             tickers=("AAPL",),
             limit=1,
         )
     )
 
-    assert result.status in {
-        ProviderStatus.OK,
-        ProviderStatus.EMPTY,
-        ProviderStatus.PARTIAL,
-        ProviderStatus.STALE,
-        ProviderStatus.MALFORMED,
-    }
+    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL}:
+        pytest.fail(
+            "AP News public hub live scraping smoke did not return usable evidence: "
+            + "; ".join(warning.message for warning in result.warnings)
+        )
+    assert result.data is not None
+    assert result.data
 
 
 @pytest.mark.live_scraping
@@ -240,17 +271,21 @@ def test_live_candlecharts_feasibility_shape_smoke() -> None:
     result = provider.fetch_daily_candles(
         MarketDataRequest(
             request_id="live-candlecharts-aapl-smoke",
-            run_date=date(2026, 5, 11),
+            run_date=_recent_market_smoke_date(),
             tickers=("AAPL",),
         )
     )
 
-    assert result.status in {
-        ProviderStatus.OK,
-        ProviderStatus.EMPTY,
-        ProviderStatus.STALE,
-        ProviderStatus.MALFORMED,
-    }
+    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL, ProviderStatus.EMPTY}:
+        pytest.fail(
+            "Candlecharts public-page live scraping smoke did not return usable candles: "
+            + "; ".join(warning.message for warning in result.warnings)
+        )
+    if result.status == ProviderStatus.EMPTY:
+        assert result.warnings
+        return
+    assert result.data is not None
+    assert result.data.bars
 
 
 @pytest.mark.unit

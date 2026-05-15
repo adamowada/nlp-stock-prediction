@@ -86,11 +86,20 @@ def build_technical_ml_signal(
     signal = _signal_from_probability(probability)
     warning_ids: list[str] = []
     status: _MlSignalStatus = "usable"
+    freshness_status = FreshnessStatus.FRESH
+    if _calendar_day(latest.feature_end) < _calendar_day(as_of):
+        status = "stale"
+        freshness_status = FreshnessStatus.STALE
+        confidence = 0.0
+        signal = AnalysisSignal.UNKNOWN
+        warning_ids.append("ml-technical-signal:stale_labeled_prediction")
     if evaluation.metrics.samples <= 0 or evaluation.metrics.accuracy < min_validation_accuracy:
-        status = "weak"
+        if status != "stale":
+            status = "weak"
         warning_ids.append("ml-technical-signal:weak_validation")
     if confidence < min_confidence:
-        status = "weak"
+        if status != "stale":
+            status = "weak"
         warning_ids.append("ml-technical-signal:weak_confidence")
 
     return TechnicalMlSignal(
@@ -103,7 +112,7 @@ def build_technical_ml_signal(
         calibrated_confidence=round(confidence, 6),
         signal=signal,
         status=status,
-        freshness_status=FreshnessStatus.FRESH,
+        freshness_status=freshness_status,
         validation_accuracy=evaluation.metrics.accuracy,
         validation_brier_score=evaluation.metrics.brier_score,
         warning_ids=tuple(dict.fromkeys(warning_ids)),
@@ -111,6 +120,7 @@ def build_technical_ml_signal(
             "model_kind": model.model_kind,
             "threshold": model.threshold,
             "validation_samples": evaluation.metrics.samples,
+            "latest_labeled_feature_end": _timestamp_to_string(latest.feature_end),
         },
     )
 
@@ -318,6 +328,14 @@ def _signal_from_probability(probability: float) -> AnalysisSignal:
     if probability <= 0.44:
         return AnalysisSignal.CONFLICTS
     return AnalysisSignal.MIXED
+
+
+def _calendar_day(value: date | datetime) -> date:
+    return value.date() if isinstance(value, datetime) else value
+
+
+def _timestamp_to_string(value: date | datetime) -> str:
+    return value.isoformat()
 
 
 def _calibrated_confidence(probability: float, validation_accuracy: float) -> float:

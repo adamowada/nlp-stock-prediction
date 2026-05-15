@@ -117,6 +117,28 @@ def test_fundamental_analysis_summarizes_valuation_quality_and_event_risk() -> N
 
 
 @pytest.mark.unit
+def test_fundamental_analysis_unknown_without_provider_metrics() -> None:
+    analysis = analyze_fundamentals(FundamentalsSnapshot(ticker="NVDA"), as_of=RUN_DATE)
+
+    assert analysis.signal == AnalysisSignal.UNKNOWN
+    assert analysis.confidence == 0.0
+    assert analysis.metrics == ()
+    assert "unavailable" in analysis.summary
+
+
+@pytest.mark.unit
+def test_fundamental_analysis_scales_percent_string_metrics() -> None:
+    analysis = analyze_fundamentals(
+        _fundamentals_snapshot("NVDA", net_margin="48%", revenue_growth_yoy="62%"),
+        as_of=RUN_DATE,
+    )
+
+    assert analysis.signal == AnalysisSignal.SUPPORTS
+    assert "0.48" in (analysis.profitability_summary or "")
+    assert "62.0%" in (analysis.growth_summary or "")
+
+
+@pytest.mark.unit
 def test_sector_context_compares_against_peers_or_uses_etf_proxy() -> None:
     target = _fundamentals_snapshot(
         "NVDA",

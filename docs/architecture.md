@@ -147,9 +147,20 @@ adds those artifacts to the audit manifest, surfaces outcome evaluations as prio
 and references calibration artifacts as tool artifacts so downstream readers can audit prediction
 quality without treating it as trading performance.
 
+The public evaluation surface is a thin phase-neutral layer over the same run graph. The CLI group
+`python -m nlp_stock_prediction evaluation` and the local MCP registration both expose registry
+derived evaluation tools for inspection, live outcome materialization, outcome loading and summary,
+artifact freshness, evidence aging, source reliability, provider playbooks, calibration,
+walk-forward evaluation, ablation, and calibration drift. The CLI and MCP server require an existing
+explicit database, and writer tools require a concrete artifact root; service resolution then applies
+the repository write policy before any artifact is indexed.
+
 ## ML Signal Discipline
 
 Technical ML sidecars are conservative audit inputs. OHLCV timestamps are normalized across date and
 timezone-aware datetime values, impossible OHLC relationships are rejected at the provider contract,
 TimesFM train/validation/test splits include a purge that separates labels from later features, and
-model/evaluation hash mismatches degrade to an unavailable ML signal instead of producing support.
+raw TimesFM live inference uses a latest context-only window rather than a stale labeled test window.
+Model/evaluation hash mismatches degrade to an unavailable ML signal instead of producing support,
+and labeled technical-model predictions become stale sidecars when their feature date is older than
+the report `as_of` date.

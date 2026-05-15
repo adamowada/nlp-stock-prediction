@@ -6,6 +6,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 from nlp_stock_prediction.contracts.base import JsonObject, JsonValue
+from nlp_stock_prediction.contracts.live_validation import (
+    LIVE_RETRIEVAL_METHODS,
+    require_live_metadata,
+    require_live_retrieval_method,
+    text_is_non_live,
+)
 from nlp_stock_prediction.storage.records import ResearchRunRecord
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
@@ -60,7 +66,6 @@ _PROVENANCE_KEYS = frozenset(
     }
 )
 _BOOLEAN_MARKER_KEYS = frozenset({"dummy", "fixture", "fixtures", "smoke"})
-_NON_LIVE_TEXT_MARKERS = ("fixture", "dummy", "smoke")
 _NON_LIVE_MODE_MARKERS = frozenset(
     {
         "offline",
@@ -484,8 +489,7 @@ def _mode_value_is_non_live(value: JsonValue) -> bool:
 
 
 def _text_is_non_live(value: str) -> bool:
-    normalized = value.strip().lower()
-    return any(marker in normalized for marker in _NON_LIVE_TEXT_MARKERS)
+    return text_is_non_live(value)
 
 
 def _dedupe_violations(
@@ -510,6 +514,7 @@ __all__ = [
     "INPUT_DATA_MODE_KEY",
     "KNOWN_REPORT_DATA_MODES",
     "LIVE_REPORT_DATA_MODE",
+    "LIVE_RETRIEVAL_METHODS",
     "NON_LIVE_REPORT_DATA_MODES",
     "OFFLINE_FIXTURE_REPORT_DATA_MODE",
     "PROVIDER_MODE_KEY",
@@ -525,4 +530,7 @@ __all__ = [
     "report_data_mode_metadata",
     "report_data_mode_metadata_for_run_id",
     "report_data_mode_metadata_from_run",
+    "require_live_metadata",
+    "require_live_retrieval_method",
+    "text_is_non_live",
 ]

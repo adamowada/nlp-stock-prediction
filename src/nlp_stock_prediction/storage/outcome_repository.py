@@ -34,6 +34,7 @@ def persist_prediction_outcome_records(
     market_artifact_ids: tuple[str, ...],
     outcome_created_at: datetime,
     review_created_at: datetime,
+    evaluation_attempt_id: str | None = None,
 ) -> None:
     """Persist a Phase 6 outcome, review, and all source links."""
 
@@ -45,6 +46,7 @@ def persist_prediction_outcome_records(
             outcome_artifact=outcome_artifact,
             market_artifact_ids=market_artifact_ids,
             created_at=outcome_created_at,
+            evaluation_attempt_id=evaluation_attempt_id,
         )
         _persist_outcome_evaluation(
             store=store,
@@ -52,6 +54,7 @@ def persist_prediction_outcome_records(
             outcome_evaluation=outcome_evaluation,
             review_artifact=review_artifact,
             created_at=review_created_at,
+            evaluation_attempt_id=evaluation_attempt_id,
         )
 
 
@@ -63,6 +66,7 @@ def _persist_outcome(
     outcome_artifact: AuditArtifact,
     market_artifact_ids: tuple[str, ...],
     created_at: datetime,
+    evaluation_attempt_id: str | None,
 ) -> None:
     store.upsert_prediction_outcome(
         PredictionOutcomeRecord(
@@ -72,6 +76,7 @@ def _persist_outcome(
             symbol=outcome.symbol,
             prediction_type=outcome.prediction_type.value,
             horizon=outcome.horizon.value,
+            evaluation_attempt_id=evaluation_attempt_id,
             evaluation_window_start=outcome.evaluation_window_start,
             evaluation_window_end=outcome.evaluation_window_end,
             status=outcome.status.value,
@@ -131,11 +136,13 @@ def _persist_outcome_evaluation(
     outcome_evaluation: PredictionOutcomeEvaluation,
     review_artifact: AuditArtifact,
     created_at: datetime,
+    evaluation_attempt_id: str | None,
 ) -> None:
     store.upsert_prediction_outcome_evaluation(
         PredictionOutcomeEvaluationRecord(
             outcome_evaluation_id=outcome_evaluation.outcome_evaluation_id,
             run_id=target.run_id,
+            evaluation_attempt_id=evaluation_attempt_id,
             outcome_id=outcome_evaluation.outcome_id,
             candidate_id=outcome_evaluation.candidate_id,
             instrument_id=outcome_evaluation.instrument_id,

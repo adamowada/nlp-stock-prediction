@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import TypeVar
 from urllib.parse import urlsplit
 
@@ -36,10 +36,13 @@ from nlp_stock_prediction.providers._base import (
 )
 from nlp_stock_prediction.providers.scraping import (
     DEFAULT_HTML_MAX_BYTES,
+    HtmlCache,
+    HtmlFetch,
     HtmlResponse,
     HtmlTransport,
     UrllibHtmlTransport,
     build_scraping_headers,
+    fetch_html,
     raw_snapshot_id_for_html,
 )
 from nlp_stock_prediction.reddit.discovery import discover_tickers_from_devvit_html
@@ -149,6 +152,7 @@ class RedditPublicPageProvider:
         stale_after_seconds: int = _DEFAULT_FRESHNESS_WINDOW_SECONDS,
         user_agent: str = _DEFAULT_USER_AGENT,
         latency_ms: int | None = None,
+        cache: HtmlCache | None = None,
     ) -> None:
         self._subreddit_url = subreddit_url
         self._discussion_urls = tuple(discussion_urls)
@@ -159,6 +163,7 @@ class RedditPublicPageProvider:
         self._stale_after_seconds = stale_after_seconds
         self._user_agent = user_agent
         self._latency_ms = latency_ms
+        self._cache = cache
 
     def discover_tickers(
         self,
@@ -190,7 +195,13 @@ class RedditPublicPageProvider:
             return disabled
 
         try:
-            response = self._fetch(source_url)
+            response = self._fetch(
+                source_url,
+                run_date=request.run_date,
+                ticker=None,
+                source="reddit-ticker-card",
+                cache_key=cache_key,
+            )
         except ProviderTransportError as exc:
             return transport_error_result(
                 provider_name=self.provider_name,
@@ -199,7 +210,7 @@ class RedditPublicPageProvider:
                 error=exc,
                 credential_state=CredentialState.NOT_REQUIRED,
             )
-        raw_snapshot_id = _raw_snapshot_id("reddit-ticker-card", response.html)
+        raw_snapshot_id = response.raw_snapshot_id
         observed_at = extract_snapshot_observed_at(response.html) or fetched_at
         effective_request = request.model_copy(update={"source_url": source_url})
         discovery = discover_tickers_from_devvit_html(
@@ -285,7 +296,20 @@ class RedditPublicPageProvider:
                 warnings.append(policy_warning)
                 continue
             try:
-                response = self._fetch(source_url)
+                response = self._fetch(
+                    source_url,
+                    run_date=request.run_date,
+                    ticker=None,
+                    source="reddit-discussion-page",
+                    cache_key=build_cache_key(
+                        provider_name=self.provider_name,
+                        source="reddit-discussion-page",
+                        run_date=request.run_date,
+                        tickers=request.tickers,
+                        query=request.query,
+                        url=source_url,
+                    ),
+                )
             except ProviderTransportError as exc:
                 warnings.append(
                     provider_warning(
@@ -301,7 +325,7 @@ class RedditPublicPageProvider:
                     )
                 )
                 continue
-            discussion_raw_snapshot_id = _raw_snapshot_id("reddit-discussion-page", response.html)
+            discussion_raw_snapshot_id = response.raw_snapshot_id
             raw_snapshot_ids.append(discussion_raw_snapshot_id)
             records = extract_reddit_discussion_records_from_public_html(
                 response.html,
@@ -404,14 +428,29 @@ class RedditPublicPageProvider:
             latency_ms=self._latency_ms,
         )
 
-    def _fetch(self, source_url: str) -> HtmlResponse:
+    def _fetch(
+        self,
+        source_url: str,
+        *,
+        run_date: date,
+        ticker: str | None,
+        source: str,
+        cache_key: str,
+    ) -> HtmlFetch:
         if self._transport is None:
             raise ProviderTransportError(
                 "Reddit live public-page scraping is disabled.",
                 error_type="live_scraping_disabled",
             )
-        return self._transport.get_html(
-            source_url,
+        return fetch_html(
+            transport=self._transport,
+            url=source_url,
+            run_date=run_date,
+            ticker=ticker,
+            source=source,
+            cache_key=cache_key,
+            fetched_at=self._now(),
+            cache=self._cache,
             headers=build_scraping_headers(
                 user_agent=self._user_agent,
                 extra_headers={"Accept": "text/html"},

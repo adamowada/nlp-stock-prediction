@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
+from urllib.error import URLError
 
 import pytest
 
@@ -29,12 +30,14 @@ from nlp_stock_prediction.providers._base import (
     MalformedProviderResponse,
     ProviderCache,
     ProviderTransportError,
+    UrllibJsonTransport,
 )
 from nlp_stock_prediction.providers.execution import ProviderExecutionContext
 from nlp_stock_prediction.providers.fred import FredMacroProvider
 from nlp_stock_prediction.providers.market import (
     AlphaVantageFundamentalsProvider,
     AlphaVantageMarketDataProvider,
+    YahooFinanceChartMarketDataProvider,
 )
 from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
 from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
@@ -50,6 +53,41 @@ def _fixture(*parts: str) -> dict[str, Any]:
         dict[str, Any],
         json.loads((FIXTURE_ROOT.joinpath(*parts)).read_text(encoding="utf-8")),
     )
+
+
+def _yahoo_chart_payload(
+    *,
+    timestamps: Sequence[datetime],
+    opens: Sequence[str | None],
+    highs: Sequence[str | None],
+    lows: Sequence[str | None],
+    closes: Sequence[str | None],
+    adjusted_closes: Sequence[str | None],
+    volumes: Sequence[int | None],
+) -> dict[str, Any]:
+    return {
+        "chart": {
+            "result": [
+                {
+                    "meta": {"symbol": "TSLA", "instrumentType": "EQUITY"},
+                    "timestamp": [int(timestamp.timestamp()) for timestamp in timestamps],
+                    "indicators": {
+                        "quote": [
+                            {
+                                "open": list(opens),
+                                "high": list(highs),
+                                "low": list(lows),
+                                "close": list(closes),
+                                "volume": list(volumes),
+                            }
+                        ],
+                        "adjclose": [{"adjclose": list(adjusted_closes)}],
+                    },
+                }
+            ],
+            "error": None,
+        }
+    }
 
 
 @pytest.mark.unit
@@ -223,6 +261,50 @@ def test_x_provider_defaults_to_relevancy_and_fifty_posts() -> None:
     assert result.status == ProviderStatus.OK
     assert "sort_order=relevancy" in transport.calls[0]
     assert "max_results=50" in transport.calls[0]
+
+
+@pytest.mark.contract
+def test_x_provider_clamps_api_limit_and_slices_results_locally() -> None:
+    payload = _fixture("x", "recent_tsla.json")
+    first = cast(list[dict[str, object]], payload["data"])[0]
+    payload["data"] = [
+        {**first, "id": f"178900000000000000{index}", "text": f"$TSLA post {index}"}
+        for index in range(12)
+    ]
+    transport = _FakeJsonTransport({"tweets/search/recent": JsonResponse(payload=payload)})
+    provider = XRecentSearchProvider(
+        bearer_token="fixture-token",
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+
+    result = provider.fetch_social_posts(
+        EvidenceRequest(
+            request_id="x-tsla-small-limit-2026-05-11",
+            run_date=RUN_DATE,
+            tickers=("TSLA",),
+            limit=3,
+        )
+    )
+
+    assert "max_results=10" in transport.calls[0]
+    assert result.data is not None
+    assert len(result.data) == 3
+
+
+@pytest.mark.unit
+def test_urllib_json_transport_classifies_wrapped_socket_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def timeout_urlopen(*_args: object, **_kwargs: object) -> object:
+        raise URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr("nlp_stock_prediction.providers._base.urlopen", timeout_urlopen)
+
+    with pytest.raises(ProviderTransportError) as exc:
+        UrllibJsonTransport().get_json("https://example.com/data.json")
+
+    assert exc.value.error_type == "timeout"
 
 
 @pytest.mark.contract
@@ -772,6 +854,88 @@ def test_alpha_vantage_market_provider_returns_missing_credentials_warning() -> 
     assert result.warnings[0].code == WarningCode.MISSING_CREDENTIALS
     assert result.warnings[0].metadata["credential_name"] == "Alpha Vantage API key"
     assert result.health.credential_state == CredentialState.MISSING
+
+
+@pytest.mark.contract
+def test_yahoo_finance_chart_daily_candles_map_and_reuse_cache(tmp_path: Path) -> None:
+    payload = _yahoo_chart_payload(
+        timestamps=(
+            datetime(2026, 5, 11, 13, 30, tzinfo=UTC),
+            datetime(2026, 5, 10, 13, 30, tzinfo=UTC),
+        ),
+        opens=("181.00", "179.00"),
+        highs=("186.00", "182.00"),
+        lows=("180.50", "178.50"),
+        closes=("184.25", "181.75"),
+        adjusted_closes=("184.10", "181.60"),
+        volumes=(123_456_789, 98_765_432),
+    )
+    transport = _FakeJsonTransport({"finance/chart/TSLA": JsonResponse(payload=payload)})
+    provider = YahooFinanceChartMarketDataProvider(
+        transport=transport,
+        cache=ProviderCache(tmp_path),
+        now=lambda: FETCHED_AT,
+    )
+    request = MarketDataRequest(
+        request_id="market-yahoo-tsla-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    first = provider.fetch_daily_candles(request)
+    second = provider.fetch_daily_candles(request)
+
+    assert first.status == ProviderStatus.OK
+    assert first.health.credential_state == CredentialState.NOT_REQUIRED
+    assert first.data is not None
+    assert first.data.ticker == "TSLA"
+    assert first.data.bars[0].timestamp == RUN_DATE
+    assert first.data.bars[0].close == Decimal("184.25")
+    assert first.data.bars[0].adjusted_close == Decimal("184.10")
+    assert first.data.bars[0].volume == 123_456_789
+    assert first.data.liquidity_metrics[0].name == "average_volume"
+    assert first.cache_key == second.cache_key
+    assert first.raw_snapshot_id == second.raw_snapshot_id
+    assert len(transport.calls) == 1
+    assert "period1=" in transport.calls[0]
+    assert "period2=" in transport.calls[0]
+    assert transport.headers[0] is not None
+    assert transport.headers[0]["Accept"] == "application/json"
+    assert tmp_path.joinpath("2026-05-11", "TSLA", "yahoo-finance-chart-daily").exists()
+
+
+@pytest.mark.contract
+def test_yahoo_finance_chart_daily_candles_returns_partial_for_incomplete_rows() -> None:
+    payload = _yahoo_chart_payload(
+        timestamps=(
+            datetime(2026, 5, 11, 13, 30, tzinfo=UTC),
+            datetime(2026, 5, 10, 13, 30, tzinfo=UTC),
+        ),
+        opens=("181.00", None),
+        highs=("186.00", "182.00"),
+        lows=("180.50", "178.50"),
+        closes=("184.25", "181.75"),
+        adjusted_closes=("184.10", None),
+        volumes=(123_456_789, 98_765_432),
+    )
+    transport = _FakeJsonTransport({"finance/chart/TSLA": JsonResponse(payload=payload)})
+    provider = YahooFinanceChartMarketDataProvider(
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
+    request = MarketDataRequest(
+        request_id="market-yahoo-partial-tsla-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_daily_candles(request)
+
+    assert result.status == ProviderStatus.PARTIAL
+    assert result.data is not None
+    assert len(result.data.bars) == 1
+    assert result.warnings[0].code == WarningCode.PARTIAL_DATA
+    assert result.warnings[0].metadata["skipped_row_count"] == 1
 
 
 @pytest.mark.contract

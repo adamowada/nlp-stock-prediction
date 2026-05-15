@@ -53,6 +53,7 @@ jobs:
       NLP_STOCK_PREDICTION_LIVE_USER_AGENT: ${{ secrets.NLP_STOCK_PREDICTION_LIVE_USER_AGENT }}
       NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL: ${{ secrets.NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL }}
       NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT: ${{ secrets.NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT }}
+      NLP_STOCK_PREDICTION_X_BEARER_TOKEN: ${{ secrets.NLP_STOCK_PREDICTION_X_BEARER_TOKEN }}
 
     steps:
       - name: Check out repository
@@ -68,7 +69,14 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Live API smoke checks
+        if: >-
+          env.NLP_STOCK_PREDICTION_LIVE_USER_AGENT != '' &&
+          env.NLP_STOCK_PREDICTION_X_BEARER_TOKEN != ''
         run: python -m pytest -m live_api
 
       - name: Live scraping smoke checks
+        if: >-
+          env.NLP_STOCK_PREDICTION_LIVE_USER_AGENT != '' &&
+          env.NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL != '' &&
+          env.NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT != ''
         run: python -m pytest -m live_scraping

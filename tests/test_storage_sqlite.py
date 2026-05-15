@@ -652,7 +652,7 @@ def test_phase6_evaluation_calibration_records_round_trip_and_extend_run_graph(
         evaluation_window_start=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
         evaluation_window_end=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
         status="observed",
-        observed_result="confirmed",
+        observed_result="supported",
         observed_at=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
         result_summary="The observed close was above the comparison baseline.",
         result_value=433.25,
@@ -881,7 +881,7 @@ def test_phase6_storage_rejects_incoherent_outcome_evaluation_links(
             evaluation_window_start=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
             evaluation_window_end=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
             status="observed",
-            observed_result="confirmed",
+            observed_result="supported",
             observed_at=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
         )
     )
@@ -981,7 +981,7 @@ def test_calibration_run_rejects_cross_run_outcome_evaluation_sources(
             evaluation_window_start=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
             evaluation_window_end=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
             status="observed",
-            observed_result="confirmed",
+            observed_result="supported",
             observed_at=datetime(2026, 5, 18, 20, 0, tzinfo=UTC),
         )
     )
@@ -1375,6 +1375,79 @@ def test_report_artifact_index_must_match_artifact_ledger(tmp_path: Path) -> Non
                 report_date=date(2026, 5, 13),
                 report_data_mode="offline_fixture",
                 source_run_started_at=now,
+            )
+        )
+
+
+@pytest.mark.unit
+def test_report_artifact_index_must_match_artifact_tool_run(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    now = _timestamp()
+    for run_id in ("run-report-index-source", "run-report-index-wrong"):
+        store.upsert_research_run(
+            ResearchRunRecord(
+                run_id=run_id,
+                run_kind="daily_prediction_report",
+                objective="index final report artifacts",
+                status="completed",
+                started_at=now,
+            )
+        )
+    store.record_tool_run(
+        ToolRunRecord(
+            tool_run_id="tool-render-report-run-source",
+            run_id="run-report-index-source",
+            tool_name="render_prediction_report",
+            tool_version="phase5-report.v1",
+            status="successful",
+            started_at=now,
+        )
+    )
+    store.record_artifact(
+        ArtifactRecord(
+            artifact_id="artifact-report-json-run-source",
+            tool_run_id="tool-render-report-run-source",
+            artifact_type="json_report",
+            path=Path("reports/report.json"),
+            sha256="f" * 64,
+            schema_version="phase5-report.v1",
+            produced_by="render_prediction_report",
+            created_at=now,
+        )
+    )
+
+    with pytest.raises(ValueError, match="run_id must match artifact tool run"):
+        store.record_report_artifact(
+            ReportArtifactRecord(
+                artifact_id="artifact-report-json-run-source",
+                run_id="run-report-index-wrong",
+                tool_run_id="tool-render-report-run-source",
+                artifact_type="json_report",
+                path=Path("reports/report.json"),
+                sha256="f" * 64,
+                schema_version="phase5-report.v1",
+                report_schema_version="daily-report.v2",
+                report_date=date(2026, 5, 13),
+                report_data_mode="live",
+                source_run_started_at=now,
+            )
+        )
+
+
+@pytest.mark.unit
+def test_storage_rejects_non_finite_json_values(tmp_path: Path) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+
+    with pytest.raises(ValueError, match="Out of range float values"):
+        store.record_source_query(
+            SourceQueryRecord(
+                source_query_id="query-non-finite-json",
+                provider="unit-provider",
+                query="MSFT latest quote",
+                retrieved_at=_timestamp(),
+                metadata={"bad_value": float("nan")},
             )
         )
 

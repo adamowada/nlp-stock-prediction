@@ -98,6 +98,33 @@ class TimesFmWindow(ContractModel):
         return self
 
 
+class TimesFmContextWindow(ContractModel):
+    """Latest context-only TimesFM window used for live inference."""
+
+    ticker: TickerSymbol
+    target_field: ResolvedTargetField
+    context_length: int = Field(ge=2)
+    horizon_length: int = Field(ge=1)
+    context_start: date | datetime
+    context_end: date | datetime
+    context_start_index: int = Field(ge=0)
+    context_end_index: int = Field(ge=0)
+    context_values: tuple[float, ...]
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_context_window(self) -> TimesFmContextWindow:
+        if len(self.context_values) != self.context_length:
+            raise ValueError("context value count must match context_length")
+        if any(not isfinite(value) for value in self.context_values):
+            raise ValueError("TimesFM context values must be finite")
+        if self.context_start_index + self.context_length - 1 != self.context_end_index:
+            raise ValueError("context indices must match context_length")
+        if _timestamp_key(self.context_start) > _timestamp_key(self.context_end):
+            raise ValueError("context start must be before or equal to context end")
+        return self
+
+
 class TimesFmDataset(ContractModel):
     """A deterministic univariate TimesFM dataset with temporal train/validation/test splits."""
 
@@ -107,6 +134,7 @@ class TimesFmDataset(ContractModel):
     horizon_length: int = Field(ge=1)
     stride: int = Field(ge=1)
     windows: tuple[TimesFmWindow, ...]
+    latest_context_window: TimesFmContextWindow
     dataset_hash: NonEmptyStr
     metadata: JsonObject = Field(default_factory=dict)
 
@@ -123,6 +151,14 @@ class TimesFmDataset(ContractModel):
                 raise ValueError("TimesFM windows must match dataset context length")
             if window.horizon_length != self.horizon_length:
                 raise ValueError("TimesFM windows must match dataset horizon length")
+        if self.latest_context_window.ticker != self.ticker:
+            raise ValueError("TimesFM latest context must match dataset ticker")
+        if self.latest_context_window.target_field != self.target_field:
+            raise ValueError("TimesFM latest context must match dataset target field")
+        if self.latest_context_window.context_length != self.context_length:
+            raise ValueError("TimesFM latest context must match dataset context length")
+        if self.latest_context_window.horizon_length != self.horizon_length:
+            raise ValueError("TimesFM latest context must match dataset horizon length")
         if not self.train_windows or not self.validation_windows or not self.test_windows:
             raise ValueError("TimesFM dataset requires train, validation, and test windows")
         return self
@@ -153,6 +189,9 @@ def build_timesfm_dataset(
     _validate_bars(ticker, sorted_bars, settings)
     target_field = _resolve_target_field(sorted_bars, settings.target_field)
     raw_windows = _build_raw_windows(ticker, sorted_bars, target_field, settings)
+    latest_context_window = _build_latest_context_window(
+        ticker, sorted_bars, target_field, settings
+    )
     split_assignments, purged_window_count = _split_windows(raw_windows, settings)
     windows = tuple(
         window.model_copy(update={"split": split})
@@ -165,6 +204,7 @@ def build_timesfm_dataset(
         target_field=target_field,
         config=settings,
         windows=windows,
+        latest_context_window=latest_context_window,
     )
     metadata = _dataset_metadata(
         sorted_bars=sorted_bars,
@@ -181,6 +221,7 @@ def build_timesfm_dataset(
         horizon_length=settings.horizon_length,
         stride=settings.stride,
         windows=windows,
+        latest_context_window=latest_context_window,
         dataset_hash=dataset_hash,
         metadata=metadata,
     )
@@ -236,6 +277,34 @@ def _build_raw_windows(
             "insufficient history: no TimesFM windows remain after context and horizon settings"
         )
     return tuple(windows)
+
+
+def _build_latest_context_window(
+    ticker: str,
+    bars: Sequence[PriceBar],
+    target_field: ResolvedTargetField,
+    config: TimesFmDatasetConfig,
+) -> TimesFmContextWindow:
+    context_start_index = len(bars) - config.context_length
+    context_end_index = len(bars) - 1
+    context_bars = bars[context_start_index : context_end_index + 1]
+    return TimesFmContextWindow(
+        ticker=ticker,
+        target_field=target_field,
+        context_length=config.context_length,
+        horizon_length=config.horizon_length,
+        context_start=context_bars[0].timestamp,
+        context_end=context_bars[-1].timestamp,
+        context_start_index=context_start_index,
+        context_end_index=context_end_index,
+        context_values=tuple(_target_value(bar, target_field) for bar in context_bars),
+        metadata={
+            "target_policy": "univariate_price_forecast",
+            "window_role": "latest_live_inference_context",
+            "normalization": "none_timesfm_internal_instance_normalization",
+            "context_timestamps": [_timestamp_to_string(bar.timestamp) for bar in context_bars],
+        },
+    )
 
 
 def _split_windows(
@@ -379,11 +448,17 @@ def _hash_dataset(
     target_field: ResolvedTargetField,
     config: TimesFmDatasetConfig,
     windows: Sequence[TimesFmWindow],
+    latest_context_window: TimesFmContextWindow,
 ) -> str:
     payload = {
         "ticker": ticker.upper(),
         "target_field": target_field,
         "config": _hash_config_payload(config),
+        "latest_context_window": {
+            "context_start": _timestamp_to_string(latest_context_window.context_start),
+            "context_end": _timestamp_to_string(latest_context_window.context_end),
+            "context_values": [round(value, 12) for value in latest_context_window.context_values],
+        },
         "windows": [
             {
                 "split": window.split,
@@ -414,6 +489,7 @@ def _timestamp_to_string(value: date | datetime) -> str:
 
 __all__ = [
     "ResolvedTargetField",
+    "TimesFmContextWindow",
     "TimesFmDataset",
     "TimesFmDatasetConfig",
     "TimesFmSplitName",

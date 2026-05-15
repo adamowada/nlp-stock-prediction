@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
+from typing import cast
 
 from nlp_stock_prediction.contracts import (
     DailyReport,
+    EvidenceReference,
     Instrument,
     MaterialClaimTrace,
     PredictionCandidate,
@@ -15,6 +17,7 @@ from nlp_stock_prediction.contracts import (
     PredictionStatus,
     PriorOutcomeReview,
     ReportSourceReference,
+    SourceEvidence,
 )
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.enums import (
@@ -25,12 +28,19 @@ from nlp_stock_prediction.contracts.enums import (
 from nlp_stock_prediction.contracts.evaluation import (
     PredictionOutcome,
     PredictionOutcomeEvaluation,
+    PredictionOutcomeEvaluationArtifactPayload,
 )
 from nlp_stock_prediction.contracts.report import AuditArtifact
+from nlp_stock_prediction.orchestration.artifact_policy import ALLOWED_ARTIFACT_TYPES, ArtifactType
 from nlp_stock_prediction.orchestration.phase2_common import file_sha256, stable_digest
+from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
 from nlp_stock_prediction.orchestration.report_data_modes import ReportDataMode
 from nlp_stock_prediction.reporting.json import load_json_report
-from nlp_stock_prediction.storage.records import ReportArtifactRecord, ResearchRunRecord
+from nlp_stock_prediction.storage.records import (
+    ArtifactRecord,
+    ReportArtifactRecord,
+    ResearchRunRecord,
+)
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 PRIOR_REPORT_STALE_AFTER_DAYS = 30
@@ -45,6 +55,7 @@ class PriorOutcomeContext:
     audit_artifacts: tuple[AuditArtifact, ...]
     source_references: tuple[ReportSourceReference, ...]
     material_claim_traces: tuple[MaterialClaimTrace, ...]
+    evidence_sources: tuple[SourceEvidence, ...] = ()
     warnings: tuple[str, ...] = ()
 
 
@@ -54,6 +65,13 @@ class _LoadedPriorReport:
     report: DailyReport | None
     audit_artifact: AuditArtifact | None
     warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _PriorReviewBuildResult:
+    review: PriorOutcomeReview
+    audit_artifacts: tuple[AuditArtifact, ...] = ()
+    evidence_sources: tuple[SourceEvidence, ...] = ()
 
 
 def apply_prior_outcome_context(
@@ -92,14 +110,19 @@ def apply_prior_outcome_context(
     reviews: list[PriorOutcomeReview] = []
     source_references: list[ReportSourceReference] = []
     traces: list[MaterialClaimTrace] = []
+    audit_artifacts: list[AuditArtifact] = []
+    evidence_sources: list[SourceEvidence] = []
 
     for candidate in prediction_candidates:
-        review = _prior_outcome_review(
+        review_result = _prior_outcome_review(
+            store=store,
+            repo_root=repo_root,
             candidate=candidate,
             prior=prior,
             report_date=report_date,
             reviewed_at=reviewed_at,
         )
+        review = review_result.review
         review = _review_with_outcome_contracts(
             review=review,
             candidate=candidate,
@@ -107,6 +130,8 @@ def apply_prior_outcome_context(
             report_date=report_date,
             reviewed_at=reviewed_at,
         )
+        audit_artifacts.extend(review_result.audit_artifacts)
+        evidence_sources.extend(review_result.evidence_sources)
         reviews.append(review)
         change_triggers = _change_triggers(
             candidate=candidate,
@@ -134,14 +159,16 @@ def apply_prior_outcome_context(
         source_references.append(_prior_source_reference(review))
         traces.append(_prior_material_claim_trace(review))
 
-    audit_artifacts = (prior.audit_artifact,) if prior and prior.audit_artifact is not None else ()
+    if prior and prior.audit_artifact is not None:
+        audit_artifacts.append(prior.audit_artifact)
     warnings = prior.warnings if prior else ()
     return PriorOutcomeContext(
         prediction_candidates=tuple(updated_candidates),
         prior_outcome_reviews=tuple(reviews),
-        audit_artifacts=audit_artifacts,
+        audit_artifacts=_dedupe_audit_artifacts(audit_artifacts),
         source_references=tuple(source_references),
         material_claim_traces=tuple(traces),
+        evidence_sources=_dedupe_source_evidence(evidence_sources),
         warnings=warnings,
     )
 
@@ -239,104 +266,540 @@ def _load_prior_report(
 
 def _prior_outcome_review(
     *,
+    store: SQLiteStore,
+    repo_root: Path,
     candidate: PredictionCandidate,
     prior: _LoadedPriorReport | None,
     report_date: date,
     reviewed_at: datetime,
-) -> PriorOutcomeReview:
+) -> _PriorReviewBuildResult:
     review_id = f"prior-outcome-{stable_digest(candidate.candidate_id)}"
     if prior is None:
-        return PriorOutcomeReview(
-            review_id=review_id,
-            status="not_available",
-            summary="No prior stored report artifact is available for this instrument.",
-            candidate_id=candidate.candidate_id,
-            instrument_id=candidate.instrument_id,
-            reviewed_at=reviewed_at,
-            horizon=candidate.horizon,
-            limitations=("This appears to be the first indexed report for the instrument.",),
-            metadata={"prior_report_available": False},
+        return _PriorReviewBuildResult(
+            PriorOutcomeReview(
+                review_id=review_id,
+                status="not_available",
+                summary="No prior stored report artifact is available for this instrument.",
+                candidate_id=candidate.candidate_id,
+                instrument_id=candidate.instrument_id,
+                reviewed_at=reviewed_at,
+                horizon=candidate.horizon,
+                limitations=("This appears to be the first indexed report for the instrument.",),
+                metadata={"prior_report_available": False},
+            )
         )
     artifact_ids = (prior.artifact.artifact_id,) if prior.audit_artifact is not None else ()
     if prior.report is None:
-        return PriorOutcomeReview(
-            review_id=review_id,
-            status="unavailable",
-            summary="A prior stored report artifact exists but could not be reviewed.",
-            candidate_id=candidate.candidate_id,
-            instrument_id=candidate.instrument_id,
-            original_report_date=prior.artifact.report_date,
-            reviewed_at=reviewed_at,
-            horizon=candidate.horizon,
-            artifact_ids=artifact_ids,
-            limitations=prior.warnings
-            or ("The prior report artifact could not be loaded as a valid JSON report.",),
-            metadata=_review_metadata(prior=prior, prior_candidate=None),
+        return _PriorReviewBuildResult(
+            PriorOutcomeReview(
+                review_id=review_id,
+                status="unavailable",
+                summary="A prior stored report artifact exists but could not be reviewed.",
+                candidate_id=candidate.candidate_id,
+                instrument_id=candidate.instrument_id,
+                original_report_date=prior.artifact.report_date,
+                reviewed_at=reviewed_at,
+                horizon=candidate.horizon,
+                artifact_ids=artifact_ids,
+                limitations=prior.warnings
+                or ("The prior report artifact could not be loaded as a valid JSON report.",),
+                metadata=_review_metadata(prior=prior, prior_candidate=None),
+            )
         )
     prior_candidate = _matching_prior_candidate(prior.report, candidate)
     if prior_candidate is None:
-        return PriorOutcomeReview(
-            review_id=review_id,
-            status="not_available",
-            summary="The prior report did not include a matching prediction scenario.",
-            candidate_id=candidate.candidate_id,
-            instrument_id=candidate.instrument_id,
-            original_report_date=prior.report.report_date,
-            reviewed_at=reviewed_at,
-            horizon=candidate.horizon,
-            artifact_ids=artifact_ids,
-            limitations=(
-                "No prior candidate matched the current instrument, horizon, and prediction type.",
-            ),
-            metadata=_review_metadata(prior=prior, prior_candidate=None),
+        return _PriorReviewBuildResult(
+            PriorOutcomeReview(
+                review_id=review_id,
+                status="not_available",
+                summary="The prior report did not include a matching prediction scenario.",
+                candidate_id=candidate.candidate_id,
+                instrument_id=candidate.instrument_id,
+                original_report_date=prior.report.report_date,
+                reviewed_at=reviewed_at,
+                horizon=candidate.horizon,
+                artifact_ids=artifact_ids,
+                limitations=(
+                    "No prior candidate matched the current instrument, horizon, and "
+                    "prediction type.",
+                ),
+                metadata=_review_metadata(prior=prior, prior_candidate=None),
+            )
         )
     stale_reasons = _prior_stale_reasons(prior.report, current_report_date=report_date)
     if stale_reasons:
-        return PriorOutcomeReview(
-            review_id=review_id,
-            status="stale",
-            summary="A prior matching prediction exists, but its report context is stale.",
-            candidate_id=candidate.candidate_id,
-            instrument_id=candidate.instrument_id,
-            original_report_date=prior.report.report_date,
-            reviewed_at=reviewed_at,
-            horizon=candidate.horizon,
-            artifact_ids=artifact_ids,
-            limitations=stale_reasons,
-            metadata=_review_metadata(prior=prior, prior_candidate=prior_candidate),
+        return _PriorReviewBuildResult(
+            PriorOutcomeReview(
+                review_id=review_id,
+                status="stale",
+                summary="A prior matching prediction exists, but its report context is stale.",
+                candidate_id=candidate.candidate_id,
+                instrument_id=candidate.instrument_id,
+                original_report_date=prior.report.report_date,
+                reviewed_at=reviewed_at,
+                horizon=candidate.horizon,
+                artifact_ids=artifact_ids,
+                limitations=stale_reasons,
+                metadata=_review_metadata(prior=prior, prior_candidate=prior_candidate),
+            )
         )
+    persisted = _persisted_outcome_review_for_prior_candidate(
+        store=store,
+        repo_root=repo_root,
+        candidate=candidate,
+        prior=prior,
+        prior_candidate=prior_candidate,
+        reviewed_at=reviewed_at,
+    )
+    if persisted is not None:
+        return persisted
     outcome_evidence = tuple(dict.fromkeys((*candidate.evidence_for, *candidate.evidence_against)))
     if not outcome_evidence:
-        return PriorOutcomeReview(
+        return _PriorReviewBuildResult(
+            PriorOutcomeReview(
+                review_id=review_id,
+                status="pending",
+                summary=(
+                    "A prior matching prediction exists, but no follow-up evidence is available."
+                ),
+                candidate_id=candidate.candidate_id,
+                instrument_id=candidate.instrument_id,
+                original_report_date=prior.report.report_date,
+                reviewed_at=reviewed_at,
+                horizon=candidate.horizon,
+                artifact_ids=artifact_ids,
+                limitations=("Current report evidence did not cite follow-up source evidence.",),
+                metadata=_review_metadata(prior=prior, prior_candidate=prior_candidate),
+            )
+        )
+    return _PriorReviewBuildResult(
+        PriorOutcomeReview(
             review_id=review_id,
-            status="pending",
-            summary="A prior matching prediction exists, but no follow-up evidence is available.",
+            status="available",
+            summary=_available_review_summary(candidate),
             candidate_id=candidate.candidate_id,
             instrument_id=candidate.instrument_id,
             original_report_date=prior.report.report_date,
             reviewed_at=reviewed_at,
             horizon=candidate.horizon,
+            outcome_evidence=outcome_evidence,
             artifact_ids=artifact_ids,
-            limitations=("Current report evidence did not cite follow-up source evidence.",),
-            metadata=_review_metadata(prior=prior, prior_candidate=prior_candidate),
+            metadata={
+                **_review_metadata(prior=prior, prior_candidate=prior_candidate),
+                "current_status": candidate.status.value,
+                "current_direction": candidate.direction.value,
+            },
         )
-    return PriorOutcomeReview(
-        review_id=review_id,
-        status="available",
-        summary=_available_review_summary(candidate),
-        candidate_id=candidate.candidate_id,
-        instrument_id=candidate.instrument_id,
-        original_report_date=prior.report.report_date,
-        reviewed_at=reviewed_at,
-        horizon=candidate.horizon,
-        outcome_evidence=outcome_evidence,
-        artifact_ids=artifact_ids,
+    )
+
+
+def _persisted_outcome_review_for_prior_candidate(
+    *,
+    store: SQLiteStore,
+    repo_root: Path,
+    candidate: PredictionCandidate,
+    prior: _LoadedPriorReport,
+    prior_candidate: PredictionCandidate,
+    reviewed_at: datetime,
+) -> _PriorReviewBuildResult | None:
+    records = store.list_outcome_evaluations_for_candidate(prior_candidate.candidate_id)
+    if not records:
+        return None
+    record = sorted(records, key=lambda item: item.evaluated_at, reverse=True)[0]
+    review_id = record.outcome_evaluation_id
+    artifact, payload, load_limitations = _load_outcome_evaluation_payload(
+        store=store,
+        repo_root=repo_root,
+        outcome_evaluation_id=record.outcome_evaluation_id,
+        artifact_id=record.artifact_id,
+    )
+    audit_artifacts, artifact_limitations = _audit_artifacts_for_outcome_evaluation(
+        store=store,
+        repo_root=repo_root,
+        outcome_evaluation_id=record.outcome_evaluation_id,
+        primary_artifact=artifact,
+    )
+    base_metadata = _persisted_review_base_metadata(
+        prior=prior,
+        prior_candidate=prior_candidate,
+        record_outcome_evaluation_id=record.outcome_evaluation_id,
+        artifact=artifact,
+    )
+    if payload is None:
+        artifact_ids = tuple(artifact.artifact_id for artifact in audit_artifacts)
+        return _PriorReviewBuildResult(
+            review=PriorOutcomeReview(
+                review_id=review_id,
+                status="unavailable",
+                summary="A persisted outcome evaluation exists but its artifact was unavailable.",
+                candidate_id=candidate.candidate_id,
+                instrument_id=candidate.instrument_id,
+                original_report_date=prior.report.report_date if prior.report else None,
+                reviewed_at=reviewed_at,
+                horizon=candidate.horizon,
+                artifact_ids=artifact_ids,
+                limitations=tuple(dict.fromkeys((*load_limitations, *artifact_limitations))),
+                metadata=base_metadata,
+            ),
+            audit_artifacts=audit_artifacts,
+        )
+
+    compatibility_limitations = _outcome_payload_compatibility_limitations(
+        payload=payload,
+        prior_candidate=prior_candidate,
+    )
+    if compatibility_limitations:
+        return _PriorReviewBuildResult(
+            review=PriorOutcomeReview(
+                review_id=review_id,
+                status="unavailable",
+                summary=(
+                    "A persisted outcome evaluation exists but is incompatible with the "
+                    "matched prior prediction."
+                ),
+                candidate_id=candidate.candidate_id,
+                instrument_id=candidate.instrument_id,
+                original_report_date=prior.report.report_date if prior.report else None,
+                reviewed_at=reviewed_at,
+                horizon=candidate.horizon,
+                artifact_ids=tuple(artifact.artifact_id for artifact in audit_artifacts),
+                limitations=tuple(
+                    dict.fromkeys((*compatibility_limitations, *artifact_limitations))
+                ),
+                metadata={
+                    **base_metadata,
+                    "prediction_outcome_evaluation_artifact_id": (
+                        artifact.artifact_id if artifact is not None else None
+                    ),
+                },
+            ),
+            audit_artifacts=audit_artifacts,
+        )
+
+    evidence_refs, evidence_sources, evidence_limitations = _outcome_evidence_sources(
+        store=store,
+        payload=payload,
+    )
+    phase7_freshness = _phase7_freshness_metadata(payload)
+    artifact_ids = tuple(dict.fromkeys(artifact.artifact_id for artifact in audit_artifacts))
+    status = _persisted_prior_review_status(payload.outcome_evaluation.status.value)
+    limitations = tuple(
+        dict.fromkeys(
+            (
+                *payload.limitations,
+                *payload.outcome_evaluation.limitations,
+                *evidence_limitations,
+                *artifact_limitations,
+                *_phase7_freshness_limitations(phase7_freshness),
+            )
+        )
+    )
+    if status != "available" and not limitations:
+        limitations = ("Persisted outcome evaluation is unresolved.",)
+    return _PriorReviewBuildResult(
+        review=PriorOutcomeReview(
+            review_id=review_id,
+            status=status,
+            summary=_persisted_outcome_review_summary(payload),
+            candidate_id=candidate.candidate_id,
+            instrument_id=candidate.instrument_id,
+            original_report_date=prior.report.report_date if prior.report else None,
+            reviewed_at=payload.outcome_evaluation.evaluated_at,
+            horizon=candidate.horizon,
+            outcome_evidence=evidence_refs if status == "available" else (),
+            artifact_ids=artifact_ids,
+            limitations=limitations,
+            metadata={
+                **base_metadata,
+                "prediction_outcome": payload.outcome_evaluation.outcome.model_dump(mode="json"),
+                "prediction_outcome_evaluation": payload.outcome_evaluation.model_dump(mode="json"),
+                "prediction_evaluation_target": payload.target.model_dump(mode="json"),
+                "phase7_freshness": phase7_freshness,
+                "source_evidence_ids": list(payload.evidence_ids),
+                "source_artifact_ids": list(payload.artifact_ids),
+            },
+        ),
+        audit_artifacts=audit_artifacts,
+        evidence_sources=evidence_sources,
+    )
+
+
+def _load_outcome_evaluation_payload(
+    *,
+    store: SQLiteStore,
+    repo_root: Path,
+    outcome_evaluation_id: str,
+    artifact_id: str | None,
+) -> tuple[
+    ArtifactRecord | None,
+    PredictionOutcomeEvaluationArtifactPayload | None,
+    tuple[str, ...],
+]:
+    if artifact_id is None:
+        return (
+            None,
+            None,
+            (f"Persisted outcome evaluation {outcome_evaluation_id} has no artifact_id.",),
+        )
+    artifact = store.get_artifact(artifact_id)
+    if artifact is None:
+        return None, None, (f"Persisted outcome artifact is missing: {artifact_id}.",)
+    if artifact.artifact_type != "prediction_outcome_evaluation":
+        return (
+            artifact,
+            None,
+            (
+                f"Persisted outcome artifact {artifact_id} has unsupported type "
+                f"{artifact.artifact_type!r}.",
+            ),
+        )
+    path = artifact.path if artifact.path.is_absolute() else repo_root / artifact.path
+    if not path.exists():
+        return artifact, None, (f"Persisted outcome artifact file is missing: {artifact_id}.",)
+    actual_sha256 = file_sha256(path)
+    if actual_sha256 != artifact.sha256:
+        return (
+            artifact,
+            None,
+            (
+                f"Persisted outcome artifact sha256 mismatch for {artifact_id}: expected "
+                f"{artifact.sha256}, observed {actual_sha256}.",
+            ),
+        )
+    try:
+        payload = PredictionOutcomeEvaluationArtifactPayload.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )
+    except Exception as exc:
+        return artifact, None, (f"Persisted outcome artifact is malformed: {artifact_id}: {exc}.",)
+    if payload.outcome_evaluation.outcome_evaluation_id != outcome_evaluation_id:
+        return (
+            artifact,
+            None,
+            (
+                "Persisted outcome artifact outcome_evaluation_id does not match storage row: "
+                f"{payload.outcome_evaluation.outcome_evaluation_id} != {outcome_evaluation_id}.",
+            ),
+        )
+    return artifact, payload, ()
+
+
+def _audit_artifacts_for_outcome_evaluation(
+    *,
+    store: SQLiteStore,
+    repo_root: Path,
+    outcome_evaluation_id: str,
+    primary_artifact: ArtifactRecord | None,
+) -> tuple[tuple[AuditArtifact, ...], tuple[str, ...]]:
+    records: list[ArtifactRecord] = []
+    limitations: list[str] = []
+    if primary_artifact is not None:
+        records.append(primary_artifact)
+    for link in store.list_outcome_evaluation_artifact_links(outcome_evaluation_id):
+        artifact = store.get_artifact(link.artifact_id)
+        if artifact is None:
+            limitations.append(
+                "Persisted outcome evaluation artifact is missing from storage: "
+                f"{link.artifact_id}."
+            )
+            continue
+        records.append(artifact)
+    artifacts: list[AuditArtifact] = []
+    for record in records:
+        audit_artifact = _audit_artifact_from_record(record, repo_root=repo_root)
+        if audit_artifact is None:
+            limitations.append(
+                "Persisted outcome evaluation artifact has unsupported type: "
+                f"{record.artifact_id} ({record.artifact_type})."
+            )
+            continue
+        artifacts.append(audit_artifact)
+    return _dedupe_audit_artifacts(artifacts), tuple(dict.fromkeys(limitations))
+
+
+def _audit_artifact_from_record(
+    record: ArtifactRecord,
+    *,
+    repo_root: Path,
+) -> AuditArtifact | None:
+    if record.artifact_type not in ALLOWED_ARTIFACT_TYPES:
+        return None
+    path = record.path if record.path.is_absolute() else repo_root / record.path
+    return AuditArtifact(
+        artifact_id=record.artifact_id,
+        artifact_type=cast(ArtifactType, record.artifact_type),
+        path=path.as_posix(),
+        created_at=record.created_at or datetime.now(UTC),
+        produced_by=record.produced_by or "persisted_outcome_review",
+        sha256=record.sha256,
+        record_count=record.record_count,
         metadata={
-            **_review_metadata(prior=prior, prior_candidate=prior_candidate),
-            "current_status": candidate.status.value,
-            "current_direction": candidate.direction.value,
+            **record.metadata,
+            "prior_outcome_source": True,
+            "source": "persisted_prediction_outcome_evaluation",
         },
     )
+
+
+def _persisted_review_base_metadata(
+    *,
+    prior: _LoadedPriorReport,
+    prior_candidate: PredictionCandidate,
+    record_outcome_evaluation_id: str,
+    artifact: ArtifactRecord | None,
+) -> JsonObject:
+    metadata: JsonObject = {
+        **_review_metadata(prior=prior, prior_candidate=prior_candidate),
+        "source": "persisted_prediction_outcome_evaluation",
+        "prior_candidate_id": prior_candidate.candidate_id,
+        "source_outcome_evaluation_id": record_outcome_evaluation_id,
+    }
+    if artifact is not None:
+        metadata["source_outcome_evaluation_artifact_id"] = artifact.artifact_id
+    return metadata
+
+
+def _outcome_payload_compatibility_limitations(
+    *,
+    payload: PredictionOutcomeEvaluationArtifactPayload,
+    prior_candidate: PredictionCandidate,
+) -> tuple[str, ...]:
+    target = payload.target
+    limitations: list[str] = []
+    if target.candidate_id != prior_candidate.candidate_id:
+        limitations.append(
+            "Persisted outcome target candidate_id does not match the prior report candidate."
+        )
+    if target.instrument_id != prior_candidate.instrument_id:
+        limitations.append(
+            "Persisted outcome target instrument_id does not match the prior report candidate."
+        )
+    if target.horizon != prior_candidate.horizon:
+        limitations.append("Persisted outcome target horizon does not match the prior candidate.")
+    if target.prediction_type != prior_candidate.prediction_type:
+        limitations.append(
+            "Persisted outcome target prediction_type does not match the prior candidate."
+        )
+    return tuple(limitations)
+
+
+def _outcome_evidence_sources(
+    *,
+    store: SQLiteStore,
+    payload: PredictionOutcomeEvaluationArtifactPayload,
+) -> tuple[tuple[EvidenceReference, ...], tuple[SourceEvidence, ...], tuple[str, ...]]:
+    references = _dedupe_evidence_references(
+        (
+            *payload.outcome_evaluation.evidence,
+            *payload.outcome_evaluation.outcome.outcome_evidence,
+        )
+    )
+    evidence_sources: list[SourceEvidence] = []
+    limitations: list[str] = []
+    kept_references: list[EvidenceReference] = []
+    for reference in references:
+        record = store.get_evidence(reference.evidence_id)
+        if record is None:
+            limitations.append(
+                f"Persisted outcome evidence is missing from storage: {reference.evidence_id}."
+            )
+            continue
+        evidence_sources.append(source_evidence_from_record(record))
+        kept_references.append(reference)
+    return tuple(kept_references), _dedupe_source_evidence(evidence_sources), tuple(limitations)
+
+
+def _persisted_prior_review_status(status: str) -> str:
+    if status in {"confirmed", "missed", "mixed", "inconclusive"}:
+        return "available"
+    if status == "pending":
+        return "pending"
+    if status == "stale":
+        return "stale"
+    if status in {"unavailable", "not_evaluable"}:
+        return "unavailable"
+    return "not_available"
+
+
+def _persisted_outcome_review_summary(
+    payload: PredictionOutcomeEvaluationArtifactPayload,
+) -> str:
+    outcome = payload.outcome_evaluation.outcome
+    if outcome.result_summary:
+        return outcome.result_summary
+    score = payload.outcome_evaluation.quality_score
+    if score is None:
+        return (
+            f"Persisted outcome evaluation is {payload.outcome_evaluation.status.value} for the "
+            "prior prediction scenario."
+        )
+    return (
+        f"Persisted outcome evaluation is {payload.outcome_evaluation.status.value} for the "
+        f"prior prediction scenario with quality score {score:.2f}."
+    )
+
+
+def _phase7_freshness_metadata(
+    payload: PredictionOutcomeEvaluationArtifactPayload,
+) -> JsonObject:
+    metadata = payload.target.metadata.get("phase7_freshness")
+    if isinstance(metadata, dict):
+        return dict(metadata)
+    snapshot_metadata = payload.target.candidate_snapshot.get("phase7_freshness")
+    if isinstance(snapshot_metadata, dict):
+        return dict(snapshot_metadata)
+    return {}
+
+
+def _phase7_freshness_limitations(metadata: JsonObject) -> tuple[str, ...]:
+    limitations: list[str] = []
+    limitations.extend(
+        _freshness_record_limitations(
+            metadata.get("evidence_aging_records"),
+            id_key="evidence_id",
+            status_keys=("age_status", "freshness_status"),
+            label="Prior evidence freshness review",
+        )
+    )
+    limitations.extend(
+        _freshness_record_limitations(
+            metadata.get("artifact_freshness_reviews"),
+            id_key="artifact_id",
+            status_keys=("freshness_status", "status"),
+            label="Outcome artifact freshness review",
+        )
+    )
+    return tuple(dict.fromkeys(limitations))
+
+
+def _freshness_record_limitations(
+    value: object,
+    *,
+    id_key: str,
+    status_keys: tuple[str, ...],
+    label: str,
+) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    limitations: list[str] = []
+    for record in value:
+        if not isinstance(record, dict):
+            continue
+        record_id = record.get(id_key)
+        if not isinstance(record_id, str) or not record_id.strip():
+            continue
+        status = next(
+            (
+                str(record[key])
+                for key in status_keys
+                if isinstance(record.get(key), str) and str(record[key]).strip()
+            ),
+            "unknown",
+        )
+        if status == "fresh":
+            continue
+        limitations.append(f"{label} marked {record_id} as {status}.")
+    return tuple(limitations)
 
 
 def _review_with_outcome_contracts(
@@ -347,6 +810,8 @@ def _review_with_outcome_contracts(
     report_date: date,
     reviewed_at: datetime,
 ) -> PriorOutcomeReview:
+    if review.metadata.get("source") == "persisted_prediction_outcome_evaluation":
+        return review
     outcome = _prediction_outcome_from_review(
         review=review,
         candidate=candidate,
@@ -641,6 +1106,33 @@ def _dedupe_change_triggers(
     deduped: dict[str, PredictionChangeTrigger] = {}
     for trigger in triggers:
         deduped.setdefault(trigger.trigger_id, trigger)
+    return tuple(deduped.values())
+
+
+def _dedupe_audit_artifacts(
+    artifacts: tuple[AuditArtifact, ...] | list[AuditArtifact],
+) -> tuple[AuditArtifact, ...]:
+    deduped: dict[str, AuditArtifact] = {}
+    for artifact in artifacts:
+        deduped.setdefault(artifact.artifact_id, artifact)
+    return tuple(deduped.values())
+
+
+def _dedupe_source_evidence(
+    evidence_sources: tuple[SourceEvidence, ...] | list[SourceEvidence],
+) -> tuple[SourceEvidence, ...]:
+    deduped: dict[str, SourceEvidence] = {}
+    for evidence in evidence_sources:
+        deduped.setdefault(evidence.evidence_id, evidence)
+    return tuple(deduped.values())
+
+
+def _dedupe_evidence_references(
+    references: tuple[EvidenceReference, ...],
+) -> tuple[EvidenceReference, ...]:
+    deduped: dict[str, EvidenceReference] = {}
+    for reference in references:
+        deduped.setdefault(reference.evidence_id, reference)
     return tuple(deduped.values())
 
 

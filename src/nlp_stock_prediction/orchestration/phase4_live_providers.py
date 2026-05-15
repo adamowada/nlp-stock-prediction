@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import urlencode
 
 from nlp_stock_prediction.contracts.providers import (
     FundamentalsProvider,
@@ -17,37 +16,31 @@ from nlp_stock_prediction.contracts.providers import (
     RedditProvider,
     XProvider,
 )
+from nlp_stock_prediction.orchestration.live_market_data import (
+    ALPHA_VANTAGE_API_KEY_ENV,
+    FALLBACK_ALPHA_VANTAGE_API_KEY_ENVS,
+    LiveMarketDataSelector,
+)
 from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
     Phase4LiveSymbolUniverseProvider,
     UniverseDiscoveryProvider,
 )
 from nlp_stock_prediction.providers._base import ProviderCache
 from nlp_stock_prediction.providers.apnews import APNewsProvider, APNewsProviderConfig
-from nlp_stock_prediction.providers.candlecharts import (
-    CANDLECHARTS_ENDPOINT,
-    CandlechartsMarketDataProvider,
-)
 from nlp_stock_prediction.providers.fred import FredMacroProvider
 from nlp_stock_prediction.providers.market import (
-    ALPHA_VANTAGE_ENDPOINT,
     AlphaVantageFundamentalsProvider,
-    AlphaVantageMarketDataProvider,
 )
 from nlp_stock_prediction.providers.reddit_scrape import RedditPublicPageProvider
 from nlp_stock_prediction.providers.scraping import HtmlCache, configured_scrape_user_agent
 from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
 from nlp_stock_prediction.providers.social import XRecentSearchProvider
 
-ALPHA_VANTAGE_API_KEY_ENV = "NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY"
 FRED_API_KEY_ENV = "NLP_STOCK_PREDICTION_FRED_API_KEY"
 X_BEARER_TOKEN_ENV = "NLP_STOCK_PREDICTION_X_BEARER_TOKEN"
 SEC_CIK_MAP_ENV = "NLP_STOCK_PREDICTION_SEC_CIK_MAP"
 LIVE_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_LIVE_USER_AGENT"
 
-_FALLBACK_ALPHA_VANTAGE_API_KEY_ENVS = (
-    "ALPHA_VANTAGE_API_KEY",
-    "MARKET_DATA_ALPHA_VANTAGE_API_KEY",
-)
 _FALLBACK_FRED_API_KEY_ENVS = ("FRED_API_KEY",)
 _FALLBACK_X_BEARER_TOKEN_ENVS = ("X_BEARER_TOKEN",)
 _DEFAULT_SEC_TICKER_CIK_MAP: Mapping[str, str] = {
@@ -92,39 +85,17 @@ class Phase4LiveProviderFactory:
         return Phase4LiveSymbolUniverseProvider()
 
     def market_data_provider(self, symbol: str) -> MarketDataProvider:
-        del symbol
-        alpha_vantage_key = self._first_env(
-            ALPHA_VANTAGE_API_KEY_ENV,
-            *_FALLBACK_ALPHA_VANTAGE_API_KEY_ENVS,
-        )
-        if alpha_vantage_key:
-            return AlphaVantageMarketDataProvider(
-                api_key=alpha_vantage_key,
-                cache=self._json_cache(),
-            )
-        return CandlechartsMarketDataProvider(
-            allow_live=True,
-            cache=self._html_cache(),
-        )
+        return self._market_data_selector().primary_selection(symbol).provider
 
     def market_data_source_query_url(self, symbol: str) -> str | None:
-        normalized_symbol = symbol.strip().upper()
-        if not normalized_symbol:
-            return None
-        if self._first_env(ALPHA_VANTAGE_API_KEY_ENV, *_FALLBACK_ALPHA_VANTAGE_API_KEY_ENVS):
-            return f"{ALPHA_VANTAGE_ENDPOINT}?" + urlencode(
-                {
-                    "function": "TIME_SERIES_DAILY_ADJUSTED",
-                    "symbol": normalized_symbol,
-                    "outputsize": "compact",
-                }
-            )
-        return f"{CANDLECHARTS_ENDPOINT}?{urlencode({'symbol': normalized_symbol})}"
+        selection = self._market_data_selector().primary_selection(symbol)
+        return None if selection.source_url is None else str(selection.source_url)
 
     def reddit_provider(self) -> RedditProvider | None:
         return RedditPublicPageProvider(
             allow_live_scraping=True,
             user_agent=self._scrape_user_agent(),
+            cache=self._html_cache(),
         )
 
     def x_provider(self, symbol: str) -> XProvider | None:
@@ -149,7 +120,7 @@ class Phase4LiveProviderFactory:
             AlphaVantageFundamentalsProvider(
                 api_key=self._first_env(
                     ALPHA_VANTAGE_API_KEY_ENV,
-                    *_FALLBACK_ALPHA_VANTAGE_API_KEY_ENVS,
+                    *FALLBACK_ALPHA_VANTAGE_API_KEY_ENVS,
                 ),
                 cache=self._json_cache(),
             ),
@@ -177,6 +148,12 @@ class Phase4LiveProviderFactory:
         if self.cache_root is None:
             return None
         return HtmlCache(self.cache_root / "html")
+
+    def _market_data_selector(self) -> LiveMarketDataSelector:
+        return LiveMarketDataSelector(
+            cache_root=self.cache_root,
+            env=self._env,
+        )
 
     def _scrape_user_agent(self) -> str:
         return self._first_env(LIVE_USER_AGENT_ENV) or configured_scrape_user_agent(self._env)

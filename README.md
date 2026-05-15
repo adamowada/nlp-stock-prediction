@@ -20,6 +20,7 @@ prediction reports, and an opt-in Codex MCP smoke path.
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [User Guide](docs/user-guide.md)
 - [Usage Examples](#usage-examples)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
@@ -82,9 +83,10 @@ Generate a guarded live-provider report:
 python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --live
 ```
 
-The live command uses live providers and public-source adapters only. Missing credentials, upstream
-failures, stale data, or empty providers are recorded in the report instead of falling back to
-fixtures or dummy data.
+The live command uses live providers and public-source adapters only. Stock/ETF market data uses
+Alpha Vantage when configured and otherwise uses the public Yahoo Finance chart endpoint. Missing
+credentials, upstream failures, stale data, or empty providers are recorded in the report instead of
+falling back to fixtures or dummy data.
 
 ## Usage Examples
 
@@ -125,8 +127,9 @@ NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py 
   --symbol TSLA
 ```
 
-The legacy-named smoke script starts a local MCP server, exposes the Phase 4 fixture-backed research
-tool suite to Codex, and writes ignored artifacts under local output directories.
+The legacy-named smoke script prepares a fresh ignored SQLite database, starts a local MCP server,
+exposes the Phase 4 research tool suite to Codex, and writes ignored artifacts under local output
+directories.
 
 ## Current Instrument Universe
 
@@ -166,6 +169,37 @@ evaluations become prior-outcome review entries in Markdown/JSON, and calibratio
 separate audit artifacts referenced by the report rather than being collapsed into trading-style
 performance claims.
 
+## Current Phase 7 Evaluation Hardening
+
+Phase 7 now adds typed freshness and aging reviews to point-in-time evaluation targets. Target
+freezing records evidence aging and artifact freshness under `phase7_freshness`, normalizes
+date-only market artifact metadata deterministically, and keeps aged-out, stale, missing,
+malformed, hash-mismatched, provider-replaced, and future/lookahead artifact states auditable.
+Standalone `artifact_freshness_review` and `evidence_aging_summary` audit artifacts can be written
+and indexed without recomputing or mutating calibration artifacts.
+
+Live outcome materialization uses only live-mode market artifacts, rejects same-day daily closes
+that were not observable at the cutoff, and marks started attempts as failed if a late validation or
+persistence step raises. SQLite outcome rows reject impossible observed/non-observed shapes, report
+artifact index rows must align with their tool run, and JSON metadata writes reject non-finite
+numbers. Provider hardening keeps X API limits within the real provider contract, routes Reddit
+public-page scraping through the shared HTML retry/cache path, and preserves timeout/cache-failure
+classification without substituting fixture or dummy data.
+
+The canonical public interface is phase-neutral:
+
+```sh
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 inspect --run-id <run-id>
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 outcome-summary --run-id <run-id> --artifact-root reports/<run-id>/audit
+python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 calibration --run-id <run-id> --cohort-id <cohort-id> --as-of 2026-05-22T00:00:00+00:00 --artifact-root reports/<run-id>/audit
+```
+
+`evaluation` subcommands cover `inspect`, `materialize-outcome`, `load-outcomes`,
+`outcome-summary`, `stale-artifacts`, `evidence-aging`, `source-reliability`,
+`provider-playbook`, `calibration`, `walk-forward`, `ablation`, and `calibration-drift`. The
+commands require an explicit database and run ID, and write commands require `--artifact-root` so
+audit writes stay under the repository write policy.
+
 ## Current Phase 5 Prediction Reports
 
 The report product writes Markdown, JSON, and audit-manifest artifacts from the stored run graph.
@@ -187,7 +221,7 @@ variables or ignored `.env` files.
 | --- | --- | --- |
 | `OPENAI_API_KEY` | No | Required only for workflows that call OpenAI-backed tooling. |
 | `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE` | No | Set to `1` to opt in to the real Codex smoke path. |
-| `NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY` | No | Optional Alpha Vantage key for live market data and fundamentals. |
+| `NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY` | No | Optional Alpha Vantage key for live market data and fundamentals; live stock/ETF market data can still use credential-free public chart data when this is absent. |
 | `NLP_STOCK_PREDICTION_FRED_API_KEY` | No | Optional FRED key for live macro context. |
 | `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | No | Token for X/Twitter-backed provider experiments. |
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | No | Contact User-Agent for opt-in live provider smoke tests. |
@@ -251,7 +285,7 @@ python -m pip install -e ".[dev]"
 Run the common development checks:
 
 ```sh
-python -m pytest -m "not live_api and not live_scraping"
+python -m pytest -m "not live_api and not live_scraping and not codex_smoke and not llm"
 ruff check .
 ruff format --check .
 mypy .
@@ -276,8 +310,7 @@ The default test suite is deterministic and offline:
 
 ```sh
 python -m pytest
-python -m pytest -m "not live_api and not live_scraping"
-python -m pytest -m "not live_api and not live_scraping and not codex_smoke"
+python -m pytest -m "not live_api and not live_scraping and not codex_smoke and not llm"
 ```
 
 Run focused live groups only when credentials, network access, and explicit opt-in environment

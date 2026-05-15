@@ -23,6 +23,7 @@ from nlp_stock_prediction.ml.timesfm.contracts import (
     TimesFmQuantileForecast,
 )
 from nlp_stock_prediction.ml.timesfm.dataset import (
+    TimesFmContextWindow,
     TimesFmDataset,
     TimesFmDatasetConfig,
     TimesFmWindow,
@@ -154,7 +155,7 @@ def main(
 
 def _forecast_with_model(
     dataset: TimesFmDataset,
-    window: TimesFmWindow,
+    window: TimesFmContextWindow | TimesFmWindow,
     *,
     input_hash: str,
     forecast_timestamp: datetime,
@@ -228,7 +229,7 @@ def _forecast_with_model(
 
 def _unavailable_artifact(
     dataset: TimesFmDataset,
-    window: TimesFmWindow,
+    window: TimesFmContextWindow | TimesFmWindow,
     *,
     input_hash: str,
     forecast_timestamp: datetime,
@@ -340,11 +341,11 @@ def _load_model(stack: _InferenceStack, config: TimesFmForecastConfig) -> Any:
         ) from exc
 
 
-def _latest_window(dataset: TimesFmDataset) -> TimesFmWindow:
-    return max(dataset.windows, key=lambda window: window.context_end_index)
+def _latest_window(dataset: TimesFmDataset) -> TimesFmContextWindow:
+    return dataset.latest_context_window
 
 
-def _hash_input(dataset: TimesFmDataset, window: TimesFmWindow) -> str:
+def _hash_input(dataset: TimesFmDataset, window: TimesFmContextWindow | TimesFmWindow) -> str:
     payload = {
         "dataset_hash": dataset.dataset_hash,
         "ticker": dataset.ticker,

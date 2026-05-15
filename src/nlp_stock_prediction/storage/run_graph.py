@@ -124,6 +124,10 @@ def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
             SELECT artifact_id FROM calibration_runs
             WHERE artifact_id IS NOT NULL
                 AND run_id = ?
+            UNION
+            SELECT artifact_id FROM calibration_drift_checks
+            WHERE artifact_id IS NOT NULL
+                AND run_id = ?
         )
         SELECT DISTINCT artifacts.* FROM artifacts
         LEFT JOIN tool_runs
@@ -143,6 +147,7 @@ def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
         (
             *_run_scope_params(run_id),
             *_run_evidence_params(run_id),
+            run_id,
             run_id,
             run_id,
             run_id,

@@ -165,7 +165,9 @@ themselves.
 Implemented ML dataset contracts reject invalid OHLC relationships, normalize date and aware-datetime
 timestamps to one comparable key, preserve the one-bar lookback used by return features in metadata,
 and enforce purged TimesFM split boundaries so labels from one split do not overlap features in the
-next split.
+next split. Raw TimesFM inference uses a separate latest context-only window that reaches the latest
+usable bar instead of reusing a labeled backtest window, and labeled technical-model evaluation rows
+are marked stale when their feature date precedes the report `as_of` date.
 
 ## Report
 
@@ -235,7 +237,24 @@ evaluation window, observed/unavailable/stale/pending state, observed result whe
 outcome evidence, artifact IDs, and limitations. `PredictionOutcomeEvaluation` records the review
 status, quality score when resolved, optional baseline comparison, evidence, artifacts, and
 limitations. Resolved outcome evaluations require an observed outcome plus evidence or artifacts;
-pending, stale, or not-evaluable evaluations must explain their limitations.
+pending, stale, or unavailable outcomes and not-evaluable evaluations must explain their
+limitations. Runtime SQLite persistence enforces the same shape: observed outcomes require an
+observed result and observation time at or after the fixed window end, while non-observed outcomes
+must not carry observed values and must preserve an explicit limitation.
+
+Phase 7 freshness hardening is captured with `EvidenceAgingRecord` and
+`ArtifactFreshnessReview`. `build_prediction_evaluation_target` now freezes these records under
+`phase7_freshness` in target metadata and the candidate snapshot. Evidence aging records preserve
+provider, source type, retrieved/published timestamps, source artifact IDs, stale or aged-out state,
+and provider replacement references. Artifact freshness reviews preserve artifact type, provider,
+producer, created/as-of/observed timestamps, hash expectations, source relationships, and explicit
+statuses for stale, missing, malformed, hash-mismatched, superseded, or provider-replaced artifacts.
+Date-only market metadata such as `latest_usable_bar` is normalized to a UTC start-of-day timestamp
+with an auditable limitation instead of being silently accepted as live proof. The same records can
+be written as separate `artifact_freshness_review` and `evidence_aging_summary` audit artifacts so
+later reports can explain aged-out prior evidence without mutating calibration artifacts.
+External source provenance also rejects observations dated after retrieval even when freshness is
+unknown; unknown freshness is not a license for lookahead timestamps.
 
 Phase 6 calibration can now persist signal-family ablations. A `signal_family_ablation` audit
 artifact records the point-in-time cohort, source target/outcome-evaluation IDs, source signal
@@ -259,13 +278,39 @@ source outcome/artifact provenance. Inputs after the `as_of` cutoff, outside req
 prediction/horizon filters, or missing prediction scores are excluded with explicit limitations.
 Overall, bin-level, and signal-family slices are also stored in `calibration_slices`.
 
+Phase 7 calibration drift checks are persisted as separate `calibration_drift_check` audit
+artifacts and SQLite drift rows. A drift check compares two persisted calibration summaries by
+cohort, prediction type, horizon, bin edges, optional signal family, metrics, and source outcome
+membership under an explicit `as_of` cutoff. Incompatible cohort shape, lookahead summaries, missing
+source artifacts, insufficient resolved history, or conflicting metric movement become explicit
+`not_evaluable`, `insufficient_history`, or `inconclusive` statuses instead of producing
+overconfident deltas. Optional signal-family drift uses family-scoped resolved counts and metrics
+rather than overall calibration deltas. Provider compatibility notes, evidence aging record IDs,
+artifact freshness review IDs, source calibration artifact IDs, source outcome IDs, and source
+calibration slice IDs are preserved as drift provenance. Reports reference the drift artifact through
+the audit manifest and source references; they do not inline recomputed drift math or adjust
+prediction scores.
+
+The public evaluation interface exposes these contracts through phase-neutral CLI and MCP tool
+names. CLI subcommands under `python -m nlp_stock_prediction evaluation` map to real artifact
+writers and readers: `materialize-outcome` writes live `prediction_outcome` and
+`prediction_outcome_evaluation` artifacts; `load-outcomes` validates persisted outcome-evaluation
+payloads; `outcome-summary` writes `outcome_review_summary`; `stale-artifacts` writes
+`artifact_freshness_review`; `evidence-aging` writes `evidence_aging_summary`;
+`source-reliability` writes `source_reliability_note`; `provider-playbook` writes
+`provider_replacement_playbook`; `ablation`, `walk-forward`, `calibration`, and
+`calibration-drift` write their matching evaluation artifact types; and `inspect` returns stored run
+counts. Each command requires an explicit research database and run ID, and every writer requires an
+artifact root that passes repository write-policy checks. The local Codex MCP surface follows the
+same existing-database and explicit-artifact-root boundary.
+
 Rendered Markdown/JSON reports now integrate persisted Phase 6 outputs without recomputing them.
 Stored `prediction_outcome_evaluations` for rendered candidates become `PriorOutcomeReview`
 records, candidates reference those review IDs, and report source references include the prior
 review trace. Phase 6 audit artifacts (`prediction_outcome`, `prediction_outcome_evaluation`,
-`calibration_summary`, `signal_family_ablation`, and `walk_forward_evaluation`) remain separate
-artifacts but are preserved in the final audit manifest and report source references where they
-support calibration context.
+`calibration_summary`, `calibration_drift_check`, `signal_family_ablation`, and
+`walk_forward_evaluation`) remain separate artifacts but are preserved in the final audit manifest
+and report source references where they support calibration context.
 
 Phase 5 report rendering now populates `PriorOutcomeReview` directly from stored prior JSON report
 artifacts when available. The prior report artifact must resolve through the runtime report index,

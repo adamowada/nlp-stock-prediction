@@ -272,15 +272,35 @@ def test_phase6_registry_exposes_live_evaluation_tool_suite() -> None:
     tool_names = [str(tool["tool_name"]) for tool in tools]
 
     assert tool_names == [
-        "phase6_point_in_time_outcome_evaluation",
-        "phase6_load_outcome_evaluations",
-        "phase6_signal_family_ablation",
-        "phase6_walk_forward_evaluation",
-        "phase6_calibration_summary",
-        "inspect_phase6_run",
+        "evaluation_materialize_outcome",
+        "evaluation_load_outcomes",
+        "evaluation_ablation",
+        "evaluation_walk_forward",
+        "evaluation_outcome_summary",
+        "evaluation_stale_artifacts",
+        "evaluation_evidence_aging",
+        "evaluation_source_reliability",
+        "evaluation_provider_playbook",
+        "evaluation_calibration",
+        "evaluation_calibration_drift",
+        "evaluation_inspect",
     ]
     assert not any("dummy" in tool_name for tool_name in tool_names)
-    assert {str(tool["requires_network"]) for tool in tools} == {"False"}
+    requires_network = {str(tool["tool_name"]): bool(tool["requires_network"]) for tool in tools}
+    assert requires_network == {
+        "evaluation_materialize_outcome": True,
+        "evaluation_load_outcomes": False,
+        "evaluation_ablation": False,
+        "evaluation_walk_forward": False,
+        "evaluation_outcome_summary": False,
+        "evaluation_stale_artifacts": False,
+        "evaluation_evidence_aging": False,
+        "evaluation_source_reliability": False,
+        "evaluation_provider_playbook": False,
+        "evaluation_calibration": False,
+        "evaluation_calibration_drift": False,
+        "evaluation_inspect": False,
+    }
 
 
 @pytest.mark.unit
@@ -333,6 +353,8 @@ def test_codex_mcp_server_registers_phase4_and_phase6_tooling(
     monkeypatch.setitem(sys.modules, "mcp", ModuleType("mcp"))
     monkeypatch.setitem(sys.modules, "mcp.server", ModuleType("mcp.server"))
     monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
+    db_path = tmp_path / "data" / "test.sqlite3"
+    SQLiteStore(db_path).initialize()
 
     server = build_server(repo_root=tmp_path, database_path=Path("data/test.sqlite3"))
 

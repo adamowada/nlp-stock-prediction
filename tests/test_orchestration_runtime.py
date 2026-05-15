@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -30,6 +31,7 @@ from nlp_stock_prediction.orchestration import (
     deterministic_generated_at,
     generate_dummy_report_bundle,
 )
+from nlp_stock_prediction.orchestration.runtime import ToolRunRecord as RuntimeToolRunRecord
 from nlp_stock_prediction.reporting.audit import stable_json_bytes
 from nlp_stock_prediction.storage import ResearchRunRecord, SQLiteStore, ToolRunRecord
 
@@ -289,7 +291,8 @@ def test_generate_dummy_report_bundle_writes_markdown_json_and_manifest(tmp_path
     ]
     assert artifact_ids[-2:] == ["report-markdown", "report-json"]
     assert "not a buy or sell instruction" in markdown
-    assert bundle.tool_records[-1].updated_keys == ("daily_report",)
+    last_record = cast(RuntimeToolRunRecord, bundle.tool_records[-1])
+    assert last_record.updated_keys == ("daily_report",)
 
     first_json = bundle.json_path.read_text(encoding="utf-8")
     second_bundle = generate_dummy_report_bundle(_config(tmp_path))

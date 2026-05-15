@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nlp_stock_prediction.contracts import DailyReport
-from nlp_stock_prediction.orchestration.runtime import ToolRunRecord
+from nlp_stock_prediction.orchestration.runtime import ToolRunRecord as RuntimeToolRunRecord
+from nlp_stock_prediction.storage.records import ToolRunRecord as StorageToolRunRecord
+
+ReportToolRunRecord = RuntimeToolRunRecord | StorageToolRunRecord
 
 
 @dataclass(frozen=True)
@@ -19,7 +22,7 @@ class ReportBundle:
     audit_dir: Path
     audit_manifest_path: Path
     report: DailyReport
-    tool_records: tuple[ToolRunRecord, ...]
+    tool_records: tuple[ReportToolRunRecord, ...]
 
 
-__all__ = ["ReportBundle"]
+__all__ = ["ReportBundle", "ReportToolRunRecord"]
