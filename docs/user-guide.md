@@ -126,7 +126,7 @@ reports/2026-05-12/tsla/audit/audit-manifest.json
 The run ID for that command is:
 
 ```text
-phase4-2026-05-12-tsla
+research-2026-05-12-tsla
 ```
 
 Open `report.md` first. Use `report.json` when you need a machine-readable payload. Use
@@ -265,12 +265,12 @@ the primary files are:
 | `reports/2026-05-12/tsla/report.json` | Machine-readable report contract payload. |
 | `reports/2026-05-12/tsla/audit/audit-manifest.json` | Audit manifest of report and supporting artifacts. |
 | `reports/2026-05-12/tsla/audit/` | Tool artifacts, source reliability notes, freshness reviews, and other audit files. |
-| `data/phase4-live-runtime-2026-05-12-<symbol-hash>-<output-hash>.sqlite3` | Ignored runtime research database for the run. |
+| `data/research-live-runtime-2026-05-12-<symbol-hash>-<output-hash>.sqlite3` | Ignored runtime research database for the run. |
 
 Offline mode uses the same report layout and an offline runtime database named:
 
 ```text
-data/phase4-offline-runtime-<date>-<symbol-hash>-<output-hash>.sqlite3
+data/research-offline-runtime-<date>-<symbol-hash>-<output-hash>.sqlite3
 ```
 
 Generated reports, provider caches, runtime research databases, and raw artifacts are local working
@@ -391,7 +391,7 @@ python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output
 the run ID is:
 
 ```text
-phase4-2026-05-12-tsla
+research-2026-05-12-tsla
 ```
 
 and the usual audit artifact root is:
@@ -403,7 +403,7 @@ reports/2026-05-12/tsla/audit
 To find the newest CLI runtime database on Windows PowerShell:
 
 ```powershell
-Get-ChildItem data\phase4-*-runtime-*.sqlite3 |
+Get-ChildItem data\research-*-runtime-*.sqlite3 |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
 ```
@@ -411,7 +411,7 @@ Get-ChildItem data\phase4-*-runtime-*.sqlite3 |
 On macOS/Linux:
 
 ```sh
-ls -t data/phase4-*-runtime-*.sqlite3 | head -1
+ls -t data/research-*-runtime-*.sqlite3 | head -1
 ```
 
 In the examples below, set these variables to match your run.
@@ -419,8 +419,8 @@ In the examples below, set these variables to match your run.
 Windows PowerShell:
 
 ```powershell
-$DATABASE = "data/phase4-live-runtime-2026-05-12-REPLACE_WITH_HASHES.sqlite3"
-$RUN_ID = "phase4-2026-05-12-tsla"
+$DATABASE = "data/research-live-runtime-2026-05-12-REPLACE_WITH_HASHES.sqlite3"
+$RUN_ID = "research-2026-05-12-tsla"
 $AUDIT_ROOT = "reports/2026-05-12/tsla/audit"
 $CANDIDATE_ID = "candidate-id-from-report-json"
 ```
@@ -428,8 +428,8 @@ $CANDIDATE_ID = "candidate-id-from-report-json"
 macOS/Linux:
 
 ```sh
-DATABASE="data/phase4-live-runtime-2026-05-12-REPLACE_WITH_HASHES.sqlite3"
-RUN_ID="phase4-2026-05-12-tsla"
+DATABASE="data/research-live-runtime-2026-05-12-REPLACE_WITH_HASHES.sqlite3"
+RUN_ID="research-2026-05-12-tsla"
 AUDIT_ROOT="reports/2026-05-12/tsla/audit"
 CANDIDATE_ID="candidate-id-from-report-json"
 ```
@@ -681,8 +681,8 @@ Optional drift thresholds:
 4. Confirm the runtime database and run ID:
 
    ```text
-   Database: data/phase4-live-runtime-2026-05-12-<symbol-hash>-<output-hash>.sqlite3
-   Run ID: phase4-2026-05-12-tsla
+   Database: data/research-live-runtime-2026-05-12-<symbol-hash>-<output-hash>.sqlite3
+   Run ID: research-2026-05-12-tsla
    Audit root: reports/2026-05-12/tsla/audit
    ```
 

@@ -40,7 +40,9 @@ from nlp_stock_prediction.orchestration.dummy_fixtures import (
     dummy_evidence_sources,
     dummy_instrument_universe,
 )
-from nlp_stock_prediction.orchestration.phase3_universe import phase3_universe_artifact_payload
+from nlp_stock_prediction.orchestration.instrument_universe import (
+    instrument_universe_artifact_payload,
+)
 from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
 from nlp_stock_prediction.orchestration.report_data_modes import (
     DUMMY_SMOKE_REPORT_DATA_MODE,
@@ -79,7 +81,7 @@ class DummyInstrumentTool:
     def run(self, context: RunContext, _state: OrchestrationState) -> ToolRunResult:
         universe = dummy_instrument_universe(context)
         instruments = universe.instruments
-        payload = phase3_universe_artifact_payload(run_id=context.run_id, universe=universe)
+        payload = instrument_universe_artifact_payload(run_id=context.run_id, universe=universe)
         artifact = context.artifact_writer.write_json(
             artifact_id="instrument-universe",
             artifact_type="instrument_universe",
@@ -335,7 +337,7 @@ class DummyReportAssemblyTool:
             universe=(
                 universe_summary
                 if isinstance(universe_summary, str)
-                else "Deterministic dummy-tool Phase 3 fixture universe."
+                else "Deterministic dummy-tool Instrument-Universe Stage fixture universe."
             ),
             command_args=context.command_args,
             instruments=instruments,

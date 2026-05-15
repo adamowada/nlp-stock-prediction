@@ -1,4 +1,4 @@
-"""Phase 4 prediction-quality scoring."""
+"""Research Stage prediction-quality scoring."""
 
 from __future__ import annotations
 
@@ -29,10 +29,10 @@ from nlp_stock_prediction.contracts.signal_artifact_references import (
     legacy_signal_artifact_reference,
 )
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
-from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
 from nlp_stock_prediction.orchestration.report_data_modes import (
     report_data_mode_metadata_for_run_id,
 )
+from nlp_stock_prediction.orchestration.research_common import safe_research_tool_execution
 from nlp_stock_prediction.storage.records import (
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
@@ -42,8 +42,8 @@ from nlp_stock_prediction.storage.records import (
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 _BASELINE_SCORE = 0.5
-_TOOL_NAME = "phase4_prediction_evaluation"
-_TOOL_VERSION = "phase4.v1"
+_TOOL_NAME = "research_prediction_evaluation"
+_TOOL_VERSION = "research.v1"
 
 
 def evaluate_prediction_candidate(
@@ -249,7 +249,7 @@ def write_prediction_evaluation_artifact(
     if not record_tool_run:
         return write_artifact()
 
-    with safe_phase4_tool_execution(
+    with safe_research_tool_execution(
         store=store,
         artifact_roots=(artifact_dir,),
         tool_run_id=resolved_tool_run_id,

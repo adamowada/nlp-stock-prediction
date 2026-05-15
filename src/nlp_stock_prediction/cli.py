@@ -15,7 +15,7 @@ from rich.console import Console
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.evaluation.calibration import DEFAULT_CALIBRATION_BIN_EDGES
-from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
+from nlp_stock_prediction.orchestration.evaluation_service import EvaluationService
 from nlp_stock_prediction.pipeline import generate_daily_report
 from nlp_stock_prediction.terminal_ui import (
     print_research_paths,
@@ -40,10 +40,10 @@ Configuration:
 """
 _EVALUATION_EPILOG = """Examples:
   python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 \\
-    inspect --run-id phase4-msft-2026-05-14
+    inspect --run-id research-msft-2026-05-14
   python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 \\
-    calibration --run-id phase4-msft-2026-05-14 --cohort-id msft-swing \\
-    --as-of 2026-05-22T00:00:00+00:00 --artifact-root reports/phase4-msft-2026-05-14/audit
+    calibration --run-id research-msft-2026-05-14 --cohort-id msft-swing \\
+    --as-of 2026-05-22T00:00:00+00:00 --artifact-root reports/research-msft-2026-05-14/audit
 
 Evaluation commands read an explicit SQLite run database and require --run-id.
 Commands that write audit artifacts require --artifact-root and use the repository write policy.
@@ -360,7 +360,7 @@ def build_tui_research_config(args: argparse.Namespace) -> RunConfig:
     )
 
 
-def build_evaluation_service(args: argparse.Namespace) -> Phase6Service:
+def build_evaluation_service(args: argparse.Namespace) -> EvaluationService:
     repo_root = args.repo_root.resolve()
     database_path = args.database if args.database.is_absolute() else repo_root / args.database
     if not database_path.exists():
@@ -368,7 +368,7 @@ def build_evaluation_service(args: argparse.Namespace) -> Phase6Service:
             "--database must reference an existing research SQLite database; "
             f"not found: {database_path}"
         )
-    return Phase6Service(repo_root=repo_root, database_path=database_path)
+    return EvaluationService(repo_root=repo_root, database_path=database_path)
 
 
 def run_evaluation_command(args: argparse.Namespace) -> int:

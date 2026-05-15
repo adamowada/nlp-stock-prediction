@@ -92,7 +92,7 @@ def test_refresh_report_index_scans_configured_output_dir(tmp_path: Path) -> Non
 
 
 def test_refresh_report_index_recovers_database_path_from_report(tmp_path: Path) -> None:
-    database_path = tmp_path / "data" / "phase4-runtime.sqlite3"
+    database_path = tmp_path / "data" / "research-runtime.sqlite3"
     _write_fixture_report(tmp_path, database_path=database_path)
 
     state = refresh_report_index(tmp_path, AppState())

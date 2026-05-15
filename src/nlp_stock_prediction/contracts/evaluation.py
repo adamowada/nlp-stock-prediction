@@ -34,7 +34,7 @@ from nlp_stock_prediction.contracts.signal_artifacts import (
     validate_signal_artifact_family_type,
 )
 
-type Phase7LiveDataMode = Literal["live"]
+type LiveReliabilityDataMode = Literal["live"]
 type EvidenceAgeStatus = Literal[
     "fresh",
     "aged_out",
@@ -734,8 +734,8 @@ class SourceReliabilityNote(ContractModel):
     evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     related_artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
-    report_data_mode: Phase7LiveDataMode = "live"
-    provider_mode: Phase7LiveDataMode = "live"
+    report_data_mode: LiveReliabilityDataMode = "live"
+    provider_mode: LiveReliabilityDataMode = "live"
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -750,7 +750,7 @@ class SourceReliabilityNote(ContractModel):
             raise ValueError("limited source reliability notes require limitations")
         _validate_unique("source reliability evidence_ids", self.evidence_ids)
         _validate_unique("source reliability related_artifact_ids", self.related_artifact_ids)
-        _validate_phase7_metadata(self.metadata)
+        _validate_reliability_metadata(self.metadata)
         return self
 
 
@@ -772,8 +772,8 @@ class EvidenceAgingRecord(ContractModel):
     replacement_provider: str | None = None
     replacement_evidence_id: str | None = None
     limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
-    report_data_mode: Phase7LiveDataMode = "live"
-    provider_mode: Phase7LiveDataMode = "live"
+    report_data_mode: LiveReliabilityDataMode = "live"
+    provider_mode: LiveReliabilityDataMode = "live"
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -792,7 +792,7 @@ class EvidenceAgingRecord(ContractModel):
             self.replacement_provider or self.replacement_evidence_id
         ):
             raise ValueError("provider-replaced evidence requires a replacement reference")
-        _validate_phase7_metadata(self.metadata)
+        _validate_reliability_metadata(self.metadata)
         return self
 
 
@@ -815,8 +815,8 @@ class ArtifactFreshnessReview(ContractModel):
     source_evidence_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     source_artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
-    report_data_mode: Phase7LiveDataMode = "live"
-    provider_mode: Phase7LiveDataMode = "live"
+    report_data_mode: LiveReliabilityDataMode = "live"
+    provider_mode: LiveReliabilityDataMode = "live"
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -835,7 +835,7 @@ class ArtifactFreshnessReview(ContractModel):
             raise ValueError("hash-mismatch artifact reviews require actual and expected hashes")
         _validate_unique("artifact freshness source_evidence_ids", self.source_evidence_ids)
         _validate_unique("artifact freshness source_artifact_ids", self.source_artifact_ids)
-        _validate_phase7_metadata(self.metadata)
+        _validate_reliability_metadata(self.metadata)
         return self
 
 
@@ -858,8 +858,8 @@ class ProviderCompatibilityNote(ContractModel):
     replacement_schema_version: str | None = None
     source_reliability_note_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
-    report_data_mode: Phase7LiveDataMode = "live"
-    provider_mode: Phase7LiveDataMode = "live"
+    report_data_mode: LiveReliabilityDataMode = "live"
+    provider_mode: LiveReliabilityDataMode = "live"
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -883,7 +883,7 @@ class ProviderCompatibilityNote(ContractModel):
             raise ValueError("limited provider compatibility notes require limitations")
         if self.missing_fields and self.compatibility_status == "compatible":
             raise ValueError("compatible provider notes must not include missing_fields")
-        _validate_phase7_metadata(self.metadata)
+        _validate_reliability_metadata(self.metadata)
         return self
 
 
@@ -902,8 +902,8 @@ class ProviderReplacementPlaybook(ContractModel):
     credential_requirements: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     unsupported_modes: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
-    report_data_mode: Phase7LiveDataMode = "live"
-    provider_mode: Phase7LiveDataMode = "live"
+    report_data_mode: LiveReliabilityDataMode = "live"
+    provider_mode: LiveReliabilityDataMode = "live"
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -946,7 +946,7 @@ class ProviderReplacementPlaybook(ContractModel):
             and not self.limitations
         ):
             raise ValueError("limited provider replacement playbooks require limitations")
-        _validate_phase7_metadata(self.metadata)
+        _validate_reliability_metadata(self.metadata)
         return self
 
 
@@ -976,8 +976,8 @@ class OutcomeReviewSummary(ContractModel):
     source_reliability_notes: tuple[SourceReliabilityNote, ...] = Field(default_factory=tuple)
     source_calibration_artifact_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
-    report_data_mode: Phase7LiveDataMode = "live"
-    provider_mode: Phase7LiveDataMode = "live"
+    report_data_mode: LiveReliabilityDataMode = "live"
+    provider_mode: LiveReliabilityDataMode = "live"
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -1018,7 +1018,7 @@ class OutcomeReviewSummary(ContractModel):
             "outcome summary source reliability notes",
             tuple(note.note_id for note in self.source_reliability_notes),
         )
-        _validate_phase7_metadata(self.metadata)
+        _validate_reliability_metadata(self.metadata)
         return self
 
 
@@ -1043,8 +1043,8 @@ class CalibrationDriftCheck(ContractModel):
     evidence_aging_record_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     artifact_freshness_review_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
     limitations: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
-    report_data_mode: Phase7LiveDataMode = "live"
-    provider_mode: Phase7LiveDataMode = "live"
+    report_data_mode: LiveReliabilityDataMode = "live"
+    provider_mode: LiveReliabilityDataMode = "live"
     metadata: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -1088,7 +1088,7 @@ class CalibrationDriftCheck(ContractModel):
 
 
 class PredictionEvaluationArtifactPayload(ContractModel):
-    """Stable JSON payload written by the Phase 4 evaluation tool."""
+    """Stable JSON payload written by the Research Stage evaluation tool."""
 
     schema_version: NonEmptyStr = "prediction-evaluation-artifact.v1"
     run_id: NonEmptyStr
@@ -1133,7 +1133,7 @@ def _external_source_requires_trace(
     )
 
 
-def _validate_phase7_metadata(metadata: JsonObject) -> None:
+def _validate_reliability_metadata(metadata: JsonObject) -> None:
     _validate_metadata_key_policy(metadata)
 
 
@@ -1142,14 +1142,16 @@ def _validate_calibration_drift_metadata(metadata: JsonObject) -> None:
         raise ValueError(
             "calibration drift artifacts must remain separate from report calculations"
         )
-    _validate_phase7_metadata(metadata)
+    _validate_reliability_metadata(metadata)
 
 
 def _validate_metadata_key_policy(value: object) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if key in _REPORT_COUPLING_MARKERS:
-                raise ValueError("Phase 7 metadata must not include report-coupled fields")
+                raise ValueError(
+                    "Reliability Stage metadata must not include report-coupled fields"
+                )
             _validate_metadata_key_policy(item)
     elif isinstance(value, list | tuple):
         for item in value:

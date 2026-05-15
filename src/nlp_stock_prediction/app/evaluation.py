@@ -9,7 +9,7 @@ from typing import Protocol, cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.evaluation.calibration import DEFAULT_CALIBRATION_BIN_EDGES
-from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
+from nlp_stock_prediction.orchestration.evaluation_service import EvaluationService
 
 
 class EvaluationServiceProtocol(Protocol):
@@ -261,8 +261,8 @@ def build_evaluation_service(
     repo_root: Path,
     database_path: Path,
     extra_write_roots: tuple[Path, ...] = (),
-) -> Phase6Service:
-    return Phase6Service(
+) -> EvaluationService:
+    return EvaluationService(
         repo_root=repo_root,
         database_path=database_path,
         extra_write_roots=extra_write_roots,

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from nlp_stock_prediction.contracts.base import JsonObject
-from nlp_stock_prediction.orchestration.phase4_execution import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.research_execution import safe_research_tool_execution
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
 
@@ -26,7 +26,7 @@ def evaluation_artifact_execution(
 ) -> Iterator[None]:
     """Run an evaluation writer atomically across tool-run rows and artifact files."""
 
-    with safe_phase4_tool_execution(
+    with safe_research_tool_execution(
         store=store,
         artifact_roots=artifact_roots,
         tool_run_id=tool_run_id,

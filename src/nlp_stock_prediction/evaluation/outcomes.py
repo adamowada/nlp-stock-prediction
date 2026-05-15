@@ -32,12 +32,12 @@ from nlp_stock_prediction.evaluation.common import aware_utc, digest, slug
 from nlp_stock_prediction.evaluation.freshness import (
     artifact_reference_as_of,
     freshness_limitations,
-    phase7_freshness_metadata,
+    freshness_metadata,
     review_candidate_artifact_freshness,
     review_candidate_evidence_aging,
 )
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
-from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.research_common import safe_research_tool_execution
 from nlp_stock_prediction.storage.outcome_repository import persist_prediction_outcome_records
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
@@ -46,8 +46,8 @@ from nlp_stock_prediction.storage.records import (
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
-PHASE6_OUTCOME_TOOL_NAME = "phase6_point_in_time_outcome_evaluation"
-PHASE6_OUTCOME_TOOL_VERSION = "phase6.outcome-evaluation.v1"
+EVALUATION_OUTCOME_TOOL_NAME = "point_in_time_outcome_evaluation"
+EVALUATION_OUTCOME_TOOL_VERSION = "evaluation.outcome-evaluation.v1"
 
 _SIGNAL_ARTIFACT_TYPES = frozenset(
     {
@@ -123,7 +123,7 @@ def build_prediction_evaluation_target(
         reviewed_at=cutoff,
         repo_root=repo_root,
     )
-    freshness_metadata = phase7_freshness_metadata(
+    freshness_review_metadata = freshness_metadata(
         reviewed_at=cutoff,
         evidence_aging_records=evidence_aging_records,
         artifact_freshness_reviews=artifact_freshness_reviews,
@@ -168,7 +168,7 @@ def build_prediction_evaluation_target(
             signal_artifacts=signal_artifacts,
             source_artifact_ids=source_artifact_ids,
             report_artifact_ids=report_artifact_ids,
-            phase7_freshness=freshness_metadata,
+            reliability_freshness=freshness_review_metadata,
         ),
         baseline_comparison=baseline,
         evidence_ids=eligible_evidence_ids,
@@ -177,9 +177,9 @@ def build_prediction_evaluation_target(
         source_artifact_ids=source_artifact_ids,
         limitations=tuple(dict.fromkeys(limitations)),
         metadata={
-            "source": PHASE6_OUTCOME_TOOL_NAME,
+            "source": EVALUATION_OUTCOME_TOOL_NAME,
             "stored_candidate_run_id": candidate.run_id,
-            "phase7_freshness": freshness_metadata,
+            "reliability_freshness": freshness_review_metadata,
         },
     )
 
@@ -366,7 +366,7 @@ def write_point_in_time_outcome_evaluation_artifacts(
         limitations=limitations,
         metadata={
             "target_id": target.target_id,
-            "source": PHASE6_OUTCOME_TOOL_NAME,
+            "source": EVALUATION_OUTCOME_TOOL_NAME,
         },
     )
     artifact_digest = digest(
@@ -381,7 +381,7 @@ def write_point_in_time_outcome_evaluation_artifacts(
     )
     resolved_tool_run_id = (
         tool_run_id
-        or "tool-phase6-outcome-"
+        or "tool-evaluation-outcome-"
         f"{slug(target.candidate_id, allow_file_safe_punctuation=True)}-{artifact_digest[:12]}"
     )
     inputs: JsonObject = {
@@ -399,8 +399,8 @@ def write_point_in_time_outcome_evaluation_artifacts(
                 ToolRunRecord(
                     tool_run_id=resolved_tool_run_id,
                     run_id=run_id,
-                    tool_name=PHASE6_OUTCOME_TOOL_NAME,
-                    tool_version=PHASE6_OUTCOME_TOOL_VERSION,
+                    tool_name=EVALUATION_OUTCOME_TOOL_NAME,
+                    tool_version=EVALUATION_OUTCOME_TOOL_VERSION,
                     status="successful",
                     started_at=created,
                     completed_at=evaluated,
@@ -432,7 +432,7 @@ def write_point_in_time_outcome_evaluation_artifacts(
             repo_root=repo_root,
             base_dir=artifact_dir,
             created_at=created,
-            produced_by=PHASE6_OUTCOME_TOOL_NAME,
+            produced_by=EVALUATION_OUTCOME_TOOL_NAME,
             tool_run_id=resolved_tool_run_id,
             schema_version=outcome_payload.schema_version,
         ).write_json(
@@ -489,7 +489,7 @@ def write_point_in_time_outcome_evaluation_artifacts(
             repo_root=repo_root,
             base_dir=artifact_dir,
             created_at=evaluated,
-            produced_by=PHASE6_OUTCOME_TOOL_NAME,
+            produced_by=EVALUATION_OUTCOME_TOOL_NAME,
             tool_run_id=resolved_tool_run_id,
             schema_version=review_payload.schema_version,
         ).write_json(
@@ -537,13 +537,13 @@ def write_point_in_time_outcome_evaluation_artifacts(
     if not record_tool_run:
         return write_artifacts()
 
-    with safe_phase4_tool_execution(
+    with safe_research_tool_execution(
         store=store,
         artifact_roots=(artifact_dir,),
         tool_run_id=resolved_tool_run_id,
         run_id=run_id,
-        tool_name=PHASE6_OUTCOME_TOOL_NAME,
-        tool_version=PHASE6_OUTCOME_TOOL_VERSION,
+        tool_name=EVALUATION_OUTCOME_TOOL_NAME,
+        tool_version=EVALUATION_OUTCOME_TOOL_VERSION,
         started_at=created,
         inputs=inputs,
     ):
@@ -848,7 +848,7 @@ def _candidate_snapshot(
     signal_artifacts: tuple[SignalArtifactReference, ...],
     source_artifact_ids: tuple[str, ...],
     report_artifact_ids: tuple[str, ...],
-    phase7_freshness: JsonObject,
+    reliability_freshness: JsonObject,
 ) -> JsonObject:
     return {
         "candidate_id": candidate.candidate_id,
@@ -867,7 +867,7 @@ def _candidate_snapshot(
         "signal_artifact_ids": [reference.artifact_id for reference in signal_artifacts],
         "source_artifact_ids": list(source_artifact_ids),
         "report_artifact_ids": list(report_artifact_ids),
-        "phase7_freshness": phase7_freshness,
+        "reliability_freshness": reliability_freshness,
         "baseline": _json_ready(candidate.baseline),
         "uncertainty": candidate.uncertainty,
         "metadata": _json_ready(candidate.metadata),
@@ -1084,8 +1084,8 @@ def _json_ready(value: object) -> JsonValue:
 
 
 __all__ = [
-    "PHASE6_OUTCOME_TOOL_NAME",
-    "PHASE6_OUTCOME_TOOL_VERSION",
+    "EVALUATION_OUTCOME_TOOL_NAME",
+    "EVALUATION_OUTCOME_TOOL_VERSION",
     "PointInTimeOutcomeEvaluationArtifacts",
     "build_prediction_evaluation_target",
     "build_prediction_outcome",

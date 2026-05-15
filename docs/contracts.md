@@ -19,7 +19,7 @@ section describes behavior beyond the current command surface, it is labeled as 
 
 ## Instrument
 
-An instrument record identifies what the app is researching. Phase 3 implements the public Pydantic
+An instrument record identifies what the app is researching. Instrument-Universe Stage implements the public Pydantic
 contracts for instruments, universe requests/results, watchlists, and resolution outcomes, plus
 SQLite registry tables and query helpers for persisted instrument records.
 
@@ -58,7 +58,7 @@ resolution until the request supplies asset class, venue, provider namespace, or
 
 ## Instrument Universe And Watchlists
 
-Implemented Phase 3 contracts:
+Implemented Instrument-Universe Stage contracts:
 
 - `InstrumentQuery`: a direct user/provider query with optional asset class, venue, provider, and
   provider identifier hints.
@@ -74,7 +74,7 @@ or alias lookup, provider ID lookup, asset-class filtering, latest tradability e
 and watchlist instrument listing.
 
 Target behavior: first-class live universe discovery tools will turn provider/search/watchlist input
-into these contracts. Today, Phase 4 fixture-backed universe discovery and smoke paths exercise the
+into these contracts. Today, Research Stage fixture-backed universe discovery and smoke paths exercise the
 contracts and storage; they do not claim live provider coverage for all asset classes.
 
 ## Tool Run
@@ -196,7 +196,7 @@ strategy; rendering preserves authored text while structural validation preserve
 Markdown rendering includes published/created timestamps, data-quality metadata, strategy cluster
 summaries when present, and audit manifest references or artifact entries.
 
-Phase 5 report contracts add first-class structures for dissenting evidence, uncertainty drivers,
+Report Stage report contracts add first-class structures for dissenting evidence, uncertainty drivers,
 prediction change triggers, prior-outcome reviews, structured insufficient-evidence outcomes,
 report-level source references, and material claim traces. Reports with candidates must include
 material claim traces covering every candidate, and each cited source reference, prior review,
@@ -231,10 +231,10 @@ Report inputs and outputs carry typed data-mode provenance. `report_data_mode`, 
 and `input_data_mode` identify whether stored records were produced by live providers, offline
 fixtures, dummy smoke, or Codex smoke paths. Live report assembly treats fixture, dummy, and smoke
 markers as boundary violations; string-marker scanning is a backstop for legacy or malformed
-metadata, not the primary contract shape. Phase 4/5 report runs must stamp data-mode metadata on the
-run and tool records; generic Phase 4 run names are not enough to infer offline fixture mode.
+metadata, not the primary contract shape. Research Stage/5 report runs must stamp data-mode metadata on the
+run and tool records; generic Research Stage run names are not enough to infer offline fixture mode.
 
-Phase 6 outcome tracking begins with `PredictionOutcome` and `PredictionOutcomeEvaluation`.
+Evaluation Stage outcome tracking begins with `PredictionOutcome` and `PredictionOutcomeEvaluation`.
 `PredictionOutcome` records the evaluated candidate, instrument, prediction type, horizon,
 evaluation window, observed/unavailable/stale/pending state, observed result when available,
 outcome evidence, artifact IDs, and limitations. `PredictionOutcomeEvaluation` records the review
@@ -245,9 +245,9 @@ limitations. Runtime SQLite persistence enforces the same shape: observed outcom
 observed result and observation time at or after the fixed window end, while non-observed outcomes
 must not carry observed values and must preserve an explicit limitation.
 
-Phase 7 freshness hardening is captured with `EvidenceAgingRecord` and
+Reliability Stage freshness hardening is captured with `EvidenceAgingRecord` and
 `ArtifactFreshnessReview`. `build_prediction_evaluation_target` now freezes these records under
-`phase7_freshness` in target metadata and the candidate snapshot. Evidence aging records preserve
+`reliability_freshness` in target metadata and the candidate snapshot. Evidence aging records preserve
 provider, source type, retrieved/published timestamps, source artifact IDs, stale or aged-out state,
 and provider replacement references. Artifact freshness reviews preserve artifact type, provider,
 producer, created/as-of/observed timestamps, hash expectations, source relationships, and explicit
@@ -259,7 +259,7 @@ later reports can explain aged-out prior evidence without mutating calibration a
 External source provenance also rejects observations dated after retrieval even when freshness is
 unknown; unknown freshness is not a license for lookahead timestamps.
 
-Phase 6 calibration can now persist signal-family ablations. A `signal_family_ablation` audit
+Evaluation Stage calibration can now persist signal-family ablations. A `signal_family_ablation` audit
 artifact records the point-in-time cohort, source target/outcome-evaluation IDs, source signal
 artifacts, and one `SignalFamilyAblation` per requested family. Each ablation compares resolved
 prediction quality for candidates with that signal family against the cohort without it, while
@@ -281,7 +281,7 @@ source outcome/artifact provenance. Inputs after the `as_of` cutoff, outside req
 prediction/horizon filters, or missing prediction scores are excluded with explicit limitations.
 Overall, bin-level, and signal-family slices are also stored in `calibration_slices`.
 
-Phase 7 calibration drift checks are persisted as separate `calibration_drift_check` audit
+Reliability Stage calibration drift checks are persisted as separate `calibration_drift_check` audit
 artifacts and SQLite drift rows. A drift check compares two persisted calibration summaries by
 cohort, prediction type, horizon, bin edges, optional signal family, metrics, and source outcome
 membership under an explicit `as_of` cutoff. Incompatible cohort shape, lookahead summaries, missing
@@ -294,7 +294,7 @@ calibration slice IDs are preserved as drift provenance. Reports reference the d
 the audit manifest and source references; they do not inline recomputed drift math or adjust
 prediction scores.
 
-The public evaluation interface exposes these contracts through phase-neutral CLI and MCP tool
+The public evaluation interface exposes these contracts through public CLI and MCP tool
 names. CLI subcommands under `python -m nlp_stock_prediction evaluation` map to real artifact
 writers and readers: `materialize-outcome` writes live `prediction_outcome` and
 `prediction_outcome_evaluation` artifacts; `load-outcomes` validates persisted outcome-evaluation
@@ -307,22 +307,22 @@ counts. Each command requires an explicit research database and run ID, and ever
 artifact root that passes repository write-policy checks. The local Codex MCP surface follows the
 same existing-database and explicit-artifact-root boundary.
 
-Rendered Markdown/JSON reports now integrate persisted Phase 6 outputs without recomputing them.
+Rendered Markdown/JSON reports now integrate persisted Evaluation Stage outputs without recomputing them.
 Stored `prediction_outcome_evaluations` for rendered candidates become `PriorOutcomeReview`
 records, candidates reference those review IDs, and report source references include the prior
-review trace. Phase 6 audit artifacts (`prediction_outcome`, `prediction_outcome_evaluation`,
+review trace. Evaluation Stage audit artifacts (`prediction_outcome`, `prediction_outcome_evaluation`,
 `calibration_summary`, `calibration_drift_check`, `signal_family_ablation`, and
 `walk_forward_evaluation`) remain separate artifacts but are preserved in the final audit manifest
 and report source references where they support calibration context.
 
-Phase 5 report rendering now populates `PriorOutcomeReview` directly from stored prior JSON report
+Report Stage report rendering now populates `PriorOutcomeReview` directly from stored prior JSON report
 artifacts when available. The prior report artifact must resolve through the runtime report index,
 match its stored hash, and load through the JSON report contract. First runs, missing or malformed
 prior artifacts, stale report windows, and unlinked prior candidates are represented as explicit
 review limitations. Current candidates link to the review ID and receive concrete
 `PredictionChangeTrigger` entries for follow-up evidence, provider refreshes, baseline changes, or
 outcome data. Each prior review also carries a `prediction_outcome` and
-`prediction_outcome_evaluation` metadata projection using the settled Phase 6 outcome contracts so
+`prediction_outcome_evaluation` metadata projection using the settled Evaluation Stage outcome contracts so
 future consumers do not need a second prior-review vocabulary.
 
 ## Planning State

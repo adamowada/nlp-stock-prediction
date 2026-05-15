@@ -742,11 +742,11 @@ def _codex_activity_line(event: dict[str, object]) -> str | None:
         return "Codex reported an error."
 
     if item is not None:
-        phase = _activity_phase(event_type, _string_field(item, "status"))
+        stage = _activity_state(event_type, _string_field(item, "status"))
         if item_type == "command_execution":
-            return _command_activity_line(item, phase)
+            return _command_activity_line(item, stage)
         if _is_tool_item(item_type):
-            return _tool_activity_line(event, item, phase)
+            return _tool_activity_line(event, item, stage)
         if item_type == "reasoning":
             return _reasoning_activity_line(item)
         if item_type == "agent_message":
@@ -759,7 +759,7 @@ def _codex_activity_line(event: dict[str, object]) -> str | None:
     return None
 
 
-def _activity_phase(event_type: str | None, status: str | None) -> str:
+def _activity_state(event_type: str | None, status: str | None) -> str:
     normalized_status = (status or "").lower()
     normalized_event = (event_type or "").lower()
     if normalized_status in {"failed", "error"}:
@@ -775,13 +775,13 @@ def _activity_phase(event_type: str | None, status: str | None) -> str:
     return "Observed"
 
 
-def _command_activity_line(item: dict[str, object], phase: str) -> str:
+def _command_activity_line(item: dict[str, object], stage: str) -> str:
     command = _display_name(_string_field(item, "command"))
     exit_code = item.get("exit_code")
-    if phase == "Finished":
+    if stage == "Finished":
         suffix = f" (exit {exit_code})" if isinstance(exit_code, int) else ""
         return _activity_sentence(f"Finished shell command{suffix}", command)
-    if phase == "Failed":
+    if stage == "Failed":
         suffix = f" (exit {exit_code})" if isinstance(exit_code, int) else ""
         return _activity_sentence(f"Failed shell command{suffix}", command)
     return _activity_sentence("Running shell command", command)
@@ -790,15 +790,15 @@ def _command_activity_line(item: dict[str, object], phase: str) -> str:
 def _tool_activity_line(
     event: dict[str, object],
     item: dict[str, object],
-    phase: str,
+    stage: str,
 ) -> str:
     name = _tool_name(event, item)
     server = _string_field(item, "server") or _string_field(event, "server")
     arguments = _argument_summary(_arguments_payload(item) or _arguments_payload(event))
-    result = _result_summary(item) if phase in {"Finished", "Failed"} else None
+    result = _result_summary(item) if stage in {"Finished", "Failed"} else None
     if name is None:
         name = f"MCP tool on {server}" if server is not None else "tool"
-    prefix = f"{phase} MCP tool" if server is not None else f"{phase} tool"
+    prefix = f"{stage} MCP tool" if server is not None else f"{stage} tool"
     detail = f"{name}{arguments}"
     if result is not None:
         detail = f"{detail}; {result}"

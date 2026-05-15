@@ -12,8 +12,8 @@ buy or sell. Its output is a Markdown and JSON research report that separates so
 analysis, preserves dissenting context, and explains what would change the prediction.
 
 The project is in active development. The current implementation includes deterministic offline and
-guarded live-provider research commands, SQLite-backed planning and research storage, Phase 3
-instrument-universe contracts/storage, Phase 4 research tools, Phase 5 Markdown/JSON/audit
+guarded live-provider research commands, SQLite-backed planning and research storage, Instrument-Universe Stage
+instrument-universe contracts/storage, Research Stage research tools, Report Stage Markdown/JSON/audit
 prediction reports, and an opt-in Codex MCP smoke path.
 
 ## Contents
@@ -151,23 +151,23 @@ python -m nlp_stock_prediction research \
   --live
 ```
 
-Run the optional Phase 4 Codex smoke workflow:
+Run the optional Research Stage Codex smoke workflow:
 
 ```sh
 python -m pip install -e ".[dev,codex-smoke]"
-NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py \
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_codex_smoke.py \
   --date 2026-05-13 \
-  --output reports/phase4-codex-smoke \
+  --output reports/research-codex-smoke \
   --symbol TSLA
 ```
 
 The legacy-named smoke script prepares a fresh ignored SQLite database, starts a local MCP server,
-exposes the Phase 4 research tool suite to Codex, and writes ignored artifacts under local output
+exposes the Research Stage research tool suite to Codex, and writes ignored artifacts under local output
 directories.
 
 ## Current Instrument Universe
 
-Phase 3 adds the durable instrument-universe layer that reports and storage can share. The
+Instrument-Universe Stage adds the durable instrument-universe layer that reports and storage can share. The
 implemented contracts and SQLite helpers represent broad retail-accessible research targets:
 stocks, ETFs, crypto pairs, currency and commodity exposure, futures context, funds, indexes, and
 related proxies. Instrument records carry canonical IDs, symbols, display names, asset classes,
@@ -183,30 +183,30 @@ The offline report path remains fixture-backed. The live report path materialize
 as live-mode instrument identities and then relies on live provider artifacts to establish data
 availability. Broader live universe-discovery adapters remain future hardening.
 
-## Current Phase 4 Tool Suite
+## Current Research Stage Tool Suite
 
-The fixture-backed Phase 4 suite now includes universe discovery, market data, technical packages,
+The fixture-backed Research Stage suite now includes universe discovery, market data, technical packages,
 social evidence, news/catalysts, fundamentals, sector/macro context, prediction-quality evaluation,
 conservative candidate synthesis, and final Markdown/JSON/audit report rendering. These tools write
 typed artifacts and SQLite run-graph rows while preserving provider/source provenance. Live providers
 remain opt-in and incremental; deterministic fixtures are the default QA and offline path.
 
-## Current Phase 6 Evaluation And Calibration
+## Current Evaluation Stage Evaluation And Calibration
 
-Phase 6 can evaluate stored prediction candidates against later outcome evidence, then persist
+Evaluation Stage can evaluate stored prediction candidates against later outcome evidence, then persist
 signal-family ablations, walk-forward folds, and calibration summaries from those point-in-time
 outcome evaluations. These tools read from the research SQLite run graph and write audit artifacts
 plus `calibration_runs`/`calibration_slices`; they do not use fixture or dummy fallbacks.
 
-Rendered reports now preserve Phase 6 outputs when they exist for the same run. Stored outcome
+Rendered reports now preserve Evaluation Stage outputs when they exist for the same run. Stored outcome
 evaluations become prior-outcome review entries in Markdown/JSON, and calibration artifacts remain
 separate audit artifacts referenced by the report rather than being collapsed into trading-style
 performance claims.
 
-## Current Phase 7 Evaluation Hardening
+## Current Reliability Stage Evaluation Hardening
 
-Phase 7 now adds typed freshness and aging reviews to point-in-time evaluation targets. Target
-freezing records evidence aging and artifact freshness under `phase7_freshness`, normalizes
+Reliability Stage now adds typed freshness and aging reviews to point-in-time evaluation targets. Target
+freezing records evidence aging and artifact freshness under `reliability_freshness`, normalizes
 date-only market artifact metadata deterministically, and keeps aged-out, stale, missing,
 malformed, hash-mismatched, provider-replaced, and future/lookahead artifact states auditable.
 Standalone `artifact_freshness_review` and `evidence_aging_summary` audit artifacts can be written
@@ -220,7 +220,7 @@ numbers. Provider hardening keeps X API limits within the real provider contract
 public-page scraping through the shared HTML retry/cache path, and preserves timeout/cache-failure
 classification without substituting fixture or dummy data.
 
-The canonical public interface is phase-neutral:
+The canonical public interface is public:
 
 ```sh
 python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 inspect --run-id <run-id>
@@ -234,7 +234,7 @@ python -m nlp_stock_prediction evaluation --database data/prediction-research.sq
 commands require an explicit database and run ID, and write commands require `--artifact-root` so
 audit writes stay under the repository write policy.
 
-## Current Phase 5 Prediction Reports
+## Current Report Stage Prediction Reports
 
 The report product writes Markdown, JSON, and audit-manifest artifacts from the stored run graph.
 Reports preserve evidence for and against, dissenting evidence, uncertainty, baseline context,
@@ -275,7 +275,7 @@ The project uses two SQLite databases:
   metadata.
 - `data/prediction-research.sqlite3`: ignored default research state for service/tool runs that do
   not choose a per-run database.
-- `data/phase4-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3`: ignored CLI
+- `data/research-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3`: ignored CLI
   research databases created by `python -m nlp_stock_prediction research ...`. These isolate report
   runs by date, symbol, output path, and live/offline mode so one invocation cannot silently reuse
   another invocation's stored evidence.
@@ -292,7 +292,7 @@ src/nlp_stock_prediction/cli.py
 src/nlp_stock_prediction/contracts/
                               Pydantic contracts for instruments, evidence, reports, and tools
 src/nlp_stock_prediction/orchestration/
-                              Research runtime, Phase 4 tools, MCP smoke support, and report assembly
+                              Research runtime, Research Stage tools, MCP smoke support, and report assembly
 src/nlp_stock_prediction/providers/
                               Provider adapters and provider-facing contracts
 src/nlp_stock_prediction/reporting/
@@ -301,7 +301,7 @@ src/nlp_stock_prediction/storage/
                               SQLite schema initialization and storage helpers
 tests/                        Unit, contract, provider, storage, and orchestration tests
 tests/fixtures/tools/universe_discovery/
-                              Small Phase 3 instrument-universe fixture contracts
+                              Small Instrument-Universe Stage instrument-universe fixture contracts
 scripts/                      Maintenance and smoke-test scripts
 docs/                         Architecture, contracts, configuration, roadmap, and testing docs
 plans/planning.sqlite3        Tracked planning database
@@ -367,6 +367,6 @@ NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python -m pytest -m codex_smoke
 ```
 
 See [docs/testing-plan.md](docs/testing-plan.md) for test layering, negative-case expectations, and
-acceptance criteria. Phase 3 fixture scenarios live under
-`tests/fixtures/tools/universe_discovery/`; the Phase 4 production gate lives in
-`tests/test_phase4_tool_suite_e2e.py`.
+acceptance criteria. Instrument-Universe Stage fixture scenarios live under
+`tests/fixtures/tools/universe_discovery/`; the Research Stage production gate lives in
+`tests/test_research_tool_suite_e2e.py`.

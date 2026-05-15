@@ -7,9 +7,9 @@ from typing import cast
 
 from nlp_stock_prediction.contracts import DailyReport
 from nlp_stock_prediction.contracts.providers import RunConfig
-from nlp_stock_prediction.orchestration.phase2_common import stable_digest
-from nlp_stock_prediction.orchestration.phase4_service import Phase4Service
+from nlp_stock_prediction.orchestration.orchestration_common import stable_digest
 from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
+from nlp_stock_prediction.orchestration.research_service import ResearchService
 
 LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
     "Live report generation requires source_mode='live' or live_providers=True; "
@@ -18,7 +18,7 @@ LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
 
 
 def generate_daily_report(config: RunConfig) -> ReportBundle:
-    """Generate a Phase 4 research report bundle."""
+    """Generate a Research Stage research report bundle."""
 
     live_requested = config.source_mode == "live" or config.live_providers
     if not config.offline and not live_requested:
@@ -36,25 +36,25 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
     extra_write_roots = tuple(
         path for path in (config.output_dir, config.cache_dir) if path is not None
     )
-    service = Phase4Service(
+    service = ResearchService(
         repo_root=repo_root,
         fixture_root=fixture_root,
         provider_cache_root=config.cache_dir,
         extra_write_roots=extra_write_roots,
         database_path=Path("data")
         / (
-            f"phase4-{'offline' if config.offline else 'live'}-runtime-"
+            f"research-{'offline' if config.offline else 'live'}-runtime-"
             f"{config.run_date.isoformat()}-{symbol_digest}-{output_digest}.sqlite3"
         ),
     )
     result = (
-        service.run_offline_phase4_flow(
+        service.run_offline_research_flow(
             run_date=config.run_date.isoformat(),
             output_dir=output_arg,
             symbol=normalized_symbol,
         )
         if config.offline
-        else service.run_live_phase4_flow(
+        else service.run_live_research_flow(
             run_date=config.run_date.isoformat(),
             output_dir=output_arg,
             symbol=normalized_symbol,

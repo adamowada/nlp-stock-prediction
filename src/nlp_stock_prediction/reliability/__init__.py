@@ -17,7 +17,7 @@ from nlp_stock_prediction.contracts import (
     WarningCode,
     WarningSeverity,
 )
-from nlp_stock_prediction.reliability.phase7 import (
+from nlp_stock_prediction.reliability.live import (
     DEFAULT_SOURCE_RELIABILITY_POLICY,
     ProviderReplacementSpec,
     SourceReliabilityPolicy,

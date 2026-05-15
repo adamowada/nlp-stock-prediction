@@ -425,19 +425,19 @@ def _render_prior_outcome_review(review: PriorOutcomeReview) -> list[str]:
 def _render_prior_outcome_freshness(metadata: object) -> list[str]:
     if not isinstance(metadata, dict):
         return []
-    phase7_freshness = metadata.get("phase7_freshness")
-    if not isinstance(phase7_freshness, dict):
+    reliability_freshness = metadata.get("reliability_freshness")
+    if not isinstance(reliability_freshness, dict):
         return []
     lines: list[str] = []
     aged_evidence = _prior_freshness_items(
-        phase7_freshness.get("evidence_aging_records"),
+        reliability_freshness.get("evidence_aging_records"),
         id_key="evidence_id",
         status_keys=("age_status", "freshness_status"),
     )
     if aged_evidence:
         lines.append(f"  - Aged evidence: {_format_list(aged_evidence)}")
     artifact_reviews = _prior_freshness_items(
-        phase7_freshness.get("artifact_freshness_reviews"),
+        reliability_freshness.get("artifact_freshness_reviews"),
         id_key="artifact_id",
         status_keys=("freshness_status", "status"),
     )

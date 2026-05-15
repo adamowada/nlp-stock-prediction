@@ -161,7 +161,7 @@ def test_agent_chat_uses_default_database_when_selected_report_has_no_database(
     (report_dir / "report.md").write_text("# Report\n", encoding="utf-8")
     selected = ReportIndexEntry(
         report_id="report-nvda",
-        run_id="phase4-2026-05-15-nvda",
+        run_id="research-2026-05-15-nvda",
         symbol="NVDA",
         report_date=date(2026, 5, 15),
         generated_at=datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
@@ -258,14 +258,14 @@ def test_codex_activity_names_mcp_tool_and_safe_arguments() -> None:
                 "server": "nlp-stock-prediction",
                 "tool": "inspect_research_run",
                 "arguments": (
-                    '{"run_id":"phase4-2026-05-14-nflx","include_artifacts":true,'
+                    '{"run_id":"research-2026-05-14-nflx","include_artifacts":true,'
                     '"api_key":"secret"}'
                 ),
                 "status": "in_progress",
             },
         }
     ) == (
-        "Started MCP tool: inspect_research_run(run_id=phase4-2026-05-14-nflx, "
+        "Started MCP tool: inspect_research_run(run_id=research-2026-05-14-nflx, "
         "include_artifacts=true, api_key=<redacted>)."
     )
 

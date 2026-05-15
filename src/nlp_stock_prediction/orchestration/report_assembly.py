@@ -35,12 +35,12 @@ from nlp_stock_prediction.orchestration.artifact_policy import (
     ArtifactType,
     source_reference_type_for_artifact,
 )
-from nlp_stock_prediction.orchestration.phase2_common import file_sha256, utc_now
-from nlp_stock_prediction.orchestration.phase4_market_data import (
-    load_phase4_market_data_artifact,
+from nlp_stock_prediction.orchestration.orchestration_common import file_sha256, utc_now
+from nlp_stock_prediction.orchestration.research_market_data import (
+    load_research_market_data_artifact,
 )
-from nlp_stock_prediction.orchestration.phase4_technical_package import (
-    load_phase4_technical_package_artifact,
+from nlp_stock_prediction.orchestration.research_technical_package import (
+    load_research_technical_package_artifact,
 )
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
@@ -611,7 +611,7 @@ def _audit_artifact_from_record(
         artifact_type=cast(ArtifactType, record.artifact_type),
         path=path.as_posix(),
         created_at=record.created_at or utc_now(),
-        produced_by=record.produced_by or "phase2-mcp",
+        produced_by=record.produced_by or "codex_smoke-mcp",
         sha256=record.sha256,
         record_count=record.record_count,
         metadata=metadata,
@@ -620,10 +620,10 @@ def _audit_artifact_from_record(
 
 def _validate_json_artifact_payload(record: ArtifactRecord, path: Path) -> None:
     if record.artifact_type == "market_data":
-        load_phase4_market_data_artifact(path)
+        load_research_market_data_artifact(path)
         return
     if record.artifact_type == "technical_package":
-        load_phase4_technical_package_artifact(path)
+        load_research_technical_package_artifact(path)
         return
     if record.artifact_type == "prediction_evaluation":
         PredictionEvaluationArtifactPayload.model_validate_json(path.read_text(encoding="utf-8"))

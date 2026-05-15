@@ -52,7 +52,7 @@ DEFAULT_FRESHNESS_POLICY = FreshnessPolicy()
 
 @dataclass(frozen=True)
 class WrittenFreshnessArtifact:
-    """One indexed Phase 7 freshness artifact and its typed payload."""
+    """One indexed Reliability Stage freshness artifact and its typed payload."""
 
     artifact: AuditArtifact
     payload: ArtifactFreshnessReviewArtifactPayload | EvidenceAgingSummaryArtifactPayload
@@ -470,7 +470,7 @@ def review_candidate_artifact_freshness(
     )
 
 
-def phase7_freshness_metadata(
+def freshness_metadata(
     *,
     reviewed_at: datetime,
     evidence_aging_records: tuple[EvidenceAgingRecord, ...],
@@ -623,7 +623,7 @@ def write_artifact_freshness_review_artifact(
         repo_root=repo_root,
         base_dir=artifact_dir,
         created_at=created,
-        produced_by="phase7_freshness_review",
+        produced_by="reliability_freshness_review",
         tool_run_id=tool_run_id,
         schema_version=payload.schema_version,
     ).write_json(
@@ -677,7 +677,7 @@ def write_evidence_aging_summary_artifact(
         repo_root=repo_root,
         base_dir=artifact_dir,
         created_at=created,
-        produced_by="phase7_evidence_aging",
+        produced_by="reliability_evidence_aging",
         tool_run_id=tool_run_id,
         schema_version=payload.schema_version,
     ).write_json(
@@ -809,8 +809,8 @@ __all__ = [
     "WrittenFreshnessArtifact",
     "artifact_reference_as_of",
     "freshness_limitations",
+    "freshness_metadata",
     "normalize_artifact_timestamps",
-    "phase7_freshness_metadata",
     "review_artifact_file_freshness",
     "review_artifact_freshness",
     "review_candidate_artifact_freshness",

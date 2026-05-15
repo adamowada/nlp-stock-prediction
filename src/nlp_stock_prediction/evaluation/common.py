@@ -1,4 +1,4 @@
-"""Shared Phase 6 evaluation cohort and persistence helpers."""
+"""Shared Evaluation Stage evaluation cohort and persistence helpers."""
 
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ TItem = TypeVar("TItem")
 
 
 @dataclass(frozen=True)
-class Phase7FreshnessRecords:
-    """Structured Phase 7 records carried alongside a cohort selection."""
+class FreshnessRecords:
+    """Structured Reliability Stage records carried alongside a cohort selection."""
 
     evidence_aging_records: tuple[EvidenceAgingRecord, ...] = ()
     artifact_freshness_reviews: tuple[ArtifactFreshnessReview, ...] = ()
@@ -64,8 +64,8 @@ class FilteredOutcomeCohort[TItem]:
     eligible: tuple[TItem, ...]
     excluded_outcome_evaluation_ids: tuple[str, ...]
     limitations: tuple[str, ...]
-    phase7_evidence_aging_records: tuple[EvidenceAgingRecord, ...] = ()
-    phase7_artifact_freshness_reviews: tuple[ArtifactFreshnessReview, ...] = ()
+    reliability_evidence_aging_records: tuple[EvidenceAgingRecord, ...] = ()
+    reliability_artifact_freshness_reviews: tuple[ArtifactFreshnessReview, ...] = ()
 
 
 def filter_targeted_outcome_inputs[TTargetedInput: TargetedOutcomeInput](
@@ -83,8 +83,8 @@ def filter_targeted_outcome_inputs[TTargetedInput: TargetedOutcomeInput](
     eligible: list[TTargetedInput] = []
     excluded_ids: list[str] = []
     limitations: list[str] = []
-    phase7_evidence_aging_records: list[EvidenceAgingRecord] = []
-    phase7_artifact_freshness_reviews: list[ArtifactFreshnessReview] = []
+    reliability_evidence_aging_records: list[EvidenceAgingRecord] = []
+    reliability_artifact_freshness_reviews: list[ArtifactFreshnessReview] = []
     for item in inputs:
         outcome_evaluation = item.outcome_evaluation
         if outcome_evaluation.evaluated_at > as_of:
@@ -105,17 +105,21 @@ def filter_targeted_outcome_inputs[TTargetedInput: TargetedOutcomeInput](
                 )
             continue
         eligible.append(item)
-        phase7_records = phase7_freshness_records_from_target(item.target)
-        phase7_evidence_aging_records.extend(phase7_records.evidence_aging_records)
-        phase7_artifact_freshness_reviews.extend(phase7_records.artifact_freshness_reviews)
-        limitations.extend(phase7_records.limitations)
+        reliability_records = freshness_records_from_target(item.target)
+        reliability_evidence_aging_records.extend(reliability_records.evidence_aging_records)
+        reliability_artifact_freshness_reviews.extend(
+            reliability_records.artifact_freshness_reviews
+        )
+        limitations.extend(reliability_records.limitations)
     return FilteredOutcomeCohort(
         eligible=tuple(eligible),
         excluded_outcome_evaluation_ids=tuple(dict.fromkeys(excluded_ids)),
         limitations=tuple(dict.fromkeys(limitations)),
-        phase7_evidence_aging_records=_dedupe_evidence_aging_records(phase7_evidence_aging_records),
-        phase7_artifact_freshness_reviews=_dedupe_artifact_freshness_reviews(
-            phase7_artifact_freshness_reviews
+        reliability_evidence_aging_records=_dedupe_evidence_aging_records(
+            reliability_evidence_aging_records
+        ),
+        reliability_artifact_freshness_reviews=_dedupe_artifact_freshness_reviews(
+            reliability_artifact_freshness_reviews
         ),
     )
 
@@ -158,7 +162,7 @@ def filter_outcome_evaluations(
 def outcome_status_counts(
     outcome_evaluations: Iterable[PredictionOutcomeEvaluation],
 ) -> dict[str, int]:
-    """Count Phase 6 outcome statuses using the shared resolved-status policy."""
+    """Count Evaluation Stage outcome statuses using the shared resolved-status policy."""
 
     counts = {
         "resolved_count": 0,
@@ -183,17 +187,19 @@ def outcome_status_counts(
     return counts
 
 
-def phase7_freshness_records_from_target(
+def freshness_records_from_target(
     target: PredictionEvaluationTarget,
-) -> Phase7FreshnessRecords:
-    """Read typed Phase 7 freshness records from a frozen target, if present."""
+) -> FreshnessRecords:
+    """Read typed Reliability Stage freshness records from a frozen target, if present."""
 
-    raw = target.metadata.get("phase7_freshness")
+    raw = target.metadata.get("reliability_freshness")
     if raw is None:
-        return Phase7FreshnessRecords()
+        return FreshnessRecords()
     if not isinstance(raw, dict):
-        return Phase7FreshnessRecords(
-            limitations=(f"Malformed Phase 7 freshness metadata on target {target.target_id}.",)
+        return FreshnessRecords(
+            limitations=(
+                f"Malformed Reliability Stage freshness metadata on target {target.target_id}.",
+            )
         )
     aging_records, aging_limitations = _parse_evidence_aging_records(
         raw.get("evidence_aging_records"),
@@ -203,7 +209,7 @@ def phase7_freshness_records_from_target(
         raw.get("artifact_freshness_reviews"),
         target_id=target.target_id,
     )
-    return Phase7FreshnessRecords(
+    return FreshnessRecords(
         evidence_aging_records=aging_records,
         artifact_freshness_reviews=freshness_reviews,
         limitations=tuple(dict.fromkeys((*aging_limitations, *freshness_limitations))),
@@ -336,18 +342,20 @@ def _parse_evidence_aging_records(
     if raw is None:
         return (), ()
     if not isinstance(raw, list):
-        return (), (f"Malformed Phase 7 evidence aging records on target {target_id}.",)
+        return (), (f"Malformed Reliability Stage evidence aging records on target {target_id}.",)
     records: list[EvidenceAgingRecord] = []
     limitations: list[str] = []
     for item in raw:
         if not isinstance(item, dict):
-            limitations.append(f"Malformed Phase 7 evidence aging record on target {target_id}.")
+            limitations.append(
+                f"Malformed Reliability Stage evidence aging record on target {target_id}."
+            )
             continue
         try:
             records.append(EvidenceAgingRecord.model_validate(cast(object, item)))
         except ValueError as exc:
             limitations.append(
-                f"Malformed Phase 7 evidence aging record on target {target_id}: {exc}."
+                f"Malformed Reliability Stage evidence aging record on target {target_id}: {exc}."
             )
     return _dedupe_evidence_aging_records(records), tuple(dict.fromkeys(limitations))
 
@@ -360,20 +368,23 @@ def _parse_artifact_freshness_reviews(
     if raw is None:
         return (), ()
     if not isinstance(raw, list):
-        return (), (f"Malformed Phase 7 artifact freshness reviews on target {target_id}.",)
+        return (), (
+            f"Malformed Reliability Stage artifact freshness reviews on target {target_id}.",
+        )
     reviews: list[ArtifactFreshnessReview] = []
     limitations: list[str] = []
     for item in raw:
         if not isinstance(item, dict):
             limitations.append(
-                f"Malformed Phase 7 artifact freshness review on target {target_id}."
+                f"Malformed Reliability Stage artifact freshness review on target {target_id}."
             )
             continue
         try:
             reviews.append(ArtifactFreshnessReview.model_validate(cast(object, item)))
         except ValueError as exc:
             limitations.append(
-                f"Malformed Phase 7 artifact freshness review on target {target_id}: {exc}."
+                "Malformed Reliability Stage artifact freshness review on target "
+                f"{target_id}: {exc}."
             )
     return _dedupe_artifact_freshness_reviews(reviews), tuple(dict.fromkeys(limitations))
 

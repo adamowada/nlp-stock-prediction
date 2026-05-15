@@ -35,7 +35,7 @@ dates or universes unless the test explicitly exercises stale or contradictory e
 
 ## Universe Discovery Fixtures
 
-Phase 3 universe fixtures are small contract-shaped JSON files under
+Instrument-Universe Stage universe fixtures are small contract-shaped JSON files under
 `tests/fixtures/tools/universe_discovery/`.
 
 Use them for deterministic tests of:

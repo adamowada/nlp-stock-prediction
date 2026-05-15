@@ -2917,15 +2917,19 @@ def _migrate_research_schema_v8(connection: sqlite3.Connection) -> None:
 
 _RESEARCH_MIGRATION_STEPS = (
     _SchemaMigrationStep(1, "initial_research_schema", _noop_migration),
-    _SchemaMigrationStep(2, "phase2_research_graph_schema", _noop_migration),
-    _SchemaMigrationStep(3, "phase2_evidence_provenance_schema", _noop_migration),
+    _SchemaMigrationStep(2, "codex_smoke_research_graph_schema", _noop_migration),
+    _SchemaMigrationStep(3, "codex_smoke_evidence_provenance_schema", _noop_migration),
     _SchemaMigrationStep(4, "registry_grade_research_schema_v4", _migrate_research_schema_v4),
     _SchemaMigrationStep(5, "artifact_audit_provenance_schema_v5", _migrate_research_schema_v5),
-    _SchemaMigrationStep(6, "phase5_phase6_runtime_schema_v6", _migrate_research_schema_v6),
-    _SchemaMigrationStep(7, "phase5_phase6_schema_reconciliation_v7", _migrate_research_schema_v7),
+    _SchemaMigrationStep(6, "report_evaluation_runtime_schema_v6", _migrate_research_schema_v6),
+    _SchemaMigrationStep(
+        7,
+        "report_evaluation_schema_reconciliation_v7",
+        _migrate_research_schema_v7,
+    ),
     _SchemaMigrationStep(
         8,
-        "phase7_evaluation_hardening_persistence_v8",
+        "reliability_evaluation_hardening_persistence_v8",
         _migrate_research_schema_v8,
     ),
 )
