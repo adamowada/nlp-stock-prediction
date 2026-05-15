@@ -125,28 +125,28 @@ def test_live_sec_company_tickers_official_api_smoke() -> None:
         "a contact User-Agent for SEC requests, for example 'your-name your-email@example.com'",
     )
     request = Request(
-        "https://www.sec.gov/files/company_tickers.json",
+        "https://www.sec.gov/files/company_tickers_exchange.json",
         headers={"User-Agent": user_agent, "Accept": "application/json"},
     )
 
     response = _fetch_live_url(request, smoke_name="SEC company tickers", byte_limit=2_000_000)
-    assert response.status == 200, "SEC company_tickers live smoke expected HTTP 200."
+    assert response.status == 200, "SEC company_tickers_exchange live smoke expected HTTP 200."
     try:
         payload = json.loads(response.body)
     except json.JSONDecodeError as exc:
-        pytest.fail(f"SEC company_tickers response was not valid JSON: {exc}.")
-    assert isinstance(payload, dict), "SEC company_tickers response must be a JSON object."
-    records = list(payload.values())
-    assert records, "SEC company_tickers response did not include any company records."
+        pytest.fail(f"SEC company_tickers_exchange response was not valid JSON: {exc}.")
+    assert isinstance(payload, dict), "SEC company_tickers_exchange response must be a JSON object."
+    assert payload.get("fields") == ["cik", "name", "ticker", "exchange"]
+    records = payload.get("data")
+    assert isinstance(records, list) and records, (
+        "SEC company_tickers_exchange response did not include any company records."
+    )
     first_record = records[0]
-    assert isinstance(first_record, dict), (
-        "SEC company_tickers company record must be a JSON object."
+    assert isinstance(first_record, list) and len(first_record) >= 4, (
+        "SEC company_tickers_exchange company record must include cik/name/ticker/exchange."
     )
-    assert {"ticker", "title", "cik_str"}.issubset(first_record), (
-        "SEC company_tickers record did not include the expected ticker/title/cik_str fields."
-    )
-    assert isinstance(first_record["ticker"], str) and first_record["ticker"].strip(), (
-        "SEC company_tickers record included an empty ticker."
+    assert isinstance(first_record[2], str) and first_record[2].strip(), (
+        "SEC company_tickers_exchange record included an empty ticker."
     )
 
 

@@ -98,10 +98,15 @@ class Phase4FixtureProviderFactory:
         if companyfacts is None or submissions is None:
             return ()
         provider = SecEdgarFundamentalsProvider(
-            ticker_cik_map={symbol.upper(): "1318605"},
             user_agent="nlp-stock-prediction fixture-runtime contact@example.test",
             transport=_StaticJsonTransport(
                 {
+                    "company_tickers_exchange": _company_tickers_exchange_payload(
+                        cik="1318605",
+                        ticker=symbol.upper(),
+                        name="Tesla, Inc.",
+                        exchange="Nasdaq",
+                    ),
                     "companyfacts": cast(JsonObject, companyfacts),
                     "submissions": cast(JsonObject, submissions),
                 }
@@ -142,6 +147,19 @@ class _StaticJsonTransport:
             f"No fixture JSON response is registered for URL: {url}",
             error_type="fixture_not_found",
         )
+
+
+def _company_tickers_exchange_payload(
+    *,
+    cik: str,
+    ticker: str,
+    name: str,
+    exchange: str,
+) -> JsonObject:
+    return {
+        "fields": ["cik", "name", "ticker", "exchange"],
+        "data": [[int(cik), name, ticker, exchange]],
+    }
 
 
 __all__ = ["Phase4FixtureProviderFactory"]

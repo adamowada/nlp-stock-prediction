@@ -218,7 +218,6 @@ NLP_STOCK_PREDICTION_FRED_API_KEY
 NLP_STOCK_PREDICTION_X_BEARER_TOKEN
 NLP_STOCK_PREDICTION_LIVE_USER_AGENT
 NLP_STOCK_PREDICTION_SEC_USER_AGENT
-NLP_STOCK_PREDICTION_SEC_CIK_MAP
 NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT
 NEWS_* provider keys
 MARKET_DATA_* provider keys
@@ -227,12 +226,14 @@ NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL
 NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT
 ```
 
-`NLP_STOCK_PREDICTION_SEC_CIK_MAP` accepts comma-separated `SYMBOL=CIK` entries for SEC EDGAR
-lookups. The live path also honors `ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`,
-`FRED_API_KEY`, and `X_BEARER_TOKEN` as fallback names. When Alpha Vantage is not configured, live
-stock/ETF market data can use the credential-free Yahoo Finance chart endpoint. Missing optional
-credentials are surfaced in the run graph and final report instead of being replaced with fixture
-data.
+SEC EDGAR ticker-to-CIK resolution is automatic through SEC's public
+`company_tickers_exchange.json` dataset. The live path does not accept local per-symbol CIK
+environment mappings; if the official dataset cannot be fetched, parsed, or matched to the requested
+ticker, the SEC provider fails loudly in provider health. The live path also honors
+`ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`, `FRED_API_KEY`, and `X_BEARER_TOKEN`
+as fallback names. When Alpha Vantage is not configured, live stock/ETF market data can use the
+credential-free Yahoo Finance chart endpoint. Missing optional credentials are surfaced in the run
+graph and final report instead of being replaced with fixture data.
 
 ## Internet Search
 

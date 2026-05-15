@@ -343,10 +343,14 @@ Common variables:
 | `NLP_STOCK_PREDICTION_FRED_API_KEY` | Optional FRED key for macro context. |
 | `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | Optional X/Twitter bearer token for X-backed provider experiments. |
 | `NLP_STOCK_PREDICTION_SEC_USER_AGENT` | Contact user agent for SEC EDGAR requests. |
-| `NLP_STOCK_PREDICTION_SEC_CIK_MAP` | Optional comma-separated `SYMBOL=CIK` map for SEC lookup expansion. |
 | `NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` | User agent for public HTML scraping providers. |
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | Contact user agent for opt-in live provider smoke tests. |
 | `OPENAI_API_KEY` | Required only for workflows that call OpenAI-backed tooling. |
+
+SEC EDGAR ticker-to-CIK resolution is automatic through SEC's public
+`company_tickers_exchange.json` dataset. If that dataset cannot be fetched, parsed, or matched to
+the requested ticker, the live report records a loud SEC provider failure rather than asking for a
+per-symbol local mapping.
 
 Example `.env`:
 

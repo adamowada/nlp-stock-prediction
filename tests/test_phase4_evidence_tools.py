@@ -107,6 +107,13 @@ def _json_fixture(*parts: str) -> dict[str, Any]:
     )
 
 
+def _sec_company_tickers_exchange_payload() -> dict[str, Any]:
+    return {
+        "fields": ["cik", "name", "ticker", "exchange"],
+        "data": [[1318605, "Tesla, Inc.", "TSLA", "Nasdaq"]],
+    }
+
+
 def _reddit_records() -> list[dict[str, object]]:
     return cast(
         list[dict[str, object]],
@@ -293,10 +300,12 @@ def test_phase4_news_tool_preserves_articles_and_catalyst_labels(tmp_path: Path)
 def test_phase4_fundamentals_tool_indexes_sec_metrics_and_analysis(tmp_path: Path) -> None:
     store = _store(tmp_path)
     provider = SecEdgarFundamentalsProvider(
-        ticker_cik_map={"TSLA": "1318605"},
         user_agent="nlp-stock-prediction-test contact@example.test",
         transport=_FakeJsonTransport(
             {
+                "company_tickers_exchange": JsonResponse(
+                    payload=_sec_company_tickers_exchange_payload()
+                ),
                 "companyfacts": JsonResponse(
                     payload=_json_fixture("sec_edgar", "companyfacts_tsla.json")
                 ),

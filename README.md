@@ -260,11 +260,14 @@ variables or ignored `.env` files.
 | `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | No | Token for X/Twitter-backed provider experiments. |
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | No | Contact User-Agent for opt-in live provider smoke tests. |
 | `NLP_STOCK_PREDICTION_SEC_USER_AGENT` | No | Contact User-Agent for SEC EDGAR requests. |
-| `NLP_STOCK_PREDICTION_SEC_CIK_MAP` | No | Optional comma-separated `SYMBOL=CIK` map for SEC EDGAR lookup expansion. |
 | `NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` | No | User agent for public HTML scraping providers. |
 | `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS` | No | Enables opt-in live test groups when combined with marked tests. |
 | `NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL` | No | URL used by the opt-in live scraping smoke test. |
 | `NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT` | No | Text expected in the opt-in live scraping smoke response. |
+
+SEC EDGAR ticker-to-CIK resolution is automatic through SEC's public
+`company_tickers_exchange.json` dataset; unresolved or malformed lookups surface as provider
+failures instead of requiring local per-symbol environment mappings.
 
 The project uses two SQLite databases:
 
