@@ -147,10 +147,10 @@ def test_evaluation_dispatch_maps_full_builder_values() -> None:
             "run_id": "run-1",
             "cohort_id": "cohort",
             "point_in_time_cutoff": "2026-05-15T00:00:00+00:00",
-            "minimum_train_size": "3",
+            "minimum_train_size": 3,
             "artifact_dir": "reports/run/audit",
-            "test_size": "2",
-            "step_size": "1",
+            "test_size": 2,
+            "step_size": 1,
         },
     )
 

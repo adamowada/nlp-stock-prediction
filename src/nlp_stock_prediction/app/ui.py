@@ -37,7 +37,7 @@ from nlp_stock_prediction.app.research import (
     ResearchRequest,
     run_research_request,
 )
-from nlp_stock_prediction.app.settings import AppSettings
+from nlp_stock_prediction.app.settings import AppMode, AppSettings
 from nlp_stock_prediction.app.state import (
     AppState,
     CodexSessionRecord,
@@ -56,7 +56,12 @@ InputFunc = Callable[[str], str]
 
 
 class EvaluationServiceFactory(Protocol):
-    def __call__(self, repo_root: Path, database_path: Path) -> EvaluationServiceProtocol: ...
+    def __call__(
+        self,
+        repo_root: Path,
+        database_path: Path,
+        extra_write_roots: tuple[Path, ...] = (),
+    ) -> EvaluationServiceProtocol: ...
 
 
 def run_app(
@@ -117,12 +122,16 @@ class TerminalApp:
     def research_menu(self) -> None:
         request = ResearchRequest.from_settings(self.state.settings)
         self.console.print(_research_panel(request))
-        choice = self._ask("1 Run defaults, 2 Configure, 3 Back", default="1").strip()
-        if choice == "3":
-            return
-        if choice == "2":
-            request = self._configure_research_request(request)
         try:
+            choice = self._ask("1 Run defaults, 2 Configure, 3 Back", default="1").strip().lower()
+            if choice in {"3", "b", "back", "q"}:
+                return
+            if choice in {"2", "configure"}:
+                request = self._configure_research_request(request)
+            elif choice not in {"1", "run", "default", "defaults"}:
+                self.console.print("[yellow]Choose a listed option.[/yellow]")
+                return
+            request = self._resolve_research_request(request)
             with self.console.status("Running research...", spinner="dots"):
                 bundle = run_research_request(
                     request,
@@ -214,13 +223,21 @@ class TerminalApp:
         if choice in {"b", "back", "q"}:
             return
         try:
-            spec = EVALUATION_COMMAND_SPECS[int(choice) - 1]
-        except ValueError, IndexError:
+            index = int(choice)
+        except ValueError:
             self.console.print("[yellow]Choose a valid command number.[/yellow]")
             return
+        if index < 1 or index > len(EVALUATION_COMMAND_SPECS):
+            self.console.print("[yellow]Choose a valid command number.[/yellow]")
+            return
+        spec = EVALUATION_COMMAND_SPECS[index - 1]
         values = self._collect_evaluation_values(spec.name, selected)
         try:
-            service = self.evaluation_service_factory(self.repo_root, database_path)
+            service = self.evaluation_service_factory(
+                self.repo_root,
+                database_path,
+                self._evaluation_extra_write_roots(selected, database_path),
+            )
             result = run_evaluation_action(service, spec.name, values)
         except ValueError as exc:
             self.console.print(Panel(str(exc), title="Evaluation blocked", border_style="red"))
@@ -233,17 +250,36 @@ class TerminalApp:
         )
 
     def agent_chat_menu(self) -> None:
-        health = self.codex_adapter.health(self.state.settings)
+        health = self.codex_adapter.health(self.state.settings, repo_root=self.repo_root)
         if not (health.codex_available and health.mcp_available):
             self.console.print(
                 Panel(health.message, title="Codex Agent Health", border_style="yellow")
             )
             return
         selected = self.state.selected_report()
-        database_path = self._default_database_path(selected) or (
-            self.repo_root / "data/prediction-research.sqlite3"
-        )
-        if not database_path.exists():
+        database_path = self._default_database_path(selected)
+        if selected is not None and database_path is None:
+            self.console.print(
+                Panel(
+                    "Selected report does not have a recovered research database path. "
+                    "Re-run it from the app, or use a report with a known database path.",
+                    title="Codex Agent Health",
+                    border_style="yellow",
+                )
+            )
+            return
+        if database_path is None:
+            database_path = self.repo_root / "data/prediction-research.sqlite3"
+        if selected is not None and not database_path.exists():
+            self.console.print(
+                Panel(
+                    f"Selected report database not found: {database_path}",
+                    title="Codex Agent Health",
+                    border_style="yellow",
+                )
+            )
+            return
+        if selected is None and not database_path.exists():
             initialize_research_database(database_path)
         session_key = selected.report_id if selected is not None else "global"
         session = self.state.codex_session(session_key)
@@ -253,28 +289,43 @@ class TerminalApp:
             if message.strip().lower() in {"/back", "back", "exit", "quit"}:
                 self._save()
                 return
-            session_dir = self.repo_root / "data" / "codex-sessions" / _slug(session_key)
             try:
                 result = self.codex_adapter.send(
-                    CodexTurnRequest(
-                        user_message=message,
-                        repo_root=self.repo_root,
+                    self._codex_turn_request(
+                        message=message,
+                        selected=selected,
                         database_path=database_path,
-                        session_dir=session_dir,
-                        settings=self.state.settings,
-                        report_json_path=(
-                            selected.resolve_json_path(self.repo_root) if selected else None
-                        ),
-                        report_markdown_path=(
-                            selected.resolve_markdown_path(self.repo_root) if selected else None
-                        ),
-                        session_id=session.session_id if session else None,
-                        transcript_path=session.transcript_path if session else None,
+                        session_key=session_key,
+                        session=session,
                     )
                 )
             except CodexAgentError as exc:
-                self.console.print(Panel(str(exc), title="Codex turn failed", border_style="red"))
-                continue
+                if session is not None and _looks_like_stale_codex_session(str(exc)):
+                    self.console.print(
+                        "[yellow]Stored Codex session could not be resumed; "
+                        "starting fresh.[/yellow]"
+                    )
+                    session = None
+                    try:
+                        result = self.codex_adapter.send(
+                            self._codex_turn_request(
+                                message=message,
+                                selected=selected,
+                                database_path=database_path,
+                                session_key=session_key,
+                                session=None,
+                            )
+                        )
+                    except CodexAgentError as retry_exc:
+                        self.console.print(
+                            Panel(str(retry_exc), title="Codex turn failed", border_style="red")
+                        )
+                        continue
+                else:
+                    self.console.print(
+                        Panel(str(exc), title="Codex turn failed", border_style="red")
+                    )
+                    continue
             session = CodexSessionRecord(
                 session_key=session_key,
                 session_id=result.session_id,
@@ -289,7 +340,9 @@ class TerminalApp:
 
     def settings_menu(self) -> None:
         while True:
-            self.console.print(_settings_panel(self.state.settings, self.codex_adapter))
+            self.console.print(
+                _settings_panel(self.state.settings, self.codex_adapter, self.repo_root)
+            )
             choice = self._ask(
                 "1 Symbol, 2 Mode, 3 Output, 4 Cache, 5 Codex, 6 Back",
                 default="6",
@@ -300,12 +353,18 @@ class TerminalApp:
                     default_symbol=self._ask("Default symbol", default=settings.default_symbol)
                 )
             elif choice == "2":
-                settings = settings.with_updates(
-                    default_mode=self._ask(
+                mode = (
+                    self._ask(
                         "Default mode live/offline",
                         default=settings.default_mode,
                     )
+                    .strip()
+                    .lower()
                 )
+                if mode not in {"live", "offline"}:
+                    self.console.print("[yellow]Mode must be live or offline.[/yellow]")
+                    continue
+                settings = settings.with_updates(default_mode=mode)
             elif choice == "3":
                 settings = settings.with_updates(
                     output_dir=Path(self._ask("Output directory", default=str(settings.output_dir)))
@@ -331,10 +390,13 @@ class TerminalApp:
         mode = self._ask("Mode live/offline", default=request.mode).strip().lower()
         output = self._ask("Output directory", default=str(request.output_dir)).strip()
         cache = self._ask("Cache directory", default=str(request.cache_dir or "cache")).strip()
+        if mode not in {"live", "offline"}:
+            raise ValueError("Mode must be 'live' or 'offline'.")
+        resolved_mode: AppMode = "offline" if mode == "offline" else "live"
         return ResearchRequest(
             symbol=symbol or request.symbol,
             run_date=date.fromisoformat(raw_date),
-            mode="offline" if mode == "offline" else "live",
+            mode=resolved_mode,
             output_dir=Path(output or request.output_dir),
             cache_dir=Path(cache) if cache else None,
             fixture_dir=request.fixture_dir,
@@ -390,6 +452,61 @@ class TerminalApp:
         database_path = selected.resolve_database_path(self.repo_root)
         return database_path if database_path is not None else None
 
+    def _resolve_research_request(self, request: ResearchRequest) -> ResearchRequest:
+        return ResearchRequest(
+            symbol=request.symbol,
+            run_date=request.run_date,
+            mode=request.mode,
+            output_dir=self._resolve_path(request.output_dir),
+            cache_dir=(self._resolve_path(request.cache_dir) if request.cache_dir else None),
+            fixture_dir=(self._resolve_path(request.fixture_dir) if request.fixture_dir else None),
+        )
+
+    def _codex_turn_request(
+        self,
+        *,
+        message: str,
+        selected: ReportIndexEntry | None,
+        database_path: Path,
+        session_key: str,
+        session: CodexSessionRecord | None,
+    ) -> CodexTurnRequest:
+        return CodexTurnRequest(
+            user_message=message,
+            repo_root=self.repo_root,
+            database_path=database_path,
+            session_dir=self.repo_root / "data" / "codex-sessions" / _slug(session_key),
+            settings=self.state.settings,
+            report_json_path=(selected.resolve_json_path(self.repo_root) if selected else None),
+            report_markdown_path=(
+                selected.resolve_markdown_path(self.repo_root) if selected else None
+            ),
+            session_id=session.session_id if session else None,
+            transcript_path=(
+                self._resolve_path(session.transcript_path) if session is not None else None
+            ),
+        )
+
+    def _evaluation_extra_write_roots(
+        self,
+        selected: ReportIndexEntry | None,
+        database_path: Path,
+    ) -> tuple[Path, ...]:
+        candidates = [database_path.parent]
+        if selected is not None:
+            candidates.extend(
+                [
+                    selected.resolve_audit_dir(self.repo_root),
+                    selected.resolve_json_path(self.repo_root).parent,
+                    selected.resolve_markdown_path(self.repo_root).parent,
+                ]
+            )
+        roots: dict[str, Path] = {}
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            roots[resolved.as_posix()] = resolved
+        return tuple(roots.values())
+
     def _report_by_choice(self, choice: str) -> ReportIndexEntry | None:
         try:
             index = int(choice) - 1
@@ -415,7 +532,7 @@ class TerminalApp:
         value = self.input_func(f"{prompt}{suffix}: ")
         return value if value.strip() else default
 
-    def _resolve_path(self, value: str) -> Path:
+    def _resolve_path(self, value: str | Path) -> Path:
         path = Path(value)
         return path if path.is_absolute() else self.repo_root / path
 
@@ -457,8 +574,12 @@ def _research_panel(request: ResearchRequest) -> Panel:
     return Panel(body, title="Research Defaults", border_style="blue")
 
 
-def _settings_panel(settings: AppSettings, adapter: CodexAgentAdapter) -> Panel:
-    health = adapter.health(settings)
+def _settings_panel(
+    settings: AppSettings,
+    adapter: CodexAgentAdapter,
+    repo_root: Path,
+) -> Panel:
+    health = adapter.health(settings, repo_root=repo_root)
     body = "\n".join(
         [
             f"Default symbol: {settings.default_symbol}",
@@ -486,6 +607,14 @@ def _relative_or_absolute(repo_root: Path, path: Path) -> Path:
 def _slug(value: str) -> str:
     slug = "".join(char.lower() if char.isalnum() else "-" for char in value).strip("-")
     return slug[:80] or "global"
+
+
+def _looks_like_stale_codex_session(message: str) -> bool:
+    normalized = message.lower()
+    return "session" in normalized and any(
+        marker in normalized
+        for marker in ("not found", "no such", "could not", "cannot", "invalid", "resume")
+    )
 
 
 __all__ = ["TerminalApp", "run_app"]

@@ -257,8 +257,16 @@ def command_spec(name: str) -> EvaluationCommandSpec:
     raise ValueError(f"unknown evaluation command: {name}")
 
 
-def build_evaluation_service(repo_root: Path, database_path: Path) -> Phase6Service:
-    return Phase6Service(repo_root=repo_root, database_path=database_path)
+def build_evaluation_service(
+    repo_root: Path,
+    database_path: Path,
+    extra_write_roots: tuple[Path, ...] = (),
+) -> Phase6Service:
+    return Phase6Service(
+        repo_root=repo_root,
+        database_path=database_path,
+        extra_write_roots=extra_write_roots,
+    )
 
 
 def run_evaluation_action(
@@ -374,6 +382,10 @@ def _optional(values: Mapping[str, object], key: str) -> str | None:
     value = values.get(key)
     if isinstance(value, str) and value.strip():
         return value.strip()
+    if isinstance(value, Path):
+        return value.as_posix()
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return str(value)
     return None
 
 

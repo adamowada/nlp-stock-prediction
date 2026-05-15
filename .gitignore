@@ -21,6 +21,9 @@ reports/
 cache/
 
 # Local runtime databases, ML inputs, and generated model artifacts.
+data/app-state.json
+data/app-state.json.*
+data/codex-sessions/
 data/*.sqlite3
 data/*.sqlite3-*
 plans/*.sqlite3-*

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -86,9 +86,9 @@ class CodexAgentAdapter:
         self._runner = runner or SubprocessRunner()
         self._python_executable = python_executable or Path(sys.executable)
 
-    def health(self, settings: AppSettings) -> CodexHealth:
+    def health(self, settings: AppSettings, *, repo_root: Path | None = None) -> CodexHealth:
         codex_available = shutil.which(settings.codex_executable) is not None
-        mcp_available = importlib.util.find_spec("mcp") is not None
+        mcp_available = _python_has_mcp_server(self._python_executable, repo_root)
         if codex_available and mcp_available:
             return CodexHealth(True, True, "Codex agent chat is ready.")
         if not codex_available:
@@ -179,11 +179,16 @@ class CodexAgentAdapter:
         ]
 
     def _mcp_config_args(self, repo_root: Path, database_path: Path) -> list[str]:
+        bootstrap = (
+            "import sys; "
+            f"sys.path.insert(0, {json.dumps(str(repo_root / 'src'))}); "
+            "from nlp_stock_prediction.codex_mcp import main; main()"
+        )
         args = json.dumps(
             [
                 "-B",
-                "-m",
-                "nlp_stock_prediction.codex_mcp",
+                "-c",
+                bootstrap,
                 "--repo-root",
                 str(repo_root),
                 "--database",
@@ -222,14 +227,27 @@ def extract_session_id(events: tuple[dict[str, object], ...]) -> str | None:
 
 def _session_id_from_object(value: object) -> str | None:
     if isinstance(value, dict):
-        for key in ("session_id", "sessionId", "conversation_id", "conversationId"):
+        for key in (
+            "session_id",
+            "sessionId",
+            "thread_id",
+            "threadId",
+            "conversation_id",
+            "conversationId",
+        ):
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate.strip():
                 return candidate.strip()
         event_type = value.get("type")
         identifier = value.get("id")
-        if isinstance(event_type, str) and "session" in event_type and isinstance(identifier, str):
-            return identifier
+        if isinstance(event_type, str) and ("session" in event_type or "thread" in event_type):
+            if isinstance(identifier, str) and identifier.strip():
+                return identifier.strip()
+            payload = value.get("payload")
+            if isinstance(payload, dict):
+                payload_identifier = payload.get("id")
+                if isinstance(payload_identifier, str) and payload_identifier.strip():
+                    return payload_identifier.strip()
         for item in value.values():
             nested = _session_id_from_object(item)
             if nested is not None:
@@ -246,7 +264,20 @@ def _build_prompt(request: CodexTurnRequest) -> str:
     context_lines = [
         "You are the in-app Codex research assistant for nlp-stock-prediction.",
         "Use the local MCP research/evaluation tools when they help answer the user.",
-        "Do not edit source files from this chat surface.",
+        "You may be launched with full filesystem permissions and no approval prompts.",
+        (
+            "Treat this chat surface as read-only for source and project configuration: do not "
+            "create, edit, delete, format, stage, commit, push, or otherwise mutate source files "
+            "unless the user explicitly asks for source-code changes in this chat."
+        ),
+        (
+            "Report/database/audit artifacts may be read, and MCP tools may write their normal "
+            "declared artifacts when the user asks for research or evaluation work."
+        ),
+        (
+            "If you use web search outside MCP-recorded tools, label those claims as unaudited "
+            "chat context rather than report evidence."
+        ),
         "Keep conclusions high-level and concise unless the user asks for audit detail.",
         "Do not provide trading instructions, position sizing, or buy/sell commands.",
         f"Research database: {_path_arg(request.repo_root, request.database_path)}",
@@ -318,6 +349,25 @@ def _path_arg(repo_root: Path, path: Path) -> str:
         return resolved.resolve().relative_to(repo_root.resolve()).as_posix()
     except ValueError:
         return resolved.as_posix()
+
+
+def _python_has_mcp_server(python_executable: Path, repo_root: Path | None) -> bool:
+    src_path = None if repo_root is None else repo_root / "src"
+    path_setup = "" if src_path is None else f"sys.path.insert(0, {json.dumps(str(src_path))}); "
+    script = (
+        f"import sys; {path_setup}import mcp.server.fastmcp; import nlp_stock_prediction.codex_mcp"
+    )
+    try:
+        completed = subprocess.run(
+            [str(python_executable), "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except OSError, subprocess.SubprocessError:
+        return False
+    return completed.returncode == 0
 
 
 __all__ = [

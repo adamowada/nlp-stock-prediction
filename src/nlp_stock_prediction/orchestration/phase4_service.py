@@ -1350,6 +1350,7 @@ class Phase4Service:
             command_args={
                 "phase": "phase4",
                 "output_dir": paths.output_dir.as_posix(),
+                "database_path": self._resolve_write_path(self.database_path).as_posix(),
                 **report_data_mode_metadata_from_run(run),
             },
             artifact_writer=ArtifactWriter(

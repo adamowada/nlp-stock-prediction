@@ -88,6 +88,8 @@ The top-level commands are:
 `python main.py` and `python -m nlp_stock_prediction app` open the same app. The app defaults
 research to today's date, live mode, `reports/`, and the remembered symbol. Report summaries are
 concise by default; provider, evidence, and audit details are available from report submenus.
+Agent Chat can summarize selected reports and use project MCP tools; independent web-search chat
+context is not audited report evidence unless those tools persist it.
 
 ## Quick Start: Generate Your First Report
 

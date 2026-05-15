@@ -60,6 +60,13 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
+For in-app Codex Agent Chat, also install the MCP extra and ensure the Codex CLI is on `PATH`:
+
+```sh
+python -m pip install -e ".[dev,codex-smoke]"
+codex --version
+```
+
 Verify the CLI:
 
 ```sh
@@ -77,6 +84,8 @@ python main.py
 The app opens a menu for research, report browsing, evaluation, settings, and Codex-agent chat.
 Research defaults to today's date, live providers, `reports/`, and the remembered default symbol.
 Use Settings or the Research advanced prompt when you want offline fixtures or a date override.
+Agent Chat can read selected report artifacts and use project MCP tools; web search outside those
+tools is treated as unaudited chat context, not report evidence.
 
 Generate a deterministic offline research report:
 

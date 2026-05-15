@@ -29,15 +29,28 @@ class FakeRunner:
         output_path.write_text("High-level conclusion from Codex.\n", encoding="utf-8")
         return ProcessResult(
             returncode=0,
-            stdout=json.dumps({"type": "session.created", "id": "session-123"}) + "\n",
+            stdout=json.dumps({"type": "thread.started", "thread_id": "thread-123"}) + "\n",
             stderr="",
         )
 
 
 def test_codex_jsonl_session_id_parsing() -> None:
     events = parse_codex_jsonl(
-        '{"type":"noise"}\n{"type":"session.created","id":"session-abc"}\nnot-json\n'
+        "\n".join(
+            [
+                '{"type":"noise"}',
+                '{"type":"thread.started","thread_id":"thread-abc"}',
+                '{"type":"session_meta","payload":{"id":"session-abc"}}',
+                "not-json",
+            ]
+        )
     )
+
+    assert extract_session_id(events) == "thread-abc"
+
+
+def test_codex_jsonl_session_id_parses_session_meta_payload() -> None:
+    events = parse_codex_jsonl('{"type":"session_meta","payload":{"id":"session-abc"}}\n')
 
     assert extract_session_id(events) == "session-abc"
 
@@ -68,12 +81,15 @@ def test_codex_adapter_starts_and_resumes_session(tmp_path: Path) -> None:
         )
     )
 
-    assert first.session_id == "session-123"
-    assert second.session_id == "session-123"
+    assert first.session_id == "thread-123"
+    assert second.session_id == "thread-123"
     assert "exec" in runner.commands[0]
     assert "resume" in runner.commands[1]
     assert "--search" in runner.commands[0]
     assert "mcp_servers.nlp-stock-prediction.args" in " ".join(runner.commands[0])
+    assert "full filesystem permissions" in runner.commands[0][-1]
+    assert "do not create, edit, delete, format, stage, commit, push" in runner.commands[0][-1]
+    assert "Do not provide trading instructions" in runner.commands[0][-1]
     transcript = first.transcript_path.read_text(encoding="utf-8")
     assert "Summarize the selected report" in transcript
     assert "High-level conclusion from Codex." in transcript

@@ -50,6 +50,7 @@ class ReportIndexEntry:
         symbol = report.instruments[0].symbol if report.instruments else "UNKNOWN"
         mode = str(report.command_args.get("report_data_mode") or "unknown")
         resolved_json = _resolve_repo_path(repo_root, json_path)
+        resolved_database_path = database_path or _database_path_from_report(report)
         report_id = f"{report.run_id}:{_state_path(repo_root, resolved_json).as_posix()}"
         warning_count = sum(len(health.warnings) for health in report.provider_health)
         status_summary = _status_summary(report)
@@ -68,7 +69,9 @@ class ReportIndexEntry:
             audit_dir=_state_path(repo_root, inferred_audit_dir),
             audit_manifest_path=_state_path(repo_root, inferred_manifest),
             database_path=(
-                _state_path(repo_root, database_path) if database_path is not None else None
+                _state_path(repo_root, resolved_database_path)
+                if resolved_database_path is not None
+                else None
             ),
             candidate_count=len(report.prediction_candidates),
             provider_warning_count=warning_count,
@@ -280,20 +283,21 @@ def refresh_report_index(repo_root: Path, state: AppState) -> AppState:
         for entry in state.reports
     }
     reports: dict[str, ReportIndexEntry] = {}
-    for json_path in (repo_root / "reports").glob("**/report.json"):
-        try:
-            report = load_json_report(json_path.read_text(encoding="utf-8"))
-        except OSError, ValueError:
-            continue
-        key = _state_path(repo_root, json_path).as_posix()
-        previous = known_by_json.get(key)
-        entry = ReportIndexEntry.from_report(
-            repo_root=repo_root,
-            report=report,
-            json_path=json_path,
-            database_path=previous.database_path if previous else None,
-        )
-        reports[entry.report_id] = entry
+    for report_root in _report_scan_roots(repo_root, state):
+        for json_path in report_root.glob("**/report.json"):
+            try:
+                report = load_json_report(json_path.read_text(encoding="utf-8"))
+            except OSError, ValueError:
+                continue
+            key = _state_path(repo_root, json_path).as_posix()
+            previous = known_by_json.get(key)
+            entry = ReportIndexEntry.from_report(
+                repo_root=repo_root,
+                report=report,
+                json_path=json_path,
+                database_path=previous.database_path if previous else None,
+            )
+            reports[entry.report_id] = entry
     for entry in state.reports:
         if entry.resolve_json_path(repo_root).exists():
             reports.setdefault(entry.report_id, entry)
@@ -323,6 +327,31 @@ def _status_summary(report: DailyReport) -> str:
 
 def _sort_reports(reports: tuple[ReportIndexEntry, ...]) -> tuple[ReportIndexEntry, ...]:
     return tuple(sorted(reports, key=lambda entry: entry.generated_at, reverse=True))
+
+
+def _database_path_from_report(report: DailyReport) -> Path | None:
+    for key in ("database_path", "research_database_path", "runtime_database_path"):
+        value = report.command_args.get(key)
+        if isinstance(value, str) and value.strip():
+            return Path(value.strip())
+    return None
+
+
+def _report_scan_roots(repo_root: Path, state: AppState) -> tuple[Path, ...]:
+    candidates = [
+        repo_root / "reports",
+        _resolve_repo_path(repo_root, state.settings.output_dir),
+    ]
+    for entry in state.reports:
+        json_path = entry.resolve_json_path(repo_root)
+        if len(json_path.parents) >= 3:
+            candidates.append(json_path.parents[2])
+
+    roots: dict[str, Path] = {}
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        roots[resolved.as_posix()] = resolved
+    return tuple(roots.values())
 
 
 def _resolve_repo_path(repo_root: Path, path: Path) -> Path:

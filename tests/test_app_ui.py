@@ -76,6 +76,46 @@ def test_terminal_app_runs_research_with_today_live_defaults(tmp_path: Path) -> 
     assert "Research Complete" in console_output.getvalue()
 
 
+def test_research_menu_back_does_not_run_live_defaults(tmp_path: Path) -> None:
+    seen_configs: list[RunConfig] = []
+
+    def fake_generator(config: RunConfig) -> ReportBundle:
+        seen_configs.append(config)
+        return _fixture_bundle(tmp_path, config)
+
+    _prompts, ask = _input(["1", "back", "6"])
+    app = TerminalApp(
+        repo_root=tmp_path,
+        console=Console(file=StringIO(), force_terminal=False, color_system=None),
+        input_func=ask,
+        report_generator=fake_generator,
+    )
+
+    assert app.run() == 0
+    assert seen_configs == []
+
+
+def test_research_menu_rejects_invalid_mode_before_running(tmp_path: Path) -> None:
+    seen_configs: list[RunConfig] = []
+
+    def fake_generator(config: RunConfig) -> ReportBundle:
+        seen_configs.append(config)
+        return _fixture_bundle(tmp_path, config)
+
+    _prompts, ask = _input(["1", "2", "TSLA", "2026-05-12", "offlne", "reports", "cache", "6"])
+    output = StringIO()
+    app = TerminalApp(
+        repo_root=tmp_path,
+        console=Console(file=output, force_terminal=False, color_system=None),
+        input_func=ask,
+        report_generator=fake_generator,
+    )
+
+    assert app.run() == 0
+    assert seen_configs == []
+    assert "Mode must be 'live' or 'offline'." in output.getvalue()
+
+
 @pytest.mark.integration
 def test_terminal_app_can_run_offline_research_flow(tmp_path: Path) -> None:
     report_root = tmp_path / "reports"

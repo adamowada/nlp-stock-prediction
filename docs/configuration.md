@@ -250,6 +250,9 @@ recorded with:
 Repeatable provider integrations should still be implemented as tools when they become important to
 regular reports.
 
+In-app Agent Chat may also use Codex web search when enabled in Settings. Search-only chat answers are
+unaudited context unless a project MCP tool writes evidence, provider metadata, and report artifacts.
+
 ## Evaluation Reliability And Provider Replacement
 
 Live report rendering writes Phase 7 reliability audit artifacts for live-mode inputs:
