@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -24,6 +25,7 @@ from nlp_stock_prediction.contracts.base import JsonObject
 from nlp_stock_prediction.contracts.evaluation import (
     PredictionEvaluationTarget,
 )
+from nlp_stock_prediction.environment import DISABLE_DOTENV_ENV
 from nlp_stock_prediction.evaluation.outcomes import (
     write_point_in_time_outcome_evaluation_artifacts,
 )
@@ -359,6 +361,38 @@ def test_codex_mcp_server_registers_phase4_and_phase6_tooling(
     server = build_server(repo_root=tmp_path, database_path=Path("data/test.sqlite3"))
 
     assert server.registered == [*PHASE4_MCP_TOOL_NAMES, *PHASE6_MCP_TOOL_NAMES]
+
+
+@pytest.mark.unit
+def test_codex_mcp_server_loads_repo_dotenv_for_agent_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nlp_stock_prediction.codex_mcp import build_server
+
+    fastmcp_module = ModuleType("mcp.server.fastmcp")
+
+    class _FastMCP(_FakeMcpServer):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self.name = name
+
+    fastmcp_module.FastMCP = _FastMCP  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mcp", ModuleType("mcp"))
+    monkeypatch.setitem(sys.modules, "mcp.server", ModuleType("mcp.server"))
+    monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
+    db_path = tmp_path / "data" / "test.sqlite3"
+    SQLiteStore(db_path).initialize()
+    (tmp_path / ".env").write_text(
+        "NLP_STOCK_PREDICTION_MCP_DOTENV_TEST=loaded\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv(DISABLE_DOTENV_ENV, raising=False)
+    monkeypatch.delenv("NLP_STOCK_PREDICTION_MCP_DOTENV_TEST", raising=False)
+
+    build_server(repo_root=tmp_path, database_path=Path("data/test.sqlite3"))
+
+    assert os.environ["NLP_STOCK_PREDICTION_MCP_DOTENV_TEST"] == "loaded"
 
 
 @pytest.mark.unit

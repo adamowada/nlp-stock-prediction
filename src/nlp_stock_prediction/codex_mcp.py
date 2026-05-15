@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.orchestration.phase4_mcp_registration import register_phase4_mcp_tools
 from nlp_stock_prediction.orchestration.phase4_service import Phase4Service
 from nlp_stock_prediction.orchestration.phase6_mcp_registration import register_phase6_mcp_tools
@@ -27,6 +28,7 @@ def build_server(repo_root: Path | None = None, database_path: Path | None = Non
         ) from exc
 
     resolved_repo_root = (repo_root or Path.cwd()).resolve()
+    load_local_dotenv(resolved_repo_root)
     if database_path is None:
         raise ValueError("database_path is required for the Codex MCP server")
     resolved_database_path = (
