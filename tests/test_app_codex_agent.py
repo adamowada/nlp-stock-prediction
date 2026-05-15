@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from nlp_stock_prediction.app.codex_agent import (
     CodexAgentAdapter,
     CodexTurnRequest,
     ProcessResult,
+    SubprocessRunner,
     _resolve_codex_executable,
     extract_session_id,
     parse_codex_jsonl,
@@ -54,6 +56,32 @@ def test_codex_jsonl_session_id_parses_session_meta_payload() -> None:
     events = parse_codex_jsonl('{"type":"session_meta","payload":{"id":"session-abc"}}\n')
 
     assert extract_session_id(events) == "session-abc"
+
+
+def test_codex_jsonl_parser_treats_missing_output_as_empty() -> None:
+    assert parse_codex_jsonl(None) == ()
+
+
+def test_subprocess_runner_decodes_codex_output_as_utf8(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_kwargs: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        del command
+        seen_kwargs.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout='{"type":"done"}\n', stderr=None)
+
+    monkeypatch.setattr("nlp_stock_prediction.app.codex_agent.subprocess.run", fake_run)
+
+    result = SubprocessRunner().run(["codex", "--json"], cwd=tmp_path)
+
+    assert result.stdout == '{"type":"done"}\n'
+    assert result.stderr == ""
+    assert seen_kwargs["encoding"] == "utf-8"
+    assert seen_kwargs["errors"] == "replace"
+    assert seen_kwargs["text"] is True
 
 
 def test_codex_adapter_starts_and_resumes_session(tmp_path: Path) -> None:

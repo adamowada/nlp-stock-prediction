@@ -32,19 +32,19 @@ class ProcessRunner(Protocol):
 
 class SubprocessRunner:
     def run(self, command: list[str], *, cwd: Path) -> ProcessResult:
-        import subprocess
-
         completed = subprocess.run(
             command,
             cwd=cwd,
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         return ProcessResult(
             returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            stdout=completed.stdout or "",
+            stderr=completed.stderr or "",
         )
 
 
@@ -216,9 +216,9 @@ class CodexAgentAdapter:
         ]
 
 
-def parse_codex_jsonl(payload: str) -> tuple[dict[str, object], ...]:
+def parse_codex_jsonl(payload: str | None) -> tuple[dict[str, object], ...]:
     events: list[dict[str, object]] = []
-    for line in payload.splitlines():
+    for line in (payload or "").splitlines():
         if not line.strip():
             continue
         try:
@@ -418,6 +418,8 @@ def _python_has_mcp_server(python_executable: Path, repo_root: Path | None) -> b
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
     except OSError, subprocess.SubprocessError:
