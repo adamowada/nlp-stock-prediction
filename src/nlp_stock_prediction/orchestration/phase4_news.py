@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 from nlp_stock_prediction.contracts.base import JsonObject
+from nlp_stock_prediction.contracts.enums import ProviderStatus, WarningCode
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.providers import EvidenceRequest, NewsProvider, ProviderResult
 from nlp_stock_prediction.orchestration.phase2_common import source_evidence_ticker
@@ -69,7 +70,7 @@ class Phase4NewsCatalystTool:
             run_date=run_date,
             tickers=tickers,
             limit=limit,
-            query=query or f"{normalized_symbol} catalyst news",
+            query=query or normalized_symbol,
             include_posts=False,
             include_comments=False,
         )
@@ -135,7 +136,11 @@ class Phase4NewsCatalystTool:
                     )
 
             warnings = dedupe_strings(warning_text)
-            status = tool_status(record_count=len(evidence_records), warnings=warnings)
+            status = _news_tool_status(
+                provider_results=provider_results,
+                record_count=len(evidence_records),
+                warnings=warnings,
+            )
             payload = _artifact_payload(
                 run_id=run_id,
                 tool_run_id=tool_run_id,
@@ -233,6 +238,29 @@ def _request_tickers(symbol: str, extra_tickers: Sequence[str]) -> tuple[str, ..
         if ticker is not None and ticker not in normalized:
             normalized.append(ticker)
     return tuple(normalized or [symbol])
+
+
+def _news_tool_status(
+    *,
+    provider_results: Sequence[ProviderResult[tuple[SourceEvidence, ...]]],
+    record_count: int,
+    warnings: Sequence[str],
+) -> str:
+    if (
+        record_count == 0
+        and provider_results
+        and all(_provider_result_is_no_data(result) for result in provider_results)
+    ):
+        return "empty"
+    return tool_status(record_count=record_count, warnings=warnings)
+
+
+def _provider_result_is_no_data(
+    result: ProviderResult[tuple[SourceEvidence, ...]],
+) -> bool:
+    return result.status == ProviderStatus.EMPTY and all(
+        warning.code == WarningCode.NO_DATA for warning in result.warnings
+    )
 
 
 def _artifact_payload(

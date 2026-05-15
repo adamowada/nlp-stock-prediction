@@ -81,8 +81,16 @@ def _tool(
 class _StaticMarketDataProvider:
     provider_name = "alpha-vantage-market-data"
 
-    def __init__(self, snapshot: MarketSnapshot) -> None:
+    def __init__(
+        self,
+        snapshot: MarketSnapshot,
+        *,
+        provider_name: str = "alpha-vantage-market-data",
+        source_urls: dict[str, str] | None = None,
+    ) -> None:
         self._snapshot = snapshot
+        self.provider_name = provider_name
+        self._source_urls = source_urls or {}
 
     def fetch_daily_candles(self, request: MarketDataRequest) -> ProviderResult[MarketSnapshot]:
         return provider_result(
@@ -97,6 +105,9 @@ class _StaticMarketDataProvider:
 
     def health(self) -> NoReturn:
         raise NotImplementedError
+
+    def source_url_for_provider(self, provider_name: str) -> str | None:
+        return self._source_urls.get(provider_name)
 
 
 def _bar(
@@ -381,3 +392,29 @@ def test_phase4_market_data_non_fixture_provider_does_not_default_to_fixture_pro
     source_query = store.get_source_query(result.source_query_id)
     assert source_query is not None
     assert source_query.url is None
+
+
+@pytest.mark.unit
+def test_phase4_market_data_uses_provider_specific_source_url_for_fallback_provider(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    yahoo_source_url = "https://query1.finance.yahoo.com/v8/finance/chart/TSLA?range=1y"
+    provider = _StaticMarketDataProvider(
+        MarketSnapshot(ticker="TSLA", bars=(_bar(),)),
+        provider_name="yahoo-finance-chart",
+        source_urls={"yahoo-finance-chart": yahoo_source_url},
+    )
+
+    result = _tool(tmp_path=tmp_path, store=store, provider=provider).run(
+        run_id=RUN_ID,
+        run_date=RUN_DATE,
+        symbol="TSLA",
+        source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED",
+    )
+
+    source_query = store.get_source_query(result.source_query_id)
+    assert source_query is not None
+    assert source_query.provider == "yahoo-finance-chart"
+    assert source_query.url == yahoo_source_url
+    assert result.artifact_payload.provenance.url == yahoo_source_url

@@ -28,6 +28,8 @@
     ["fixture-apnews", "hub_drift", "raw/apnews/hub_drift.html", "text/html"],
     ["fixture-apnews", "article_unrelated", "raw/apnews/article_unrelated.html", "text/html"],
     ["fixture-apnews", "article_tsla_nvidia", "raw/apnews/article_tsla_nvidia.html", "text/html"],
+    ["fixture-apnews", "search_netflix", "raw/apnews/search_netflix.html", "text/html"],
+    ["fixture-apnews", "article_netflix_earnings", "raw/apnews/article_netflix_earnings.html", "text/html"],
     ["fixture-apnews", "article_stale", "raw/apnews/article_stale.html", "text/html"],
     ["fixture-apnews", "article_missing_timestamp", "raw/apnews/article_missing_timestamp.html", "text/html"]
   ]

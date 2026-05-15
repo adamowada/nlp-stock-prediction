@@ -37,7 +37,7 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
     report_data_mode_metadata,
 )
 from nlp_stock_prediction.providers._base import JsonResponse
-from nlp_stock_prediction.providers.apnews import APNewsProvider
+from nlp_stock_prediction.providers.apnews import APNewsProvider, APNewsProviderConfig
 from nlp_stock_prediction.providers.fred import FredMacroProvider
 from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
 from nlp_stock_prediction.providers.scraping import HtmlResponse
@@ -254,6 +254,7 @@ def test_phase4_news_tool_preserves_articles_and_catalyst_labels(tmp_path: Path)
         now=lambda: FETCHED_AT,
     )
     ap_provider = APNewsProvider(
+        config=APNewsProviderConfig(search_url=None),
         transport=_FakeHtmlTransport(
             {
                 "hub/financial-markets": _ap_html("hub_financial_markets.html"),
@@ -295,6 +296,39 @@ def test_phase4_news_tool_preserves_articles_and_catalyst_labels(tmp_path: Path)
     assert source_queries["fixture-news"].url is not None
     assert "token=REDACTED" in source_queries["fixture-news"].url
     assert all(row.url != source_queries["ap-news"].url for row in evidence_rows)
+
+
+def test_phase4_news_tool_marks_ticker_no_data_as_empty(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    ap_provider = APNewsProvider(
+        config=APNewsProviderConfig(search_url=None),
+        transport=_FakeHtmlTransport(
+            {
+                "hub/financial-markets": _ap_html("hub_financial_markets.html"),
+                "tesla-nvidia-markets": _ap_html("article_tsla_nvidia.html"),
+                "oil-prices-economy": _ap_html("article_unrelated.html"),
+            }
+        ),
+        now=lambda: FETCHED_AT,
+    )
+
+    result = run_phase4_news_catalyst_tool(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=_artifact_dir(tmp_path),
+        run_id=RUN_ID,
+        symbol="NFLX",
+        run_date=RUN_DATE,
+        generated_at=FETCHED_AT,
+        providers=(ap_provider,),
+    )
+
+    assert result.status == "empty"
+    assert result.evidence_ids == ()
+    assert any(WarningCode.NO_DATA.value in warning for warning in result.warnings)
+    tool_run = store.get_tool_run(result.tool_run_id)
+    assert tool_run is not None
+    assert tool_run.status == "empty"
 
 
 def test_phase4_fundamentals_tool_indexes_sec_metrics_and_analysis(tmp_path: Path) -> None:

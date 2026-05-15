@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from html.parser import HTMLParser
 from typing import cast
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 
 from nlp_stock_prediction.contracts import (
     CredentialState,
@@ -38,7 +38,6 @@ from nlp_stock_prediction.providers._base import (
     query_from_tickers,
     source_provenance,
     stable_hash,
-    transport_error_result,
     utc_now,
 )
 from nlp_stock_prediction.providers.scraping import (
@@ -50,6 +49,7 @@ from nlp_stock_prediction.providers.scraping import (
 )
 
 _DEFAULT_HUB_URL = "https://apnews.com/hub/financial-markets"
+_DEFAULT_SEARCH_URL = "https://apnews.com/search"
 _DEFAULT_USER_AGENT = "nlp-stock-prediction/0.1 public-html-scraper"
 _AP_HOSTS = frozenset({"apnews.com", "www.apnews.com"})
 _DISALLOWED_PATH_PREFIXES = (
@@ -70,6 +70,7 @@ class APNewsProviderConfig:
 
     provider_name: str = "ap-news"
     hub_url: str = _DEFAULT_HUB_URL
+    search_url: str | None = _DEFAULT_SEARCH_URL
     user_agent: str = _DEFAULT_USER_AGENT
     max_article_candidates: int = 12
     default_limit: int = 10
@@ -90,6 +91,10 @@ class _HubArticleLink:
     url: str
     headline: str | None
     rank: int
+    listing_url: str | None = None
+    listing_cache_key: str | None = None
+    listing_raw_snapshot_id: str | None = None
+    listing_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +123,11 @@ class APNewsProvider:
         resolved_config = config or APNewsProviderConfig()
         self.provider_name = resolved_config.provider_name
         self._hub_url = _validate_apnews_public_url(resolved_config.hub_url)
+        self._search_url = (
+            _validate_apnews_search_url(resolved_config.search_url)
+            if resolved_config.search_url is not None
+            else None
+        )
         self._user_agent = resolved_config.user_agent
         self._max_article_candidates = _validate_positive_int(
             resolved_config.max_article_candidates,
@@ -139,102 +149,117 @@ class APNewsProvider:
     ) -> ProviderResult[tuple[SourceEvidence, ...]]:
         fetched_at = self._now()
         query = query_from_tickers(request)
-        hub_cache_key = build_cache_key(
-            provider_name=self.provider_name,
-            source="ap-news-hub",
-            run_date=request.run_date,
-            tickers=request.tickers,
-            query=query,
-            url=self._hub_url,
-        )
-        try:
-            hub_fetch = _fetch_html(
-                transport=self._transport,
-                url=self._hub_url,
-                run_date=request.run_date,
-                ticker=first_ticker(request),
-                source="ap-news-hub",
-                cache_key=hub_cache_key,
-                fetched_at=fetched_at,
-                cache=self._cache,
-                headers={"User-Agent": self._user_agent},
-                timeout=self._timeout,
-            )
-        except ProviderTransportError as exc:
-            return transport_error_result(
-                provider_name=self.provider_name,
-                request=request,
-                fetched_at=fetched_at,
-                error=exc,
-                credential_state=CredentialState.NOT_REQUIRED,
-            )
-        except MalformedProviderResponse as exc:
-            warning = provider_warning(
-                provider_name=self.provider_name,
-                code=WarningCode.SCRAPING_DRIFT,
-                severity=WarningSeverity.ERROR,
-                message=str(exc),
-                occurred_at=fetched_at,
-                source_url=self._hub_url,
-                metadata={"validation": "malformed_ap_hub"},
-            )
-            return provider_result(
-                provider_name=self.provider_name,
-                status=ProviderStatus.MALFORMED,
-                request=request,
-                fetched_at=fetched_at,
-                credential_state=CredentialState.NOT_REQUIRED,
-                warnings=(warning,),
-                cache_key=hub_cache_key,
-            )
-
-        try:
-            article_links = _extract_hub_article_links(hub_fetch.text, base_url=self._hub_url)
-        except MalformedProviderResponse as exc:
-            warning = provider_warning(
-                provider_name=self.provider_name,
-                code=WarningCode.SCRAPING_DRIFT,
-                severity=WarningSeverity.ERROR,
-                message=str(exc),
-                occurred_at=fetched_at,
-                raw_snapshot_id=hub_fetch.raw_snapshot_id,
-                source_url=self._hub_url,
-                metadata={"validation": "malformed_ap_hub"},
-            )
-            return provider_result(
-                provider_name=self.provider_name,
-                status=ProviderStatus.MALFORMED,
-                request=request,
-                fetched_at=fetched_at,
-                credential_state=CredentialState.NOT_REQUIRED,
-                warnings=(warning,),
-                raw_snapshot_id=hub_fetch.raw_snapshot_id,
-                cache_key=hub_fetch.cache_key,
-            )
-        if not article_links:
-            warning = provider_warning(
-                provider_name=self.provider_name,
-                code=WarningCode.SCRAPING_DRIFT,
-                severity=WarningSeverity.ERROR,
-                message="AP News financial-markets hub did not expose public article links.",
-                occurred_at=fetched_at,
-                raw_snapshot_id=hub_fetch.raw_snapshot_id,
-                source_url=self._hub_url,
-                metadata={"validation": "missing_ap_article_links"},
-            )
-            return provider_result(
-                provider_name=self.provider_name,
-                status=ProviderStatus.MALFORMED,
-                request=request,
-                fetched_at=fetched_at,
-                credential_state=CredentialState.NOT_REQUIRED,
-                warnings=(warning,),
-                raw_snapshot_id=hub_fetch.raw_snapshot_id,
-                cache_key=hub_fetch.cache_key,
-            )
-
-        evidence: list[SourceEvidence] = []
+        listing_fetches: list[_HtmlFetch] = []
+        article_links: list[_HubArticleLink] = []
         warnings: list[ProviderWarning] = []
+        seen_article_urls: set[str] = set()
+        for listing_source, listing_url in self._listing_urls(query):
+            cache_key = build_cache_key(
+                provider_name=self.provider_name,
+                source=listing_source,
+                run_date=request.run_date,
+                tickers=request.tickers,
+                query=query,
+                url=listing_url,
+            )
+            try:
+                listing_fetch = _fetch_html(
+                    transport=self._transport,
+                    url=listing_url,
+                    run_date=request.run_date,
+                    ticker=first_ticker(request),
+                    source=listing_source,
+                    cache_key=cache_key,
+                    fetched_at=fetched_at,
+                    cache=self._cache,
+                    headers={"User-Agent": self._user_agent},
+                    timeout=self._timeout,
+                )
+                extracted_links = _extract_listing_article_links(
+                    listing_fetch.text,
+                    base_url=listing_url,
+                    listing_source=listing_source,
+                )
+            except ProviderTransportError as exc:
+                warnings.append(
+                    _transport_warning(
+                        provider_name=self.provider_name,
+                        fetched_at=fetched_at,
+                        source_url=listing_url,
+                        error=exc,
+                    )
+                )
+                continue
+            except MalformedProviderResponse as exc:
+                warnings.append(
+                    provider_warning(
+                        provider_name=self.provider_name,
+                        code=WarningCode.SCRAPING_DRIFT,
+                        severity=WarningSeverity.ERROR,
+                        message=str(exc),
+                        occurred_at=fetched_at,
+                        source_url=listing_url,
+                        metadata={"validation": _listing_validation(listing_source)},
+                    )
+                )
+                continue
+
+            listing_fetches.append(listing_fetch)
+            if not extracted_links and listing_source == "ap-news-hub":
+                warnings.append(
+                    provider_warning(
+                        provider_name=self.provider_name,
+                        code=WarningCode.SCRAPING_DRIFT,
+                        severity=WarningSeverity.ERROR,
+                        message=(
+                            "AP News financial-markets hub did not expose public article links."
+                        ),
+                        occurred_at=fetched_at,
+                        raw_snapshot_id=listing_fetch.raw_snapshot_id,
+                        source_url=listing_url,
+                        metadata={"validation": "missing_ap_article_links"},
+                    )
+                )
+            for link in extracted_links:
+                if link.url in seen_article_urls:
+                    continue
+                seen_article_urls.add(link.url)
+                article_links.append(
+                    _HubArticleLink(
+                        url=link.url,
+                        headline=link.headline,
+                        rank=len(article_links),
+                        listing_url=listing_url,
+                        listing_cache_key=listing_fetch.cache_key,
+                        listing_raw_snapshot_id=listing_fetch.raw_snapshot_id,
+                        listing_source=listing_source,
+                    )
+                )
+        if not article_links:
+            raw_snapshot_id = listing_fetches[0].raw_snapshot_id if listing_fetches else None
+            no_links_cache_key = listing_fetches[0].cache_key if listing_fetches else None
+            if not warnings:
+                return no_data_result(
+                    provider_name=self.provider_name,
+                    request=request,
+                    fetched_at=fetched_at,
+                    message="AP News returned no public search or financial-markets article links",
+                    raw_snapshot_id=raw_snapshot_id,
+                    cache_key=no_links_cache_key,
+                )
+            return provider_result(
+                provider_name=self.provider_name,
+                status=_empty_failure_status(warnings),
+                request=request,
+                fetched_at=fetched_at,
+                credential_state=CredentialState.NOT_REQUIRED,
+                warnings=tuple(warnings),
+                raw_snapshot_id=raw_snapshot_id,
+                cache_key=no_links_cache_key,
+            )
+
+        primary_listing = listing_fetches[0]
+        evidence: list[SourceEvidence] = []
         unmatched_article_count = 0
         result_limit = request.limit or self._default_limit
         for link in article_links[: self._max_article_candidates]:
@@ -247,7 +272,7 @@ class APNewsProvider:
                 tickers=request.tickers,
                 query=query,
                 url=link.url,
-                options={"hub_url": self._hub_url},
+                options={"listing_url": link.listing_url},
             )
             try:
                 article_fetch = _fetch_html(
@@ -362,8 +387,11 @@ class APNewsProvider:
                         freshness=freshness,
                         freshness_seconds=freshness_seconds,
                         provider_metadata={
-                            "hub_url": self._hub_url,
-                            "hub_cache_key": hub_fetch.cache_key,
+                            "source_query_url": link.listing_url,
+                            "listing_url": link.listing_url,
+                            "listing_cache_key": link.listing_cache_key,
+                            "listing_raw_snapshot_id": link.listing_raw_snapshot_id,
+                            "listing_source": link.listing_source,
                             "article_rank": link.rank,
                             "source_label": article.source_label,
                             "author_label": article.author_label,
@@ -387,16 +415,16 @@ class APNewsProvider:
                     fetched_at=fetched_at,
                     credential_state=CredentialState.NOT_REQUIRED,
                     warnings=tuple(warnings),
-                    raw_snapshot_id=hub_fetch.raw_snapshot_id,
-                    cache_key=hub_fetch.cache_key,
+                    raw_snapshot_id=primary_listing.raw_snapshot_id,
+                    cache_key=primary_listing.cache_key,
                 )
             return no_data_result(
                 provider_name=self.provider_name,
                 request=request,
                 fetched_at=fetched_at,
                 message="AP News returned no ticker-matched financial-markets articles",
-                raw_snapshot_id=hub_fetch.raw_snapshot_id,
-                cache_key=hub_fetch.cache_key,
+                raw_snapshot_id=primary_listing.raw_snapshot_id,
+                cache_key=primary_listing.cache_key,
             )
 
         if unmatched_article_count:
@@ -407,8 +435,8 @@ class APNewsProvider:
                     severity=WarningSeverity.INFO,
                     message="AP News skipped articles that did not mention requested tickers.",
                     occurred_at=fetched_at,
-                    raw_snapshot_id=hub_fetch.raw_snapshot_id,
-                    source_url=self._hub_url,
+                    raw_snapshot_id=primary_listing.raw_snapshot_id,
+                    source_url=primary_listing.source_url,
                     metadata={"unmatched_article_count": unmatched_article_count},
                 )
             )
@@ -421,9 +449,16 @@ class APNewsProvider:
             credential_state=CredentialState.NOT_REQUIRED,
             data=tuple(evidence),
             warnings=tuple(warnings),
-            raw_snapshot_id=hub_fetch.raw_snapshot_id,
-            cache_key=hub_fetch.cache_key,
+            raw_snapshot_id=primary_listing.raw_snapshot_id,
+            cache_key=primary_listing.cache_key,
         )
+
+    def _listing_urls(self, query: str) -> tuple[tuple[str, str], ...]:
+        listings: list[tuple[str, str]] = []
+        if self._search_url is not None and query:
+            listings.append(("ap-news-search", _apnews_search_url(self._search_url, query)))
+        listings.append(("ap-news-hub", self._hub_url))
+        return tuple(listings)
 
     def health(self) -> ProviderHealth:
         return provider_health(
@@ -590,6 +625,30 @@ def _extract_hub_article_links(html: str, *, base_url: str) -> tuple[_HubArticle
             )
         )
     return tuple(links)
+
+
+def _extract_listing_article_links(
+    html: str,
+    *,
+    base_url: str,
+    listing_source: str,
+) -> tuple[_HubArticleLink, ...]:
+    if listing_source == "ap-news-search":
+        html = _search_results_region(html)
+    return _extract_hub_article_links(html, base_url=base_url)
+
+
+def _search_results_region(html: str) -> str:
+    for marker in (
+        'class="SearchResultsModule-results"',
+        "class='SearchResultsModule-results'",
+        "SearchResultsModule-results",
+        "PageList-items",
+    ):
+        index = html.find(marker)
+        if index >= 0:
+            return html[index:]
+    return html
 
 
 def _extract_article(
@@ -821,6 +880,14 @@ def _empty_failure_status(warnings: Sequence[ProviderWarning]) -> ProviderStatus
     return ProviderStatus.FAILED
 
 
+def _listing_validation(listing_source: str) -> str:
+    if listing_source == "ap-news-hub":
+        return "malformed_ap_hub"
+    if listing_source == "ap-news-search":
+        return "malformed_ap_search"
+    return f"malformed_{listing_source}"
+
+
 def _attrs_dict(attrs: list[tuple[str, str | None]]) -> dict[str, str]:
     return {name.lower(): value for name, value in attrs if value is not None}
 
@@ -849,6 +916,29 @@ def _validate_apnews_public_url(raw_url: str) -> str:
     if normalized is None:
         raise ValueError("AP News provider requires a public apnews.com HTML URL")
     return normalized
+
+
+def _validate_apnews_search_url(raw_url: str) -> str:
+    split = urlsplit(urljoin(_DEFAULT_SEARCH_URL, raw_url.strip()))
+    if split.scheme not in {"http", "https"} or split.netloc.lower() not in _AP_HOSTS:
+        raise ValueError("AP News search URL must be a public apnews.com URL")
+    path = split.path or "/search"
+    if not path.rstrip("/").endswith("/search"):
+        raise ValueError("AP News search URL must point to /search")
+    return urlunsplit((split.scheme, split.netloc, path, "", ""))
+
+
+def _apnews_search_url(base_url: str, query: str) -> str:
+    split = urlsplit(base_url)
+    return urlunsplit(
+        (
+            split.scheme,
+            split.netloc,
+            split.path or "/search",
+            urlencode({"q": query, "s": "0"}),
+            "",
+        )
+    )
 
 
 def _normalize_apnews_url(raw_url: str | None, *, base_url: str) -> str | None:

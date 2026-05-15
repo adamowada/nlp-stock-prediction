@@ -201,8 +201,12 @@ class Phase4MarketDataTool:
                 symbol=normalized_symbol,
                 request_id=request.request_id,
             )
+            provider_specific_source_url = _provider_specific_source_url(
+                self.provider,
+                provider_result.provider_name,
+            )
             resolved_source_url = _source_url(
-                source_url=source_url,
+                source_url=provider_specific_source_url or source_url,
                 provider_name=provider_result.provider_name,
                 symbol=normalized_symbol,
                 retrieval_method=retrieval_method,
@@ -615,6 +619,17 @@ def _source_url(
     if retrieval_method != RetrievalMethod.FIXTURE:
         return None
     return f"fixture://{provider_name}/{symbol_slug(symbol)}/daily-ohlcv"
+
+
+def _provider_specific_source_url(
+    provider: MarketDataProvider,
+    provider_name: str,
+) -> str | Path | None:
+    source_url_for_provider = getattr(provider, "source_url_for_provider", None)
+    if not callable(source_url_for_provider):
+        return None
+    value = source_url_for_provider(provider_name)
+    return value if isinstance(value, str | Path) else None
 
 
 def _quality_warning(

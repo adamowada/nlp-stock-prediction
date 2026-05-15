@@ -231,9 +231,14 @@ SEC EDGAR ticker-to-CIK resolution is automatic through SEC's public
 environment mappings; if the official dataset cannot be fetched, parsed, or matched to the requested
 ticker, the SEC provider fails loudly in provider health. The live path also honors
 `ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`, `FRED_API_KEY`, and `X_BEARER_TOKEN`
-as fallback names. When Alpha Vantage is not configured, live stock/ETF market data can use the
-credential-free Yahoo Finance chart endpoint. Missing optional credentials are surfaced in the run
-graph and final report instead of being replaced with fixture data.
+as fallback names. Live stock/ETF market data prefers Alpha Vantage when configured, then falls
+back to credential-free public providers such as Yahoo Finance chart data when Alpha Vantage is
+rate-limited, unavailable, or returns no usable bars. Missing optional credentials are surfaced in
+the run graph and final report instead of being replaced with fixture data.
+
+The AP News live adapter searches AP's public search page for the requested ticker before falling
+back to the financial-markets hub. AP search results are still filtered through ticker matching, so
+irrelevant search-page links are skipped and recorded as provider warnings when appropriate.
 
 ## Internet Search
 

@@ -16,7 +16,7 @@ from nlp_stock_prediction.contracts import (
     SourceKind,
     WarningCode,
 )
-from nlp_stock_prediction.providers.apnews import APNewsProvider
+from nlp_stock_prediction.providers.apnews import APNewsProvider, APNewsProviderConfig
 from nlp_stock_prediction.providers.scraping import HtmlResponse
 
 RUN_DATE = date(2026, 5, 11)
@@ -60,7 +60,11 @@ def test_apnews_provider_extracts_hub_article_evidence_with_provenance() -> None
             "oil-prices-economy": _html("article_unrelated.html"),
         }
     )
-    provider = APNewsProvider(transport=transport, now=lambda: FETCHED_AT)
+    provider = APNewsProvider(
+        config=APNewsProviderConfig(search_url=None),
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
     request = EvidenceRequest(
         request_id="apnews-tsla-nvda-2026-05-11",
         run_date=RUN_DATE,
@@ -98,6 +102,43 @@ def test_apnews_provider_extracts_hub_article_evidence_with_provenance() -> None
 
 
 @pytest.mark.contract
+def test_apnews_provider_searches_ticker_specific_results_before_hub() -> None:
+    transport = _FakeHtmlTransport(
+        {
+            "search?q=NFLX": _html("search_netflix.html"),
+            "netflix-earnings": _html("article_netflix_earnings.html"),
+            "hub/financial-markets": _html("hub_unrelated.html"),
+        }
+    )
+    provider = APNewsProvider(transport=transport, now=lambda: FETCHED_AT)
+    request = EvidenceRequest(
+        request_id="apnews-nflx-search-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("NFLX",),
+        query="NFLX",
+        limit=1,
+    )
+
+    result = provider.fetch_articles(request)
+
+    assert result.status == ProviderStatus.OK
+    assert result.data is not None
+    article = result.data[0]
+    assert article.ticker == "NFLX"
+    assert article.title == "Netflix: Q1 Earnings Snapshot"
+    assert article.matched_tickers == ("NFLX",)
+    assert article.provenance.provider_metadata["listing_source"] == "ap-news-search"
+    assert article.provenance.provider_metadata["listing_url"] == (
+        "https://apnews.com/search?q=NFLX&s=0"
+    )
+    assert transport.calls == [
+        "https://apnews.com/search?q=NFLX&s=0",
+        "https://apnews.com/hub/financial-markets",
+        "https://apnews.com/article/netflix-earnings-2026-05-11",
+    ]
+
+
+@pytest.mark.contract
 def test_apnews_provider_marks_articles_with_missing_timestamp_partial() -> None:
     transport = _FakeHtmlTransport(
         {
@@ -105,7 +146,11 @@ def test_apnews_provider_marks_articles_with_missing_timestamp_partial() -> None
             "nvidia-ai-markets": _html("article_missing_timestamp.html"),
         }
     )
-    provider = APNewsProvider(transport=transport, now=lambda: FETCHED_AT)
+    provider = APNewsProvider(
+        config=APNewsProviderConfig(search_url=None),
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
     request = EvidenceRequest(
         request_id="apnews-missing-timestamp-2026-05-11",
         run_date=RUN_DATE,
@@ -133,7 +178,11 @@ def test_apnews_provider_filters_unrelated_articles_to_no_data() -> None:
             "oil-prices-economy": _html("article_unrelated.html"),
         }
     )
-    provider = APNewsProvider(transport=transport, now=lambda: FETCHED_AT)
+    provider = APNewsProvider(
+        config=APNewsProviderConfig(search_url=None),
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
     request = EvidenceRequest(
         request_id="apnews-unrelated-2026-05-11",
         run_date=RUN_DATE,
@@ -159,6 +208,7 @@ def test_apnews_provider_marks_stale_news_articles() -> None:
         }
     )
     provider = APNewsProvider(
+        config=APNewsProviderConfig(search_url=None),
         transport=transport,
         now=lambda: FETCHED_AT,
         stale_after_seconds=3 * 24 * 60 * 60,
@@ -182,7 +232,11 @@ def test_apnews_provider_marks_stale_news_articles() -> None:
 @pytest.mark.contract
 def test_apnews_provider_reports_drift_when_hub_has_no_article_links() -> None:
     transport = _FakeHtmlTransport({"hub/financial-markets": _html("hub_drift.html")})
-    provider = APNewsProvider(transport=transport, now=lambda: FETCHED_AT)
+    provider = APNewsProvider(
+        config=APNewsProviderConfig(search_url=None),
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
     request = EvidenceRequest(
         request_id="apnews-drift-2026-05-11",
         run_date=RUN_DATE,
@@ -202,7 +256,11 @@ def test_apnews_provider_reports_drift_when_hub_has_no_article_links() -> None:
 @pytest.mark.contract
 def test_apnews_provider_reports_malformed_when_hub_html_has_no_readable_text() -> None:
     transport = _FakeHtmlTransport({"hub/financial-markets": "   "})
-    provider = APNewsProvider(transport=transport, now=lambda: FETCHED_AT)
+    provider = APNewsProvider(
+        config=APNewsProviderConfig(search_url=None),
+        transport=transport,
+        now=lambda: FETCHED_AT,
+    )
     request = EvidenceRequest(
         request_id="apnews-empty-hub-2026-05-11",
         run_date=RUN_DATE,
