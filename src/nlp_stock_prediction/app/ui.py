@@ -100,9 +100,14 @@ class TerminalApp:
         save_app_state(self.repo_root, self.state)
 
     def run(self) -> int:
+        self._clear_screen()
         while True:
             self.console.print(_home_panel(self.state))
             choice = self._ask("Choose", default="1").strip().lower()
+            if choice in {"6", "exit", "q", "quit"}:
+                self._save()
+                return 0
+            self._clear_screen()
             if choice in {"1", "research", "r"}:
                 self.research_menu()
             elif choice in {"2", "reports"}:
@@ -113,9 +118,6 @@ class TerminalApp:
                 self.agent_chat_menu()
             elif choice in {"5", "settings", "s"}:
                 self.settings_menu()
-            elif choice in {"6", "exit", "q", "quit"}:
-                self._save()
-                return 0
             else:
                 self.console.print("[yellow]Choose a listed option.[/yellow]")
 
@@ -125,7 +127,9 @@ class TerminalApp:
         try:
             choice = self._ask("1 Run defaults, 2 Configure, 3 Back", default="1").strip().lower()
             if choice in {"3", "b", "back", "q"}:
+                self._clear_screen()
                 return
+            self._clear_screen()
             if choice in {"2", "configure"}:
                 request = self._configure_research_request(request)
             elif choice not in {"1", "run", "default", "defaults"}:
@@ -133,12 +137,14 @@ class TerminalApp:
                 return
             request = self._ensure_research_symbol(request)
             request = self._resolve_research_request(request)
+            self._clear_screen()
             with self.console.status("Running research...", spinner="dots"):
                 bundle = run_research_request(
                     request,
                     report_generator=self.report_generator,
                 )
         except (KeyError, ValueError, OSError) as exc:
+            self._clear_screen()
             self.console.print(Panel(str(exc), title="Research blocked", border_style="red"))
             return
         entry = report_entry_from_bundle(self.repo_root, bundle)
@@ -156,7 +162,9 @@ class TerminalApp:
             self.console.print(report_table(self.state.reports))
             choice = self._ask("Report #, or B back", default="1").strip().lower()
             if choice in {"b", "back", "q"}:
+                self._clear_screen()
                 return
+            self._clear_screen()
             selected = self._report_by_choice(choice)
             if selected is None:
                 self.console.print("[yellow]Choose a valid report number.[/yellow]")
@@ -177,12 +185,17 @@ class TerminalApp:
                 "1 Full report, 2 Details, 3 Paths, 4 Chat, 5 Back",
                 default="1",
             ).strip()
+            if choice == "5":
+                self._clear_screen()
+                return
+            self._clear_screen()
             if choice == "1":
                 try:
                     render_markdown_report(
                         entry.resolve_markdown_path(self.repo_root),
                         console=self.console,
                     )
+                    self._clear_screen()
                 except OSError as exc:
                     self.console.print(
                         Panel(str(exc), title="Report unavailable", border_style="red")
@@ -193,8 +206,6 @@ class TerminalApp:
                 self._render_report_paths(entry)
             elif choice == "4":
                 self.agent_chat_menu()
-            elif choice == "5":
-                return
             else:
                 self.console.print("[yellow]Choose a listed option.[/yellow]")
 
@@ -204,6 +215,7 @@ class TerminalApp:
         if database_path is None:
             value = self._ask("Research database path", default="data/prediction-research.sqlite3")
             database_path = self._resolve_path(value)
+            self._clear_screen()
         if not database_path.exists():
             self.console.print(
                 Panel(
@@ -222,7 +234,9 @@ class TerminalApp:
         self.console.print(table)
         choice = self._ask("Command #, or B back", default="1").strip().lower()
         if choice in {"b", "back", "q"}:
+            self._clear_screen()
             return
+        self._clear_screen()
         try:
             index = int(choice)
         except ValueError:
@@ -233,6 +247,7 @@ class TerminalApp:
             return
         spec = EVALUATION_COMMAND_SPECS[index - 1]
         values = self._collect_evaluation_values(spec.name, selected)
+        self._clear_screen()
         try:
             service = self.evaluation_service_factory(
                 self.repo_root,
@@ -288,8 +303,10 @@ class TerminalApp:
         while True:
             message = self._ask("You", default="/back")
             if message.strip().lower() in {"/back", "back", "exit", "quit"}:
+                self._clear_screen()
                 self._save()
                 return
+            self._clear_screen()
             try:
                 result = self.codex_adapter.send(
                     self._codex_turn_request(
@@ -350,6 +367,7 @@ class TerminalApp:
             ).strip()
             settings = self.state.settings
             if choice == "1":
+                self._clear_screen()
                 settings = settings.with_updates(
                     default_symbol=self._ask(
                         "Remembered symbol (blank asks each run)",
@@ -357,6 +375,7 @@ class TerminalApp:
                     )
                 )
             elif choice == "2":
+                self._clear_screen()
                 mode = (
                     self._ask(
                         "Default mode live/offline",
@@ -366,27 +385,34 @@ class TerminalApp:
                     .lower()
                 )
                 if mode not in {"live", "offline"}:
+                    self._clear_screen()
                     self.console.print("[yellow]Mode must be live or offline.[/yellow]")
                     continue
                 settings = settings.with_updates(default_mode=mode)
             elif choice == "3":
+                self._clear_screen()
                 settings = settings.with_updates(
                     output_dir=Path(self._ask("Output directory", default=str(settings.output_dir)))
                 )
             elif choice == "4":
+                self._clear_screen()
                 settings = settings.with_updates(
                     cache_dir=Path(self._ask("Cache directory", default=str(settings.cache_dir)))
                 )
             elif choice == "5":
+                self._clear_screen()
                 settings = self._configure_codex(settings)
             elif choice == "6":
+                self._clear_screen()
                 self._save()
                 return
             else:
+                self._clear_screen()
                 self.console.print("[yellow]Choose a listed option.[/yellow]")
                 continue
             self.state = replace(self.state, settings=settings)
             self._save()
+            self._clear_screen()
 
     def _configure_research_request(self, request: ResearchRequest) -> ResearchRequest:
         symbol = self._ask("Symbol", default=request.symbol).strip().upper()
@@ -543,6 +569,9 @@ class TerminalApp:
         suffix = f" [{default}]" if default else ""
         value = self.input_func(f"{prompt}{suffix}: ")
         return value if value.strip() else default
+
+    def _clear_screen(self) -> None:
+        self.console.clear()
 
     def _resolve_path(self, value: str | Path) -> Path:
         path = Path(value)

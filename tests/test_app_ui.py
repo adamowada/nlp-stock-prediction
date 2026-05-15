@@ -117,6 +117,24 @@ def test_research_menu_rejects_invalid_mode_before_running(tmp_path: Path) -> No
     assert "Mode must be 'live' or 'offline'." in output.getvalue()
 
 
+def test_terminal_app_clears_screen_between_menu_commands(tmp_path: Path) -> None:
+    _prompts, ask = _input(["1", "invalid", "6"])
+    output = StringIO()
+    app = TerminalApp(
+        repo_root=tmp_path,
+        console=Console(file=output, force_terminal=True, color_system=None),
+        input_func=ask,
+    )
+
+    assert app.run() == 0
+    rendered = output.getvalue()
+    clear_sequence = "\x1b[2J\x1b[H"
+    assert rendered.startswith(clear_sequence)
+    assert rendered.count(clear_sequence) >= 3
+    assert rendered.index("Research Defaults") > rendered.index(clear_sequence)
+    assert "Choose a listed option." in rendered
+
+
 @pytest.mark.integration
 def test_terminal_app_can_run_offline_research_flow(tmp_path: Path) -> None:
     report_root = tmp_path / "reports"
