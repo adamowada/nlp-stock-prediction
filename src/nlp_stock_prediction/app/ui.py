@@ -61,6 +61,7 @@ InputFunc = Callable[[str], str]
 _MAX_CODEX_ACTIVITY_LINES = 14
 _MAX_ACTIVITY_LINE_LENGTH = 120
 _MAX_ACTIVITY_VALUE_LENGTH = 48
+_CLEAR_SCROLLBACK_SEQUENCE = "\x1b[3J"
 _SENSITIVE_ACTIVITY_MARKERS = (
     "api_key",
     "apikey",
@@ -602,6 +603,9 @@ class TerminalApp:
         return value if value.strip() else default
 
     def _clear_screen(self) -> None:
+        if self.console.is_terminal:
+            self.console.file.write(_CLEAR_SCROLLBACK_SEQUENCE)
+            self.console.file.flush()
         self.console.clear()
 
     def _resolve_path(self, value: str | Path) -> Path:
