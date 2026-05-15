@@ -32,6 +32,12 @@ Generate a guarded live-provider report:
 python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --live
 ```
 
+Launch the Rich terminal UI:
+
+```sh
+python -m nlp_stock_prediction tui
+```
+
 Reports are written under `<output>/<YYYY-MM-DD>/<symbol-slug>/`.
 
 ## Report Data Modes

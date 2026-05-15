@@ -10,11 +10,18 @@ from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
+from rich.console import Console
+
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.evaluation.calibration import DEFAULT_CALIBRATION_BIN_EDGES
 from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
 from nlp_stock_prediction.pipeline import generate_daily_report
+from nlp_stock_prediction.terminal_ui import (
+    prompt_for_research_config,
+    render_research_error,
+    run_research_terminal,
+)
 
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 _CLI_EPILOG = """Examples:
@@ -106,6 +113,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use deterministic offline fixtures.",
     )
     mode_group.add_argument(
+        "--live",
+        action="store_true",
+        help="Use live providers and public-source adapters without fixture fallback.",
+    )
+    tui_parser = subparsers.add_parser(
+        "tui",
+        help="Launch the Rich terminal UI for guided report generation.",
+        description=(
+            "Launch a Rich-styled terminal workflow for generating a research report. "
+            "Provide options for a non-interactive run, or omit them in an interactive terminal "
+            "to be prompted."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_CLI_EPILOG,
+    )
+    tui_parser.add_argument(
+        "--date",
+        dest="run_date",
+        type=_parse_date,
+        help="Report date in YYYY-MM-DD format. Prompted when omitted in an interactive terminal.",
+    )
+    tui_parser.add_argument(
+        "--output",
+        dest="output_dir",
+        type=Path,
+        help="Base output directory. Prompted when omitted in an interactive terminal.",
+    )
+    tui_parser.add_argument(
+        "--symbol",
+        help="Instrument symbol or pair to research, for example TSLA or BTC-USD.",
+    )
+    tui_parser.add_argument(
+        "--fixture-dir",
+        type=Path,
+        help="Optional fixture root recorded in command metadata.",
+    )
+    tui_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help="Optional provider cache directory recorded in command metadata.",
+    )
+    tui_mode_group = tui_parser.add_mutually_exclusive_group()
+    tui_mode_group.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use deterministic offline fixtures.",
+    )
+    tui_mode_group.add_argument(
         "--live",
         action="store_true",
         help="Use live providers and public-source adapters without fixture fallback.",
@@ -287,6 +342,18 @@ def build_research_config(args: argparse.Namespace) -> RunConfig:
     )
 
 
+def build_tui_research_config(args: argparse.Namespace) -> RunConfig:
+    return prompt_for_research_config(
+        run_date=args.run_date,
+        output_dir=args.output_dir,
+        symbol=args.symbol,
+        fixture_dir=args.fixture_dir,
+        cache_dir=args.cache_dir,
+        offline=args.offline,
+        live=args.live,
+    )
+
+
 def build_evaluation_service(args: argparse.Namespace) -> Phase6Service:
     repo_root = args.repo_root.resolve()
     database_path = args.database if args.database.is_absolute() else repo_root / args.database
@@ -409,13 +476,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "research":
         try:
-            bundle = generate_daily_report(build_research_config(args))
+            run_research_terminal(
+                build_research_config(args),
+                report_generator=generate_daily_report,
+            )
         except ValueError as exc:
-            print(str(exc), file=sys.stderr)
+            render_research_error(str(exc), console=Console(stderr=True))
             return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
-        print(f"Wrote Markdown report: {bundle.markdown_path}")
-        print(f"Wrote JSON report: {bundle.json_path}")
-        print(f"Wrote audit artifacts: {bundle.audit_dir}")
+        return 0
+    if args.command == "tui":
+        try:
+            run_research_terminal(
+                build_tui_research_config(args),
+                report_generator=generate_daily_report,
+            )
+        except ValueError as exc:
+            render_research_error(str(exc), console=Console(stderr=True))
+            return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
         return 0
     if args.command == "evaluation":
         try:
@@ -431,6 +508,7 @@ __all__ = [
     "build_evaluation_service",
     "build_parser",
     "build_research_config",
+    "build_tui_research_config",
     "main",
     "run_evaluation_command",
 ]

@@ -58,6 +58,12 @@ Show research command help:
 python -m nlp_stock_prediction research --help
 ```
 
+Show terminal UI help:
+
+```sh
+python -m nlp_stock_prediction tui --help
+```
+
 Show evaluation command help:
 
 ```sh
@@ -69,6 +75,7 @@ The top-level commands are:
 | Command | Use it when you want to |
 | --- | --- |
 | `research` | Generate a Markdown report, JSON report, and audit artifacts for a symbol. |
+| `tui` | Launch a Rich-styled terminal workflow for guided report generation. |
 | `evaluation` | Inspect or write evaluation-hardening artifacts for an existing research database and run ID. |
 
 ## Quick Start: Generate Your First Report
@@ -96,6 +103,29 @@ phase4-2026-05-12-tsla
 
 Open `report.md` first. Use `report.json` when you need a machine-readable payload. Use
 `audit/audit-manifest.json` when you need to trace which artifacts and hashes support the report.
+
+The `research` command renders a Rich terminal dashboard when the run completes. The dashboard shows
+the report files, provider health, prediction scenario summary, evidence preview, and tool-run
+status while preserving the same Markdown/JSON/audit files on disk.
+
+## Launch The Rich Terminal UI
+
+Use `tui` when you want a more app-like terminal flow. If you run it in an interactive terminal, it
+prompts for the report date, output directory, and offline/live mode:
+
+```sh
+python -m nlp_stock_prediction tui
+```
+
+You can also pass the same options as `research` for a non-interactive Rich-styled run:
+
+```sh
+python -m nlp_stock_prediction tui --date 2026-05-12 --symbol TSLA --output reports/ --offline
+python -m nlp_stock_prediction tui --date 2026-05-12 --symbol TSLA --output reports/ --live
+```
+
+The terminal UI is presentation only. Report contracts, evidence provenance, audit artifacts, and
+SQLite metadata are the same artifacts produced by `research`.
 
 ## Generate A Live Report
 
