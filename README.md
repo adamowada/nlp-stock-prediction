@@ -20,6 +20,7 @@ prediction reports, and an opt-in Codex MCP smoke path.
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [User Guide](docs/user-guide.md)
 - [Usage Examples](#usage-examples)
 - [Configuration](#configuration)
 - [Project Structure](#project-structure)
