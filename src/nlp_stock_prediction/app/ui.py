@@ -292,29 +292,8 @@ class TerminalApp:
             )
             return
         selected = self.state.selected_report()
-        database_path = self._default_database_path(selected)
-        if selected is not None and database_path is None:
-            self.console.print(
-                Panel(
-                    "Selected report does not have a recovered research database path. "
-                    "Re-run it from the app, or use a report with a known database path.",
-                    title="Codex Agent Health",
-                    border_style="yellow",
-                )
-            )
-            return
-        if database_path is None:
-            database_path = self.repo_root / "data/prediction-research.sqlite3"
-        if selected is not None and not database_path.exists():
-            self.console.print(
-                Panel(
-                    f"Selected report database not found: {database_path}",
-                    title="Codex Agent Health",
-                    border_style="yellow",
-                )
-            )
-            return
-        if selected is None and not database_path.exists():
+        database_path = self._agent_chat_database_path(selected)
+        if not database_path.exists():
             initialize_research_database(database_path)
         session_key = selected.report_id if selected is not None else "global"
         session = self.state.codex_session(session_key)
@@ -500,6 +479,13 @@ class TerminalApp:
             return None
         database_path = selected.resolve_database_path(self.repo_root)
         return database_path if database_path is not None else None
+
+    def _agent_chat_database_path(self, selected: ReportIndexEntry | None) -> Path:
+        default_database_path = self.repo_root / "data/prediction-research.sqlite3"
+        selected_database_path = self._default_database_path(selected)
+        if selected_database_path is not None and selected_database_path.exists():
+            return selected_database_path
+        return default_database_path
 
     def _ensure_research_symbol(self, request: ResearchRequest) -> ResearchRequest:
         if request.symbol.strip():

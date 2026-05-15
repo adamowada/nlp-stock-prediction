@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from datetime import date
+from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
+from typing import cast
 
 import pytest
 from rich.console import Console
 
+from nlp_stock_prediction.app.codex_agent import (
+    CodexAgentAdapter,
+    CodexHealth,
+    CodexTurnRequest,
+    CodexTurnResult,
+)
+from nlp_stock_prediction.app.state import AppState, ReportIndexEntry
 from nlp_stock_prediction.app.ui import TerminalApp, _codex_activity_line, _CodexActivity
 from nlp_stock_prediction.cli import build_parser
 from nlp_stock_prediction.contracts.providers import RunConfig
@@ -135,6 +143,67 @@ def test_terminal_app_clears_screen_between_menu_commands(tmp_path: Path) -> Non
     assert "Choose a listed option." in rendered
 
 
+def test_agent_chat_uses_default_database_when_selected_report_has_no_database(
+    tmp_path: Path,
+) -> None:
+    _prompts, ask = _input(["What can you do?", "/back"])
+    output = StringIO()
+    adapter = _FakeCodexAdapter()
+    app = TerminalApp(
+        repo_root=tmp_path,
+        console=Console(file=output, force_terminal=False, color_system=None),
+        input_func=ask,
+        codex_adapter=cast(CodexAgentAdapter, adapter),
+    )
+    report_dir = tmp_path / "reports" / "2026-05-15" / "nvda"
+    report_dir.mkdir(parents=True)
+    (report_dir / "report.json").write_text("{}", encoding="utf-8")
+    (report_dir / "report.md").write_text("# Report\n", encoding="utf-8")
+    selected = ReportIndexEntry(
+        report_id="report-nvda",
+        run_id="phase4-2026-05-15-nvda",
+        symbol="NVDA",
+        report_date=date(2026, 5, 15),
+        generated_at=datetime(2026, 5, 15, 12, 0, tzinfo=UTC),
+        report_data_mode="live",
+        markdown_path=Path("reports/2026-05-15/nvda/report.md"),
+        json_path=Path("reports/2026-05-15/nvda/report.json"),
+        audit_dir=Path("reports/2026-05-15/nvda/audit"),
+        database_path=None,
+    )
+    app.state = AppState(reports=(selected,), selected_report_id=selected.report_id)
+
+    app.agent_chat_menu()
+
+    assert adapter.requests
+    request = adapter.requests[0]
+    assert request.database_path == tmp_path / "data" / "prediction-research.sqlite3"
+    assert request.database_path.exists()
+    assert request.report_json_path == report_dir / "report.json"
+    assert "Selected report does not have" not in output.getvalue()
+    assert "Agent response" in output.getvalue()
+
+
+def test_agent_chat_starts_without_reports(tmp_path: Path) -> None:
+    _prompts, ask = _input(["Hello", "/back"])
+    adapter = _FakeCodexAdapter()
+    app = TerminalApp(
+        repo_root=tmp_path,
+        console=Console(file=StringIO(), force_terminal=False, color_system=None),
+        input_func=ask,
+        codex_adapter=cast(CodexAgentAdapter, adapter),
+    )
+    app.state = AppState()
+
+    app.agent_chat_menu()
+
+    request = adapter.requests[0]
+    assert request.database_path == tmp_path / "data" / "prediction-research.sqlite3"
+    assert request.database_path.exists()
+    assert request.report_json_path is None
+    assert request.report_markdown_path is None
+
+
 def test_codex_activity_renders_thinking_status_without_private_content() -> None:
     activity = _CodexActivity()
     activity.record_event(
@@ -219,6 +288,40 @@ def test_codex_activity_summarizes_shell_command_completion() -> None:
 def test_codex_activity_suppresses_unhelpful_item_lifecycle_events() -> None:
     assert _codex_activity_line({"type": "item.started", "item": {"type": "unknown"}}) is None
     assert _codex_activity_line({"type": "item.completed", "item": {"type": "unknown"}}) is None
+
+
+class _FakeCodexAdapter:
+    def __init__(self) -> None:
+        self.requests: list[CodexTurnRequest] = []
+
+    def health(
+        self,
+        settings: object,
+        *,
+        repo_root: Path | None = None,
+    ) -> CodexHealth:
+        del settings, repo_root
+        return CodexHealth(codex_available=True, mcp_available=True, message="ready")
+
+    def send(
+        self,
+        request: CodexTurnRequest,
+        *,
+        on_event: Callable[[dict[str, object]], None] | None = None,
+    ) -> CodexTurnResult:
+        self.requests.append(request)
+        request.session_dir.mkdir(parents=True, exist_ok=True)
+        transcript_path = request.transcript_path or request.session_dir / "transcript.jsonl"
+        last_message_path = request.session_dir / "turn-0001-last-message.md"
+        if on_event is not None:
+            on_event({"type": "thread.started", "thread_id": "thread-test"})
+        return CodexTurnResult(
+            session_id="thread-test",
+            message="Agent response",
+            transcript_path=transcript_path,
+            last_message_path=last_message_path,
+            raw_events=(),
+        )
 
 
 @pytest.mark.integration
