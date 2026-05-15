@@ -182,6 +182,10 @@ def test_agent_chat_uses_default_database_when_selected_report_has_no_database(
     assert request.report_json_path == report_dir / "report.json"
     assert "Selected report does not have" not in output.getvalue()
     rendered = output.getvalue()
+    assert "Codex Prompt" in rendered
+    assert "You are the in-app Codex research assistant" in rendered
+    assert "What can you do?" in rendered
+    assert rendered.index("Codex Prompt") < rendered.index("Codex Activity")
     assert "Agent response" in rendered
     assert "**Agent response**" not in rendered
 

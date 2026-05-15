@@ -23,6 +23,7 @@ from nlp_stock_prediction.app.codex_agent import (
     CodexAgentError,
     CodexTurnRequest,
     CodexTurnResult,
+    build_codex_prompt,
 )
 from nlp_stock_prediction.app.evaluation import (
     EVALUATION_COMMAND_SPECS,
@@ -534,6 +535,7 @@ class TerminalApp:
 
     def _send_codex_turn_with_activity(self, request: CodexTurnRequest) -> CodexTurnResult:
         activity = _CodexActivity()
+        self.console.print(_codex_prompt_panel(build_codex_prompt(request)))
         with Live(
             activity.render(),
             console=self.console,
@@ -676,6 +678,10 @@ def _settings_panel(
 
 def _codex_response_panel(message: str) -> Panel:
     return Panel(Markdown(message), title="Codex")
+
+
+def _codex_prompt_panel(prompt: str) -> Panel:
+    return Panel(Text(prompt), title="Codex Prompt")
 
 
 def _relative_or_absolute(repo_root: Path, path: Path) -> Path:

@@ -178,7 +178,7 @@ class CodexAgentAdapter:
         transcript_path = request.transcript_path or request.session_dir / "transcript.jsonl"
         turn_index = _next_turn_index(transcript_path)
         last_message_path = request.session_dir / f"turn-{turn_index:04d}-last-message.md"
-        prompt = _build_prompt(request)
+        prompt = build_codex_prompt(request)
         command = (
             self._resume_command(request, prompt, last_message_path)
             if request.session_id
@@ -350,7 +350,7 @@ def _session_id_from_object(value: object) -> str | None:
     return None
 
 
-def _build_prompt(request: CodexTurnRequest) -> str:
+def build_codex_prompt(request: CodexTurnRequest) -> str:
     context_lines = [
         "You are the in-app Codex research assistant for nlp-stock-prediction.",
         "Use the local MCP research/evaluation tools when they help answer the user.",
@@ -534,6 +534,7 @@ __all__ = [
     "ProcessResult",
     "ProcessRunner",
     "StdoutLineHandler",
+    "build_codex_prompt",
     "extract_session_id",
     "parse_codex_jsonl",
 ]
