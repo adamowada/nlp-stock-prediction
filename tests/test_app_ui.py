@@ -136,10 +136,8 @@ def test_terminal_app_clears_screen_between_menu_commands(tmp_path: Path) -> Non
 
     assert app.run() == 0
     rendered = output.getvalue()
-    scrollback_sequence = "\x1b[3J"
-    clear_sequence = "\x1b[2J\x1b[H"
-    assert rendered.startswith(scrollback_sequence + clear_sequence)
-    assert rendered.count(scrollback_sequence) >= 3
+    clear_sequence = "\x1b[2J\x1b[3J\x1b[H"
+    assert rendered.startswith(clear_sequence)
     assert rendered.count(clear_sequence) >= 3
     assert rendered.index("Research Defaults") > rendered.index(clear_sequence)
     assert "Choose a listed option." in rendered
