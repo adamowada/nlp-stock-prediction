@@ -23,6 +23,7 @@ class ReportBundle:
     audit_manifest_path: Path
     report: DailyReport
     tool_records: tuple[ReportToolRunRecord, ...]
+    database_path: Path | None = None
 
 
 __all__ = ["ReportBundle", "ReportToolRunRecord"]

@@ -167,6 +167,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use live providers and public-source adapters without fixture fallback.",
     )
     _add_evaluation_parser(subparsers)
+    subparsers.add_parser(
+        "app",
+        help="Launch the persistent terminal app.",
+        description="Launch the menu-driven research assistant app.",
+    )
     return parser
 
 
@@ -508,6 +513,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
+    if args.command == "app":
+        from nlp_stock_prediction.app import run_app
+
+        return run_app()
     parser.error(f"unknown command: {args.command}")
 
 

@@ -65,6 +65,9 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
     json_path = Path(str(report_payload["json_path"]))
     audit_manifest_path = Path(str(report_payload["audit_manifest_path"]))
     report = DailyReport.model_validate_json(json_path.read_text(encoding="utf-8"))
+    database_path = Path(str(report_payload.get("database_path", service.database_path)))
+    if not database_path.is_absolute():
+        database_path = repo_root / database_path
     return ReportBundle(
         report_dir=markdown_path.parent,
         markdown_path=markdown_path,
@@ -73,6 +76,7 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
         audit_manifest_path=audit_manifest_path,
         report=report,
         tool_records=service.store.list_tool_runs_for_run(str(result["run_id"])),
+        database_path=database_path,
     )
 
 

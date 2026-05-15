@@ -20,6 +20,15 @@ context; tuning and promotion workflows are outside the product workflow.
 
 ## Current Commands
 
+Launch the persistent terminal app:
+
+```sh
+python main.py
+```
+
+The app stores remembered menu settings and report/chat indexes in ignored
+`data/app-state.json`, with Codex chat transcripts under ignored `data/codex-sessions/`.
+
 Generate the deterministic offline report:
 
 ```sh

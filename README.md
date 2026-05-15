@@ -68,6 +68,16 @@ python -m nlp_stock_prediction --help
 
 ## Quick Start
 
+Launch the persistent terminal app:
+
+```sh
+python main.py
+```
+
+The app opens a menu for research, report browsing, evaluation, settings, and Codex-agent chat.
+Research defaults to today's date, live providers, `reports/`, and the remembered default symbol.
+Use Settings or the Research advanced prompt when you want offline fixtures or a date override.
+
 Generate a deterministic offline research report:
 
 ```sh
@@ -106,6 +116,7 @@ Show available CLI commands:
 
 ```sh
 python -m nlp_stock_prediction --help
+python -m nlp_stock_prediction app
 python -m nlp_stock_prediction research --help
 python -m nlp_stock_prediction tui --help
 ```

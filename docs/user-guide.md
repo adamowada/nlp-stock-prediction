@@ -46,6 +46,12 @@ On Windows, you can also call the virtual environment interpreter directly:
 
 ## Command Map
 
+Launch the persistent terminal app:
+
+```sh
+python main.py
+```
+
 Show the top-level command list:
 
 ```sh
@@ -74,11 +80,26 @@ The top-level commands are:
 
 | Command | Use it when you want to |
 | --- | --- |
+| `app` | Launch the persistent menu app from the package entrypoint. |
 | `research` | Generate a Markdown report, JSON report, and audit artifacts for a symbol. |
 | `tui` | Launch a Rich-styled terminal workflow for guided report generation. |
 | `evaluation` | Inspect or write evaluation-hardening artifacts for an existing research database and run ID. |
 
+`python main.py` and `python -m nlp_stock_prediction app` open the same app. The app defaults
+research to today's date, live mode, `reports/`, and the remembered symbol. Report summaries are
+concise by default; provider, evidence, and audit details are available from report submenus.
+
 ## Quick Start: Generate Your First Report
+
+For normal interactive use, start with the app:
+
+```sh
+python main.py
+```
+
+Choose `Research` to run live research with the current date, or choose the advanced Research prompt
+when you need offline fixtures or a historical report date. Choose `Reports` to view generated
+reports inside the app instead of browsing for files manually.
 
 The safest first run is an offline report. Offline mode is deterministic and does not use network
 providers or live credentials:
