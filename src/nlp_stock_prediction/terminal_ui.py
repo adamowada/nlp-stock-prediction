@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+import sys
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from rich import box
 from rich.align import Align
@@ -35,10 +36,13 @@ def prompt_for_research_config(
     offline: bool,
     live: bool,
     console: Console | None = None,
+    input_stream: IO[str] | None = None,
 ) -> RunConfig:
     """Collect missing research options through a Rich prompt flow."""
 
     active_console = console or Console()
+    prompt_console = active_console if active_console.is_interactive else Console(stderr=True)
+    can_prompt = _input_is_interactive(input_stream) and prompt_console.is_interactive
     missing_required = []
     if run_date is None:
         missing_required.append("--date")
@@ -46,28 +50,23 @@ def prompt_for_research_config(
         missing_required.append("--output")
     if not (offline or live):
         missing_required.append("--offline or --live")
-    if missing_required and not active_console.is_interactive:
+    if missing_required and not can_prompt:
         missing = ", ".join(missing_required)
         raise ValueError(f"tui requires {missing} when stdin is not interactive")
 
-    resolved_date = run_date or _ask_date(active_console)
+    resolved_date = run_date or _ask_date(prompt_console)
     resolved_output = output_dir or Path(
-        Prompt.ask("Output directory", default="reports", console=active_console)
+        _ask_prompt("Output directory", default="reports", console=prompt_console)
     )
-    if symbol is not None:
-        resolved_symbol = symbol
-    elif active_console.is_interactive:
-        resolved_symbol = Prompt.ask("Symbol", default="TSLA", console=active_console)
-    else:
-        resolved_symbol = "TSLA"
+    resolved_symbol = symbol or "TSLA"
     resolved_offline = offline
     resolved_live = live
     if not (resolved_offline or resolved_live):
-        mode = Prompt.ask(
+        mode = _ask_prompt(
             "Research mode",
             choices=["offline", "live"],
             default="offline",
-            console=active_console,
+            console=prompt_console,
         )
         resolved_offline = mode == "offline"
         resolved_live = mode == "live"
@@ -126,13 +125,17 @@ def render_research_complete(bundle: ReportBundle, *, console: Console | None = 
     active_console.print(_evidence_table(report))
     if view.provider_warnings:
         active_console.print(_warnings_panel(view))
-    _print_compatibility_file_lines(bundle, console=active_console)
+    print_research_paths(bundle, file=active_console.file)
 
 
 def render_research_error(message: str, *, console: Console | None = None) -> None:
     """Render a research workflow error without exposing a traceback."""
 
     active_console = console or Console(stderr=True)
+    if not active_console.is_interactive:
+        active_console.file.write(f"{message}\n")
+        active_console.file.flush()
+        return
     active_console.print(
         Panel(
             Text(message, style="bold red"),
@@ -143,15 +146,49 @@ def render_research_error(message: str, *, console: Console | None = None) -> No
     )
 
 
+def print_research_paths(bundle: ReportBundle, *, file: IO[str] | None = None) -> None:
+    """Print script-compatible report paths as plain one-line records."""
+
+    stream = file or sys.stdout
+    stream.write(f"Wrote Markdown report: {bundle.markdown_path}\n")
+    stream.write(f"Wrote JSON report: {bundle.json_path}\n")
+    stream.write(f"Wrote audit artifacts: {bundle.audit_dir}\n")
+    stream.flush()
+
+
 def _ask_date(console: Console) -> date:
     while True:
-        value = Prompt.ask("Report date (YYYY-MM-DD)", console=console)
+        value = _ask_prompt("Report date (YYYY-MM-DD)", console=console)
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
             try:
                 return date.fromisoformat(value)
             except ValueError:
                 pass
         console.print("[red]Expected a valid date in YYYY-MM-DD format.[/red]")
+
+
+def _ask_prompt(
+    prompt: str,
+    *,
+    console: Console,
+    default: str | None = None,
+    choices: list[str] | None = None,
+) -> str:
+    try:
+        if default is None:
+            return Prompt.ask(prompt, choices=choices, console=console)
+        return Prompt.ask(prompt, choices=choices, default=default, console=console)
+    except EOFError as exc:
+        raise ValueError(
+            "tui prompts require interactive stdin; pass --date, --output, and "
+            "--offline or --live for non-interactive use"
+        ) from exc
+
+
+def _input_is_interactive(input_stream: IO[str] | None = None) -> bool:
+    stream = input_stream or sys.stdin
+    isatty = getattr(stream, "isatty", None)
+    return bool(isatty()) if callable(isatty) else False
 
 
 def _header_panel() -> Panel:
@@ -171,9 +208,9 @@ def _request_panel(config: RunConfig) -> Panel:
     table.add_row("Symbol", config.symbol)
     table.add_row("Report date", config.run_date.isoformat())
     table.add_row("Mode", "offline fixtures" if config.offline else "live providers")
-    table.add_row("Output", str(config.output_dir))
-    table.add_row("Fixture root", _optional_path(config.fixture_dir))
-    table.add_row("Cache root", _optional_path(config.cache_dir))
+    table.add_row("Output", Text(str(config.output_dir)))
+    table.add_row("Fixture root", Text(_optional_path(config.fixture_dir)))
+    table.add_row("Cache root", Text(_optional_path(config.cache_dir)))
     return Panel(table, title="Research request", border_style="blue", box=box.ROUNDED)
 
 
@@ -198,11 +235,11 @@ def _completion_panel(bundle: ReportBundle) -> Panel:
 def _files_table(bundle: ReportBundle) -> Table:
     table = Table(title="Report files", box=box.ROUNDED, border_style="cyan", expand=True)
     table.add_column("Artifact", style="bold")
-    table.add_column("Path")
-    table.add_row("Markdown report", str(bundle.markdown_path))
-    table.add_row("JSON report", str(bundle.json_path))
-    table.add_row("Audit manifest", str(bundle.audit_manifest_path))
-    table.add_row("Audit directory", str(bundle.audit_dir))
+    table.add_column("Path", overflow="fold")
+    table.add_row("Markdown report", Text(str(bundle.markdown_path)))
+    table.add_row("JSON report", Text(str(bundle.json_path)))
+    table.add_row("Audit manifest", Text(str(bundle.audit_manifest_path)))
+    table.add_row("Audit directory", Text(str(bundle.audit_dir)))
     return table
 
 
@@ -252,7 +289,7 @@ def _scenario_table(report: DailyReport) -> Panel | Table:
     table.add_column("Direction")
     table.add_column("Horizon")
     table.add_column("Confidence", justify="right")
-    table.add_column("Evidence", justify="right")
+    table.add_column("Refs", justify="right")
     for candidate in report.prediction_candidates:
         table.add_row(
             candidate.candidate_id,
@@ -261,7 +298,7 @@ def _scenario_table(report: DailyReport) -> Panel | Table:
             _enum_value(candidate.direction),
             _enum_value(candidate.horizon),
             f"{candidate.confidence:.2f}",
-            str(len(candidate.evidence_for) + len(candidate.evidence_against)),
+            str(_candidate_trace_reference_count(candidate)),
         )
     return table
 
@@ -332,12 +369,6 @@ def _warnings_panel(view: ReportView) -> Panel:
     )
 
 
-def _print_compatibility_file_lines(bundle: ReportBundle, *, console: Console) -> None:
-    console.print(f"Wrote Markdown report: {bundle.markdown_path}")
-    console.print(f"Wrote JSON report: {bundle.json_path}")
-    console.print(f"Wrote audit artifacts: {bundle.audit_dir}")
-
-
 def _enum_value(value: Any) -> str:
     enum_value = getattr(value, "value", value)
     return str(enum_value)
@@ -356,6 +387,31 @@ def _status_style(status: str) -> str:
     if normalized in {"failed", "rate_limited", "unconfigured", "unauthorized", "malformed"}:
         return "red"
     return "white"
+
+
+def _candidate_trace_reference_count(candidate: Any) -> int:
+    evidence_ids: set[str] = set()
+    artifact_ids: set[str] = set(getattr(candidate, "signal_artifact_ids", ()))
+    for reference in getattr(candidate, "signal_artifacts", ()):
+        artifact_id = getattr(reference, "artifact_id", None)
+        if isinstance(artifact_id, str):
+            artifact_ids.add(artifact_id)
+        evidence_ids.update(str(item) for item in getattr(reference, "source_evidence_ids", ()))
+    for reference in (
+        *getattr(candidate, "evidence_for", ()),
+        *getattr(candidate, "evidence_against", ()),
+    ):
+        evidence_ids.add(str(reference.evidence_id))
+    for dissent in getattr(candidate, "dissenting_evidence", ()):
+        evidence_ids.update(str(reference.evidence_id) for reference in dissent.evidence)
+        artifact_ids.update(str(artifact_id) for artifact_id in dissent.artifact_ids)
+    for driver in getattr(candidate, "uncertainty_drivers", ()):
+        evidence_ids.update(str(reference.evidence_id) for reference in driver.evidence)
+        artifact_ids.update(str(artifact_id) for artifact_id in driver.artifact_ids)
+    for trigger in getattr(candidate, "change_triggers", ()):
+        evidence_ids.update(str(reference.evidence_id) for reference in trigger.evidence)
+        artifact_ids.update(str(artifact_id) for artifact_id in trigger.artifact_ids)
+    return len(evidence_ids) + len(artifact_ids)
 
 
 def _record_name(record: object) -> str:
@@ -379,6 +435,7 @@ def _record_error(record: object) -> str | None:
 
 
 __all__ = [
+    "print_research_paths",
     "prompt_for_research_config",
     "render_research_complete",
     "render_research_error",

@@ -18,6 +18,7 @@ from nlp_stock_prediction.evaluation.calibration import DEFAULT_CALIBRATION_BIN_
 from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
 from nlp_stock_prediction.pipeline import generate_daily_report
 from nlp_stock_prediction.terminal_ui import (
+    print_research_paths,
     prompt_for_research_config,
     render_research_error,
     run_research_terminal,
@@ -475,11 +476,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.command == "research":
+        console = Console()
         try:
-            run_research_terminal(
-                build_research_config(args),
-                report_generator=generate_daily_report,
-            )
+            config = build_research_config(args)
+            if console.is_interactive:
+                run_research_terminal(
+                    config,
+                    report_generator=generate_daily_report,
+                    console=console,
+                )
+            else:
+                bundle = generate_daily_report(config)
+                print_research_paths(bundle)
         except ValueError as exc:
             render_research_error(str(exc), console=Console(stderr=True))
             return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE

@@ -32,13 +32,17 @@ Generate a guarded live-provider report:
 python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --live
 ```
 
-Launch the Rich terminal UI:
+Launch the Rich terminal UI from an interactive terminal:
 
 ```sh
 python -m nlp_stock_prediction tui
 ```
 
 Reports are written under `<output>/<YYYY-MM-DD>/<symbol-slug>/`.
+
+When stdout is captured or redirected, the canonical `research` command keeps plain one-line report
+path output for scripts. Rich styling degrades to no-color/plain text when terminal capabilities are
+limited.
 
 ## Report Data Modes
 

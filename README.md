@@ -77,7 +77,7 @@ python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output
 The offline command writes local report artifacts under
 `reports/<YYYY-MM-DD>/<symbol-slug>/` without using network providers or live credentials.
 
-Launch the Rich terminal UI for a guided report run:
+In an interactive terminal, launch the Rich terminal UI for a guided report run:
 
 ```sh
 python -m nlp_stock_prediction tui

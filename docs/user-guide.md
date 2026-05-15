@@ -104,9 +104,11 @@ phase4-2026-05-12-tsla
 Open `report.md` first. Use `report.json` when you need a machine-readable payload. Use
 `audit/audit-manifest.json` when you need to trace which artifacts and hashes support the report.
 
-The `research` command renders a Rich terminal dashboard when the run completes. The dashboard shows
-the report files, provider health, prediction scenario summary, evidence preview, and tool-run
-status while preserving the same Markdown/JSON/audit files on disk.
+When stdout is an interactive terminal, the `research` command renders a Rich terminal dashboard
+when the run completes. Captured or redirected `research` output keeps the plain one-line report
+path records used by scripts. The dashboard shows the report files, provider health, prediction
+scenario summary, evidence preview, and tool-run status while preserving the same
+Markdown/JSON/audit files on disk.
 
 ## Launch The Rich Terminal UI
 
@@ -125,7 +127,8 @@ python -m nlp_stock_prediction tui --date 2026-05-12 --symbol TSLA --output repo
 ```
 
 The terminal UI is presentation only. Report contracts, evidence provenance, audit artifacts, and
-SQLite metadata are the same artifacts produced by `research`.
+SQLite metadata are the same artifacts produced by `research`. Rich styling degrades to
+no-color/plain text when terminal capabilities are limited.
 
 ## Generate A Live Report
 

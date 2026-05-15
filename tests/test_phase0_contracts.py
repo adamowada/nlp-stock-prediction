@@ -305,7 +305,11 @@ def test_cli_research_contract_parses_canonical_options_and_generates_report(
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "report.md" in captured.out
+    assert captured.out.splitlines() == [
+        f"Wrote Markdown report: {(output_dir / '2026-05-11' / 'tsla' / 'report.md').resolve()}",
+        f"Wrote JSON report: {(output_dir / '2026-05-11' / 'tsla' / 'report.json').resolve()}",
+        f"Wrote audit artifacts: {(output_dir / '2026-05-11' / 'tsla' / 'audit').resolve()}",
+    ]
     assert captured.err == ""
     assert (output_dir / "2026-05-11" / "tsla" / "report.md").exists()
     assert (output_dir / "2026-05-11" / "tsla" / "report.json").exists()
