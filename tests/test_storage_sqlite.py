@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -9,6 +9,7 @@ import pytest
 from nlp_stock_prediction.contracts import JsonObject
 from nlp_stock_prediction.storage import (
     ArtifactRecord,
+    CalibrationDriftCheckRecord,
     CalibrationRunRecord,
     CalibrationSliceRecord,
     CandidateArtifactLinkRecord,
@@ -359,6 +360,104 @@ def test_research_database_migrates_v2_runtime_graph_columns_idempotently(
     with store.connect() as connection:
         migration_count = connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0]
     assert migration_count == CURRENT_RESEARCH_SCHEMA_VERSION
+
+
+@pytest.mark.unit
+def test_research_database_migrates_v9_calibration_drift_created_at_constraint(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    with store.connect(create=True) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            );
+            INSERT INTO schema_migrations(version, name, applied_at)
+            VALUES
+                (1, 'initial_research_schema', '2026-05-13T00:00:00+00:00'),
+                (2, 'codex_smoke_research_graph_schema', '2026-05-13T00:00:00+00:00'),
+                (3, 'codex_smoke_evidence_provenance_schema', '2026-05-13T00:00:00+00:00'),
+                (4, 'registry_grade_research_schema_v4', '2026-05-13T00:00:00+00:00'),
+                (5, 'artifact_audit_provenance_schema_v5', '2026-05-13T00:00:00+00:00'),
+                (6, 'report_evaluation_runtime_schema_v6', '2026-05-13T00:00:00+00:00'),
+                (7, 'report_evaluation_schema_reconciliation_v7', '2026-05-13T00:00:00+00:00'),
+                (8, 'reliability_evaluation_hardening_persistence_v8',
+                    '2026-05-13T00:00:00+00:00');
+
+            CREATE TABLE calibration_drift_checks (
+                drift_check_id TEXT PRIMARY KEY CHECK(length(drift_check_id) > 0),
+                evaluation_attempt_id TEXT,
+                run_id TEXT NOT NULL,
+                tool_run_id TEXT,
+                created_at TEXT NOT NULL,
+                as_of TEXT NOT NULL,
+                prior_calibration_id TEXT,
+                current_calibration_id TEXT,
+                prediction_type TEXT,
+                horizon TEXT,
+                signal_family TEXT,
+                drift_status TEXT NOT NULL CHECK(length(drift_status) > 0),
+                metric_deltas_json TEXT NOT NULL DEFAULT '{}',
+                source_calibration_artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+                source_outcome_evaluation_ids_json TEXT NOT NULL DEFAULT '[]',
+                artifact_id TEXT,
+                limitations_json TEXT NOT NULL DEFAULT '[]',
+                data_mode TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live'),
+                provider_mode TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live'),
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                CHECK(as_of >= created_at)
+            );
+            """
+        )
+
+    store.initialize()
+
+    with store.connect() as connection:
+        row = connection.execute(
+            """
+            SELECT sql FROM sqlite_master
+            WHERE type = 'table'
+              AND name = 'calibration_drift_checks'
+            """
+        ).fetchone()
+
+    assert store.schema_version() == CURRENT_RESEARCH_SCHEMA_VERSION
+    assert row is not None
+    assert "CHECK(created_at >= as_of)" in str(row["sql"])
+
+
+@pytest.mark.unit
+def test_research_database_records_calibration_drift_created_after_as_of(
+    tmp_path: Path,
+) -> None:
+    store = _research_store(tmp_path)
+    store.initialize()
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id="run-msft-drift-2026-05-14",
+            run_kind="evaluation",
+            objective="evaluate calibration drift",
+            status="completed",
+            started_at=_timestamp(),
+            completed_at=_timestamp(),
+        )
+    )
+    as_of = datetime(2026, 5, 14, 22, 30, tzinfo=UTC)
+    drift = CalibrationDriftCheckRecord(
+        drift_check_id="drift-msft-created-after-as-of",
+        run_id="run-msft-drift-2026-05-14",
+        created_at=as_of + timedelta(days=10),
+        as_of=as_of,
+        drift_status="insufficient_history",
+        limitations=("No comparable calibration summaries were available.",),
+    )
+
+    store.record_calibration_drift_check(drift)
+
+    assert store.get_calibration_drift_check(drift.drift_check_id) == drift
 
 
 @pytest.mark.unit

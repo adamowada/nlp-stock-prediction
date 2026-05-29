@@ -67,7 +67,7 @@ from nlp_stock_prediction.storage.run_graph import (
     fetch_tool_run_rows,
 )
 
-CURRENT_RESEARCH_SCHEMA_VERSION = 8
+CURRENT_RESEARCH_SCHEMA_VERSION = 9
 CURRENT_PLANNING_SCHEMA_VERSION = 1
 CURRENT_SCHEMA_VERSION = CURRENT_RESEARCH_SCHEMA_VERSION
 DEFAULT_RESEARCH_DATABASE_PATH = Path("data/prediction-research.sqlite3")
@@ -2915,6 +2915,87 @@ def _migrate_research_schema_v8(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_research_schema_v9(connection: sqlite3.Connection) -> None:
+    connection.executescript(_RESEARCH_EVALUATION_SCHEMA_SQL)
+    row = connection.execute(
+        """
+        SELECT sql FROM sqlite_master
+        WHERE type = 'table'
+          AND name = 'calibration_drift_checks'
+        """
+    ).fetchone()
+    if row is None:
+        return
+    table_sql = str(row["sql"] or "")
+    if "CHECK(as_of >= created_at)" not in table_sql:
+        return
+
+    connection.executescript(
+        """
+        DROP INDEX IF EXISTS idx_calibration_drift_checks_run_id;
+        DROP INDEX IF EXISTS idx_calibration_drift_checks_attempt_id;
+        DROP INDEX IF EXISTS idx_calibration_drift_checks_tool_run_id;
+        DROP INDEX IF EXISTS idx_calibration_drift_checks_artifact_id;
+
+        ALTER TABLE calibration_drift_checks
+        RENAME TO calibration_drift_checks_v8;
+
+        CREATE TABLE calibration_drift_checks (
+            drift_check_id TEXT PRIMARY KEY CHECK(length(drift_check_id) > 0),
+            evaluation_attempt_id TEXT
+                REFERENCES evaluation_attempts(evaluation_attempt_id) ON DELETE SET NULL,
+            run_id TEXT NOT NULL REFERENCES research_runs(run_id) ON DELETE CASCADE,
+            tool_run_id TEXT REFERENCES tool_runs(tool_run_id) ON DELETE SET NULL,
+            created_at TEXT NOT NULL,
+            as_of TEXT NOT NULL,
+            prior_calibration_id TEXT,
+            current_calibration_id TEXT,
+            prediction_type TEXT,
+            horizon TEXT,
+            signal_family TEXT,
+            drift_status TEXT NOT NULL CHECK(length(drift_status) > 0),
+            metric_deltas_json TEXT NOT NULL DEFAULT '{}',
+            source_calibration_artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+            source_outcome_evaluation_ids_json TEXT NOT NULL DEFAULT '[]',
+            artifact_id TEXT REFERENCES artifacts(artifact_id) ON DELETE SET NULL,
+            limitations_json TEXT NOT NULL DEFAULT '[]',
+            data_mode TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live'),
+            provider_mode TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live'),
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            CHECK(created_at >= as_of)
+        );
+
+        INSERT INTO calibration_drift_checks (
+            drift_check_id, evaluation_attempt_id, run_id, tool_run_id,
+            created_at, as_of, prior_calibration_id, current_calibration_id,
+            prediction_type, horizon, signal_family, drift_status,
+            metric_deltas_json, source_calibration_artifact_ids_json,
+            source_outcome_evaluation_ids_json, artifact_id, limitations_json,
+            data_mode, provider_mode, metadata_json
+        )
+        SELECT
+            drift_check_id, evaluation_attempt_id, run_id, tool_run_id,
+            created_at, as_of, prior_calibration_id, current_calibration_id,
+            prediction_type, horizon, signal_family, drift_status,
+            metric_deltas_json, source_calibration_artifact_ids_json,
+            source_outcome_evaluation_ids_json, artifact_id, limitations_json,
+            data_mode, provider_mode, metadata_json
+        FROM calibration_drift_checks_v8;
+
+        DROP TABLE calibration_drift_checks_v8;
+
+        CREATE INDEX IF NOT EXISTS idx_calibration_drift_checks_run_id
+        ON calibration_drift_checks(run_id);
+        CREATE INDEX IF NOT EXISTS idx_calibration_drift_checks_attempt_id
+        ON calibration_drift_checks(evaluation_attempt_id);
+        CREATE INDEX IF NOT EXISTS idx_calibration_drift_checks_tool_run_id
+        ON calibration_drift_checks(tool_run_id);
+        CREATE INDEX IF NOT EXISTS idx_calibration_drift_checks_artifact_id
+        ON calibration_drift_checks(artifact_id);
+        """
+    )
+
+
 _RESEARCH_MIGRATION_STEPS = (
     _SchemaMigrationStep(1, "initial_research_schema", _noop_migration),
     _SchemaMigrationStep(2, "codex_smoke_research_graph_schema", _noop_migration),
@@ -2931,6 +3012,11 @@ _RESEARCH_MIGRATION_STEPS = (
         8,
         "reliability_evaluation_hardening_persistence_v8",
         _migrate_research_schema_v8,
+    ),
+    _SchemaMigrationStep(
+        9,
+        "calibration_drift_created_at_constraint_v9",
+        _migrate_research_schema_v9,
     ),
 )
 
@@ -4835,7 +4921,7 @@ CREATE TABLE IF NOT EXISTS calibration_drift_checks (
     data_mode TEXT NOT NULL DEFAULT 'live' CHECK(data_mode = 'live'),
     provider_mode TEXT NOT NULL DEFAULT 'live' CHECK(provider_mode = 'live'),
     metadata_json TEXT NOT NULL DEFAULT '{}',
-    CHECK(as_of >= created_at)
+    CHECK(created_at >= as_of)
 );
 
 CREATE INDEX IF NOT EXISTS idx_calibration_drift_checks_run_id
