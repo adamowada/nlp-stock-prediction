@@ -1,4 +1,4 @@
-"""Persistence helpers for Phase 6 prediction outcomes and reviews."""
+"""Persistence helpers for Evaluation Stage prediction outcomes and reviews."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def persist_prediction_outcome_records(
     review_created_at: datetime,
     evaluation_attempt_id: str | None = None,
 ) -> None:
-    """Persist a Phase 6 outcome, review, and all source links."""
+    """Persist a Evaluation Stage outcome, review, and all source links."""
 
     with store.transaction():
         _persist_outcome(

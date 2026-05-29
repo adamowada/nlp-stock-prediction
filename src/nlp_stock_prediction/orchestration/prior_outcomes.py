@@ -32,8 +32,8 @@ from nlp_stock_prediction.contracts.evaluation import (
 )
 from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.orchestration.artifact_policy import ALLOWED_ARTIFACT_TYPES, ArtifactType
-from nlp_stock_prediction.orchestration.phase2_common import file_sha256, stable_digest
-from nlp_stock_prediction.orchestration.phase2_evidence import source_evidence_from_record
+from nlp_stock_prediction.orchestration.codex_smoke_evidence import source_evidence_from_record
+from nlp_stock_prediction.orchestration.orchestration_common import file_sha256, stable_digest
 from nlp_stock_prediction.orchestration.report_data_modes import ReportDataMode
 from nlp_stock_prediction.reporting.json import load_json_report
 from nlp_stock_prediction.storage.records import (
@@ -480,7 +480,7 @@ def _persisted_outcome_review_for_prior_candidate(
         store=store,
         payload=payload,
     )
-    phase7_freshness = _phase7_freshness_metadata(payload)
+    reliability_freshness = _freshness_metadata(payload)
     artifact_ids = tuple(dict.fromkeys(artifact.artifact_id for artifact in audit_artifacts))
     status = _persisted_prior_review_status(payload.outcome_evaluation.status.value)
     limitations = tuple(
@@ -490,7 +490,7 @@ def _persisted_outcome_review_for_prior_candidate(
                 *payload.outcome_evaluation.limitations,
                 *evidence_limitations,
                 *artifact_limitations,
-                *_phase7_freshness_limitations(phase7_freshness),
+                *_reliability_freshness_limitations(reliability_freshness),
             )
         )
     )
@@ -514,7 +514,7 @@ def _persisted_outcome_review_for_prior_candidate(
                 "prediction_outcome": payload.outcome_evaluation.outcome.model_dump(mode="json"),
                 "prediction_outcome_evaluation": payload.outcome_evaluation.model_dump(mode="json"),
                 "prediction_evaluation_target": payload.target.model_dump(mode="json"),
-                "phase7_freshness": phase7_freshness,
+                "reliability_freshness": reliability_freshness,
                 "source_evidence_ids": list(payload.evidence_ids),
                 "source_artifact_ids": list(payload.artifact_ids),
             },
@@ -739,19 +739,19 @@ def _persisted_outcome_review_summary(
     )
 
 
-def _phase7_freshness_metadata(
+def _freshness_metadata(
     payload: PredictionOutcomeEvaluationArtifactPayload,
 ) -> JsonObject:
-    metadata = payload.target.metadata.get("phase7_freshness")
+    metadata = payload.target.metadata.get("reliability_freshness")
     if isinstance(metadata, dict):
         return dict(metadata)
-    snapshot_metadata = payload.target.candidate_snapshot.get("phase7_freshness")
+    snapshot_metadata = payload.target.candidate_snapshot.get("reliability_freshness")
     if isinstance(snapshot_metadata, dict):
         return dict(snapshot_metadata)
     return {}
 
 
-def _phase7_freshness_limitations(metadata: JsonObject) -> tuple[str, ...]:
+def _reliability_freshness_limitations(metadata: JsonObject) -> tuple[str, ...]:
     limitations: list[str] = []
     limitations.extend(
         _freshness_record_limitations(

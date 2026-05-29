@@ -1,4 +1,4 @@
-"""Calibration drift checks for Phase 7 evaluation hardening."""
+"""Calibration drift checks for Reliability Stage evaluation hardening."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from nlp_stock_prediction.contracts.report import AuditArtifact
 from nlp_stock_prediction.evaluation.calibration import CalibrationSummaryArtifactPayload
 from nlp_stock_prediction.evaluation.common import aware_utc, digest, slug
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
-from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.research_common import safe_research_tool_execution
 from nlp_stock_prediction.storage.records import (
     ArtifactRecord,
     CalibrationDriftCheckRecord,
@@ -42,8 +42,8 @@ from nlp_stock_prediction.storage.records import (
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
-PHASE7_CALIBRATION_DRIFT_TOOL_NAME = "phase7_calibration_drift_check"
-PHASE7_CALIBRATION_DRIFT_TOOL_VERSION = "phase7.calibration-drift.v1"
+RELIABILITY_CALIBRATION_DRIFT_TOOL_NAME = "calibration_drift_check"
+RELIABILITY_CALIBRATION_DRIFT_TOOL_VERSION = "reliability.calibration-drift.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,7 +256,8 @@ def load_calibration_summary_source(
         )
     except Exception as exc:
         raise ValueError(
-            f"calibration summary artifact is not a valid Phase 6 payload: {artifact.artifact_id}"
+            "calibration summary artifact is not a valid Evaluation Stage payload: "
+            f"{artifact.artifact_id}"
         ) from exc
     _validate_source_payload(calibration_run=calibration_run, payload=payload)
     return CalibrationSummarySource(
@@ -362,8 +363,8 @@ def write_calibration_drift_check_artifact(
                 ToolRunRecord(
                     tool_run_id=resolved_tool_run_id,
                     run_id=run_id,
-                    tool_name=PHASE7_CALIBRATION_DRIFT_TOOL_NAME,
-                    tool_version=PHASE7_CALIBRATION_DRIFT_TOOL_VERSION,
+                    tool_name=RELIABILITY_CALIBRATION_DRIFT_TOOL_NAME,
+                    tool_version=RELIABILITY_CALIBRATION_DRIFT_TOOL_VERSION,
                     status="successful",
                     started_at=created,
                     completed_at=created,
@@ -376,7 +377,7 @@ def write_calibration_drift_check_artifact(
             repo_root=repo_root,
             base_dir=artifact_dir,
             created_at=created,
-            produced_by=PHASE7_CALIBRATION_DRIFT_TOOL_NAME,
+            produced_by=RELIABILITY_CALIBRATION_DRIFT_TOOL_NAME,
             tool_run_id=resolved_tool_run_id if record_tool_run or tool_run_id else None,
             schema_version=payload.schema_version,
         ).write_json(
@@ -447,13 +448,13 @@ def write_calibration_drift_check_artifact(
     if not record_tool_run:
         return write_records()
 
-    with safe_phase4_tool_execution(
+    with safe_research_tool_execution(
         store=store,
         artifact_roots=(artifact_dir,),
         tool_run_id=resolved_tool_run_id,
         run_id=run_id,
-        tool_name=PHASE7_CALIBRATION_DRIFT_TOOL_NAME,
-        tool_version=PHASE7_CALIBRATION_DRIFT_TOOL_VERSION,
+        tool_name=RELIABILITY_CALIBRATION_DRIFT_TOOL_NAME,
+        tool_version=RELIABILITY_CALIBRATION_DRIFT_TOOL_VERSION,
         started_at=created,
         inputs=tool_inputs,
     ):
@@ -875,8 +876,8 @@ def _threshold_metadata(thresholds: CalibrationDriftThresholds) -> JsonObject:
 
 __all__ = [
     "DEFAULT_CALIBRATION_DRIFT_THRESHOLDS",
-    "PHASE7_CALIBRATION_DRIFT_TOOL_NAME",
-    "PHASE7_CALIBRATION_DRIFT_TOOL_VERSION",
+    "RELIABILITY_CALIBRATION_DRIFT_TOOL_NAME",
+    "RELIABILITY_CALIBRATION_DRIFT_TOOL_VERSION",
     "CalibrationDriftArtifactPayload",
     "CalibrationDriftArtifacts",
     "CalibrationDriftThresholds",

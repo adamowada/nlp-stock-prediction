@@ -55,6 +55,19 @@ def _fixture(*parts: str) -> dict[str, Any]:
     )
 
 
+def _sec_company_tickers_exchange_payload(
+    *,
+    cik: int,
+    ticker: str,
+    name: str = "Tesla, Inc.",
+    exchange: str = "Nasdaq",
+) -> dict[str, Any]:
+    return {
+        "fields": ["cik", "name", "ticker", "exchange"],
+        "data": [[cik, name, ticker, exchange]],
+    }
+
+
 def _yahoo_chart_payload(
     *,
     timestamps: Sequence[datetime],
@@ -991,12 +1004,14 @@ def test_alpha_vantage_fundamentals_provider_returns_missing_credentials_warning
 def test_sec_edgar_maps_company_facts_and_recent_filings() -> None:
     transport = _FakeJsonTransport(
         {
+            "company_tickers_exchange": JsonResponse(
+                payload=_sec_company_tickers_exchange_payload(cik=1318605, ticker="TSLA")
+            ),
             "companyfacts": JsonResponse(payload=_fixture("sec_edgar", "companyfacts_tsla.json")),
             "submissions": JsonResponse(payload=_fixture("sec_edgar", "submissions_tsla.json")),
         }
     )
     provider = SecEdgarFundamentalsProvider(
-        ticker_cik_map={"TSLA": "1318605"},
         user_agent="nlp-stock-prediction-test contact@example.test",
         transport=transport,
         now=lambda: FETCHED_AT,
@@ -1012,6 +1027,8 @@ def test_sec_edgar_maps_company_facts_and_recent_filings() -> None:
     assert result.status == ProviderStatus.OK
     assert result.data is not None
     assert result.data.company_name == "Tesla, Inc."
+    assert "company_tickers_exchange.json" in transport.calls[0]
+    assert "CIK0001318605" in transport.calls[1]
     metrics = {metric.name: metric for metric in result.data.metrics}
     assert metrics["sec_revenues"].value == Decimal("21301000000")
     assert metrics["sec_revenues"].metadata["form"] == "10-Q"
@@ -1024,11 +1041,20 @@ def test_sec_edgar_maps_company_facts_and_recent_filings() -> None:
 
 
 @pytest.mark.contract
-def test_sec_edgar_warns_when_ticker_cik_mapping_is_unconfigured() -> None:
+def test_sec_edgar_fails_loudly_when_official_ticker_dataset_has_no_match() -> None:
     provider = SecEdgarFundamentalsProvider(
-        ticker_cik_map={},
         user_agent="nlp-stock-prediction-test contact@example.test",
-        transport=_FakeJsonTransport({}),
+        transport=_FakeJsonTransport(
+            {
+                "company_tickers_exchange": JsonResponse(
+                    payload=_sec_company_tickers_exchange_payload(
+                        cik=320193,
+                        ticker="AAPL",
+                        name="Apple Inc.",
+                    )
+                )
+            }
+        ),
         now=lambda: FETCHED_AT,
     )
     request = FundamentalsRequest(
@@ -1039,8 +1065,37 @@ def test_sec_edgar_warns_when_ticker_cik_mapping_is_unconfigured() -> None:
 
     result = provider.fetch_fundamentals(request)
 
-    assert result.status == ProviderStatus.UNCONFIGURED
+    assert result.status == ProviderStatus.FAILED
     assert result.warnings[0].code == WarningCode.NO_DATA
+    assert result.warnings[0].severity.value == "error"
+    assert result.warnings[0].provider_error_type == "cik_lookup_failed"
+    assert "official ticker-to-CIK match" in result.warnings[0].message
+
+
+@pytest.mark.contract
+def test_sec_edgar_fails_loudly_when_official_ticker_dataset_schema_drifts() -> None:
+    provider = SecEdgarFundamentalsProvider(
+        user_agent="nlp-stock-prediction-test contact@example.test",
+        transport=_FakeJsonTransport(
+            {
+                "company_tickers_exchange": JsonResponse(
+                    payload={"fields": ["ticker"], "data": [["TSLA"]]}
+                )
+            }
+        ),
+        now=lambda: FETCHED_AT,
+    )
+    request = FundamentalsRequest(
+        request_id="sec-malformed-cik-dataset-2026-05-11",
+        run_date=RUN_DATE,
+        tickers=("TSLA",),
+    )
+
+    result = provider.fetch_fundamentals(request)
+
+    assert result.status == ProviderStatus.MALFORMED
+    assert result.warnings[0].code == WarningCode.MALFORMED_RESPONSE
+    assert "missing cik/ticker fields" in result.warnings[0].message
 
 
 @pytest.mark.contract

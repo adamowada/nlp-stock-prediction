@@ -1,0 +1,655 @@
+from __future__ import annotations
+
+import os
+from collections.abc import Sequence
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Protocol
+
+import pytest
+
+from nlp_stock_prediction.contracts import (
+    CredentialState,
+    Direction,
+    MarketDataRequest,
+    MarketSnapshot,
+    PredictionOutcomeResult,
+    PredictionOutcomeStatus,
+    ProviderHealth,
+    ProviderResult,
+    ProviderStatus,
+    ProviderWarning,
+    RetrievalMethod,
+    WarningCode,
+    WarningSeverity,
+)
+from nlp_stock_prediction.evaluation.live_outcomes import (
+    DefaultLiveOutcomeProviderFactory,
+    LiveOutcomeMarketDataSelection,
+    materialize_live_prediction_outcome_artifacts,
+)
+from nlp_stock_prediction.orchestration.evaluation_service import EvaluationService
+from nlp_stock_prediction.providers._base import provider_health, provider_result, provider_warning
+from nlp_stock_prediction.storage import (
+    ArtifactRecord,
+    InstrumentRecord,
+    PredictionCandidateRecord,
+    ResearchRunRecord,
+    SQLiteStore,
+)
+
+RUN_ID = "run-reliability-live-outcome-materialization"
+INSTRUMENT_ID = "instrument:equity:us:msft"
+CANDIDATE_ID = "candidate-msft-directional-live-outcome"
+NOW = datetime(2026, 5, 13, 12, 0, tzinfo=UTC)
+CUTOFF = datetime(2026, 5, 13, 20, 0, tzinfo=UTC)
+WINDOW_START = datetime(2026, 5, 14, 13, 30, tzinfo=UTC)
+WINDOW_END = datetime(2026, 5, 18, 20, 0, tzinfo=UTC)
+EVALUATED_AT = datetime(2026, 5, 19, 21, 0, tzinfo=UTC)
+
+
+class _SelectionFactory(Protocol):
+    def market_data_selections(
+        self,
+        *,
+        symbol: str,
+        instrument: InstrumentRecord,
+    ) -> tuple[LiveOutcomeMarketDataSelection, ...]: ...
+
+
+class _StaticMarketDataProvider:
+    provider_name = "verified-live-market-data"
+
+    def __init__(
+        self,
+        *,
+        status: ProviderStatus = ProviderStatus.OK,
+        bars: Sequence[tuple[date, Decimal]] = (),
+    ) -> None:
+        self.status = status
+        self.bars = tuple(bars)
+        self.calls = 0
+
+    def fetch_daily_candles(
+        self,
+        request: MarketDataRequest,
+    ) -> ProviderResult[MarketSnapshot]:
+        self.calls += 1
+        warnings: tuple[ProviderWarning, ...] = ()
+        if self.status != ProviderStatus.OK:
+            warnings = (
+                provider_warning(
+                    provider_name=self.provider_name,
+                    code=(
+                        WarningCode.STALE_DATA
+                        if self.status == ProviderStatus.STALE
+                        else WarningCode.UPSTREAM_UNAVAILABLE
+                    ),
+                    severity=WarningSeverity.WARNING,
+                    message=f"{self.provider_name} returned {self.status.value}.",
+                    occurred_at=EVALUATED_AT,
+                ),
+            )
+        snapshot = None
+        if self.bars:
+            from nlp_stock_prediction.contracts import PriceBar
+
+            snapshot = MarketSnapshot(
+                ticker=request.tickers[0],
+                bars=tuple(
+                    PriceBar(
+                        ticker=request.tickers[0],
+                        timestamp=bar_date,
+                        open=value,
+                        high=value,
+                        low=value,
+                        close=value,
+                        adjusted_close=value,
+                        volume=1_000_000,
+                    )
+                    for bar_date, value in self.bars
+                ),
+            )
+        return provider_result(
+            provider_name=self.provider_name,
+            status=self.status,
+            request=request,
+            fetched_at=EVALUATED_AT,
+            credential_state=CredentialState.NOT_REQUIRED,
+            data=snapshot,
+            warnings=warnings,
+            raw_snapshot_id="verified-live-market-data-msft-2026-05-19",
+        )
+
+    def health(self) -> ProviderHealth:
+        return provider_health(
+            provider_name=self.provider_name,
+            status=self.status,
+            checked_at=EVALUATED_AT,
+            credential_state=CredentialState.NOT_REQUIRED,
+        )
+
+
+class _StaticSelectionFactory:
+    def __init__(self, *selections: LiveOutcomeMarketDataSelection) -> None:
+        self.selections = selections
+        self.calls = 0
+
+    def market_data_selections(
+        self,
+        *,
+        symbol: str,
+        instrument: InstrumentRecord,
+    ) -> tuple[LiveOutcomeMarketDataSelection, ...]:
+        self.calls += 1
+        assert symbol == "MSFT"
+        assert instrument.instrument_id == INSTRUMENT_ID
+        return tuple(self.selections)
+
+
+class _NoProviderFactory:
+    calls = 0
+
+    def market_data_selections(
+        self,
+        *,
+        symbol: str,
+        instrument: InstrumentRecord,
+    ) -> tuple[LiveOutcomeMarketDataSelection, ...]:
+        self.calls += 1
+        raise AssertionError("provider factory should not be called")
+
+
+def _store(tmp_path: Path, *, asset_class: str = "stock") -> SQLiteStore:
+    store = SQLiteStore(tmp_path / "data" / "prediction-research.sqlite3")
+    store.initialize()
+    store.upsert_instrument(
+        InstrumentRecord(
+            instrument_id=INSTRUMENT_ID,
+            symbol="MSFT",
+            asset_class=asset_class,
+            name="Microsoft Corporation",
+            venue="NASDAQ",
+        )
+    )
+    store.upsert_research_run(
+        ResearchRunRecord(
+            run_id=RUN_ID,
+            run_kind="live_outcome_materialization",
+            objective="Materialize an observed prediction outcome from live market data.",
+            status="running",
+            started_at=NOW,
+            metadata={"report_data_mode": "live", "provider_mode": "live"},
+        )
+    )
+    store.upsert_prediction_candidate(
+        PredictionCandidateRecord(
+            candidate_id=CANDIDATE_ID,
+            run_id=RUN_ID,
+            instrument_id=INSTRUMENT_ID,
+            prediction_horizon="swing",
+            prediction_type="directional",
+            scenario="MSFT ends the fixed evaluation window above the cutoff comparison close.",
+            direction=Direction.BULLISH.value,
+            confidence=0.64,
+            status="evidence_supported",
+            baseline={
+                "baseline_id": "cutoff_daily_close",
+                "summary": "Compare the observed window-end close with the cutoff daily close.",
+                "baseline_score": 0.5,
+                "candidate_score": 0.64,
+                "verdict": "above_baseline",
+            },
+        )
+    )
+    return store
+
+
+@pytest.mark.unit
+def test_live_outcome_materialization_fetches_provider_artifact_and_scores_window(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(
+        bars=(
+            (date(2026, 5, 13), Decimal("100")),
+            (date(2026, 5, 18), Decimal("103")),
+            (date(2026, 5, 19), Decimal("110")),
+        )
+    )
+    factory = _StaticSelectionFactory(
+        LiveOutcomeMarketDataSelection(
+            provider=provider,
+            source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+            role="primary",
+            retrieval_method=RetrievalMethod.OFFICIAL_API,
+        )
+    )
+
+    result = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=factory,
+    )
+
+    assert provider.calls == 1
+    assert result.outcome.status == PredictionOutcomeStatus.OBSERVED
+    assert result.outcome.observed_result == PredictionOutcomeResult.SUPPORTED
+    assert result.outcome.result_value == 103.0
+    assert result.outcome.baseline_value == 100.0
+    assert result.outcome.observed_at == WINDOW_END
+    assert result.market_artifact_ids
+    assert result.outcome_evidence_ids
+    assert store.get_evidence(result.outcome_evidence_ids[0]) is not None
+
+    outcome_record = store.get_prediction_outcome(result.outcome.outcome_id)
+    review_record = store.get_prediction_outcome_evaluation(
+        result.outcome_evaluation.outcome_evaluation_id
+    )
+    assert outcome_record is not None
+    assert review_record is not None
+    assert outcome_record.evaluation_attempt_id == result.evaluation_attempt_id
+    assert review_record.evaluation_attempt_id == result.evaluation_attempt_id
+    assert store.get_evaluation_attempt(result.evaluation_attempt_id) is not None
+
+
+@pytest.mark.unit
+def test_live_outcome_materialization_does_not_use_same_day_close_before_cutoff(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(
+        bars=(
+            (date(2026, 5, 12), Decimal("99")),
+            (date(2026, 5, 13), Decimal("100")),
+            (date(2026, 5, 18), Decimal("103")),
+        )
+    )
+
+    result = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=datetime(2026, 5, 13, 12, 30, tzinfo=UTC),
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=_StaticSelectionFactory(
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
+        ),
+    )
+
+    assert result.outcome.status == PredictionOutcomeStatus.OBSERVED
+    assert result.outcome.baseline_value == 99.0
+    assert result.outcome.result_value == 103.0
+
+
+@pytest.mark.unit
+def test_live_outcome_materialization_can_reuse_existing_market_artifact(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(
+        bars=((date(2026, 5, 13), Decimal("100")), (date(2026, 5, 18), Decimal("103")))
+    )
+    artifact_dir = tmp_path / "reports" / RUN_ID / "audit"
+    first = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=artifact_dir,
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=_StaticSelectionFactory(
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
+        ),
+    )
+
+    second = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=artifact_dir,
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=_NoProviderFactory(),
+        market_artifact_ids=first.market_artifact_ids,
+    )
+
+    assert second.outcome.status == PredictionOutcomeStatus.OBSERVED
+    assert second.outcome.result_value == 103.0
+    assert provider.calls == 1
+
+
+@pytest.mark.unit
+def test_live_outcome_materialization_rejects_non_live_reused_market_artifact(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(
+        bars=((date(2026, 5, 13), Decimal("100")), (date(2026, 5, 18), Decimal("103")))
+    )
+    artifact_dir = tmp_path / "reports" / RUN_ID / "audit"
+    first = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=artifact_dir,
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=_StaticSelectionFactory(
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
+        ),
+    )
+    artifact = store.get_artifact(first.market_artifact_ids[0])
+    assert artifact is not None
+    store.record_artifact(
+        ArtifactRecord(
+            **{
+                **artifact.__dict__,
+                "metadata": {
+                    **artifact.metadata,
+                    "report_data_mode": "offline_fixture",
+                },
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="non-live report_data_mode"):
+        materialize_live_prediction_outcome_artifacts(
+            store=store,
+            repo_root=tmp_path,
+            artifact_dir=artifact_dir,
+            run_id=RUN_ID,
+            candidate_id=CANDIDATE_ID,
+            point_in_time_cutoff=CUTOFF,
+            evaluation_window_start=WINDOW_START,
+            evaluation_window_end=WINDOW_END,
+            evaluated_at=EVALUATED_AT,
+            provider_factory=_NoProviderFactory(),
+            market_artifact_ids=first.market_artifact_ids,
+        )
+
+
+@pytest.mark.unit
+def test_live_outcome_materialization_records_unavailable_provider_without_shortcuts(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(status=ProviderStatus.UNCONFIGURED)
+
+    result = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=_StaticSelectionFactory(
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
+        ),
+    )
+
+    assert result.outcome.status == PredictionOutcomeStatus.UNAVAILABLE
+    assert result.outcome.observed_result is None
+    assert result.outcome.result_value is None
+    assert result.outcome.baseline_value is None
+    assert result.market_artifact_ids
+    assert result.outcome_evidence_ids == ()
+    assert "unconfigured" in " ".join(result.outcome.limitations).lower()
+    assert store.get_prediction_outcome(result.outcome.outcome_id) is not None
+
+
+@pytest.mark.unit
+def test_live_outcome_materialization_marks_started_attempt_failed_on_late_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(
+        bars=((date(2026, 5, 13), Decimal("100")), (date(2026, 5, 18), Decimal("103")))
+    )
+
+    def fail_write(**_kwargs: object) -> object:
+        raise ValueError("late validation failed")
+
+    monkeypatch.setattr(
+        "nlp_stock_prediction.evaluation.live_outcomes."
+        "write_point_in_time_outcome_evaluation_artifacts",
+        fail_write,
+    )
+
+    with pytest.raises(ValueError, match="late validation failed"):
+        materialize_live_prediction_outcome_artifacts(
+            store=store,
+            repo_root=tmp_path,
+            artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+            run_id=RUN_ID,
+            candidate_id=CANDIDATE_ID,
+            point_in_time_cutoff=CUTOFF,
+            evaluation_window_start=WINDOW_START,
+            evaluation_window_end=WINDOW_END,
+            evaluated_at=EVALUATED_AT,
+            provider_factory=_StaticSelectionFactory(
+                LiveOutcomeMarketDataSelection(
+                    provider=provider,
+                    source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                    role="primary",
+                    retrieval_method=RetrievalMethod.OFFICIAL_API,
+                )
+            ),
+        )
+
+    attempts = store.list_evaluation_attempts_for_run(RUN_ID)
+    attempt = attempts[0]
+    assert attempt.status == "failed"
+    assert "late validation failed" in str(attempt.metadata["error"])
+    assert attempt.tool_run_id is not None
+    tool_run = store.get_tool_run(attempt.tool_run_id)
+    assert tool_run is not None
+    assert tool_run.status == "failed"
+    assert tool_run.error_message is not None
+    assert "late validation failed" in tool_run.error_message
+
+
+@pytest.mark.unit
+def test_live_outcome_materialization_rejects_pre_window_payloads(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    provider = _StaticMarketDataProvider(
+        bars=((date(2026, 5, 13), Decimal("100")), (date(2026, 5, 16), Decimal("102")))
+    )
+
+    result = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=_StaticSelectionFactory(
+            LiveOutcomeMarketDataSelection(
+                provider=provider,
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
+        ),
+    )
+
+    assert result.outcome.status == PredictionOutcomeStatus.UNAVAILABLE
+    assert any("post-window usable bar" in item for item in result.outcome.limitations)
+
+
+@pytest.mark.unit
+def test_live_outcome_materialization_marks_unsupported_asset_classes_unavailable(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path, asset_class="crypto")
+    factory = _NoProviderFactory()
+
+    result = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=CUTOFF,
+        evaluation_window_start=WINDOW_START,
+        evaluation_window_end=WINDOW_END,
+        evaluated_at=EVALUATED_AT,
+        provider_factory=factory,
+    )
+
+    assert factory.calls == 0
+    assert result.outcome.status == PredictionOutcomeStatus.UNAVAILABLE
+    assert result.market_artifact_ids == ()
+    assert any("crypto" in item for item in result.outcome.limitations)
+
+
+@pytest.mark.unit
+def test_evaluation_service_exposes_live_materialization_without_observed_result_shortcut(
+    tmp_path: Path,
+) -> None:
+    _store(tmp_path)
+    service = EvaluationService(
+        repo_root=tmp_path,
+        live_outcome_provider_factory=_StaticSelectionFactory(
+            LiveOutcomeMarketDataSelection(
+                provider=_StaticMarketDataProvider(
+                    bars=(
+                        (date(2026, 5, 13), Decimal("100")),
+                        (date(2026, 5, 18), Decimal("103")),
+                    )
+                ),
+                source_url="https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=MSFT",
+                role="primary",
+                retrieval_method=RetrievalMethod.OFFICIAL_API,
+            )
+        ),
+    )
+
+    result = service.live_outcome_materialization(
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=CUTOFF.isoformat(),
+        evaluation_window_start=WINDOW_START.isoformat(),
+        evaluation_window_end=WINDOW_END.isoformat(),
+        evaluated_at=EVALUATED_AT.isoformat(),
+    )
+
+    assert result["outcome_status"] == "observed"
+    assert result["observed_result"] == "supported"
+    assert result["result_value"] == 103.0
+    assert result["baseline_value"] == 100.0
+
+    with pytest.raises(TypeError):
+        service.live_outcome_materialization(  # type: ignore[call-arg]
+            run_id=RUN_ID,
+            candidate_id=CANDIDATE_ID,
+            point_in_time_cutoff=CUTOFF.isoformat(),
+            evaluation_window_start=WINDOW_START.isoformat(),
+            evaluation_window_end=WINDOW_END.isoformat(),
+            observed_result="supported",
+        )
+
+
+@pytest.mark.unit
+def test_default_live_outcome_factory_adds_real_public_market_data_fallback() -> None:
+    factory = DefaultLiveOutcomeProviderFactory(env={})
+    instrument = InstrumentRecord(
+        instrument_id=INSTRUMENT_ID,
+        symbol="MSFT",
+        asset_class="stock",
+        name="Microsoft Corporation",
+        venue="NASDAQ",
+    )
+
+    selections = factory.market_data_selections(symbol="msft", instrument=instrument)
+
+    assert [selection.provider.provider_name for selection in selections] == [
+        "alpha-vantage-market-data",
+        "yahoo-finance-chart",
+        "candlecharts-market-data",
+    ]
+    assert selections[1].role == "fallback"
+    assert selections[1].retrieval_method is not None
+    assert selections[1].retrieval_method.value == "public_scrape"
+    assert selections[1].source_url is not None
+    assert "query1.finance.yahoo.com/v8/finance/chart/MSFT" in str(selections[1].source_url)
+    assert "fixture" not in str(selections[1].source_url).lower()
+
+
+@pytest.mark.live_api
+def test_live_outcome_materialization_opt_in_live_api_smoke(tmp_path: Path) -> None:
+    if os.environ.get("NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS") != "1":
+        pytest.skip("Set NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1 to run live outcome smoke.")
+
+    store = _store(tmp_path)
+    evaluated_at = max(datetime.now(UTC), datetime(2026, 5, 14, 21, 0, tzinfo=UTC))
+    factory = DefaultLiveOutcomeProviderFactory(now=lambda: evaluated_at)
+
+    result = materialize_live_prediction_outcome_artifacts(
+        store=store,
+        repo_root=tmp_path,
+        artifact_dir=tmp_path / "reports" / RUN_ID / "audit",
+        run_id=RUN_ID,
+        candidate_id=CANDIDATE_ID,
+        point_in_time_cutoff=datetime(2026, 5, 13, 12, 30, tzinfo=UTC),
+        evaluation_window_start=datetime(2026, 5, 13, 13, 30, tzinfo=UTC),
+        evaluation_window_end=datetime(2026, 5, 13, 20, 0, tzinfo=UTC),
+        evaluated_at=evaluated_at,
+        provider_factory=factory,
+    )
+
+    if result.outcome.status != PredictionOutcomeStatus.OBSERVED:
+        pytest.fail(
+            "live outcome materialization did not produce an observed market outcome: "
+            + "; ".join(result.outcome.limitations)
+        )
+    assert result.market_artifact_ids
+    assert result.outcome_evidence_ids

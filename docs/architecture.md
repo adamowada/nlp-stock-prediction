@@ -56,8 +56,8 @@ SQLite is split into two local databases:
 - `plans/planning.sqlite3`: tracked planning state for plans, decisions, progress, and links.
 - `data/prediction-research.sqlite3`: ignored default research state for service/tool runs that do
   not choose a per-run database.
-- `data/phase4-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3`: ignored CLI
-  research state for isolated Phase 4/5 report invocations.
+- `data/research-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3`: ignored CLI
+  research state for isolated Research Stage/5 report invocations.
 
 Together they provide local operational memory:
 
@@ -124,14 +124,14 @@ the rendered report artifacts and their hashes, while SQLite run-graph queries i
 source queries reachable through evidence and candidate links. Final report files are additionally
 indexed in `report_artifact_index` with path, hash, schema version, report date, instrument, data
 mode, tool run, and source run timestamps; report bodies and raw provider payloads remain on disk.
-Report bundle construction uses a phase-neutral builder request, while the older Phase 2 function
+Report bundle construction uses a public builder request, while the older Codex Smoke Stage function
 name remains a compatibility wrapper. Artifact type, JSON-artifact, final-report-artifact, and
 source-reference policies live in shared artifact policy modules rather than in renderer-local
 literal sets.
-Phase 2 smoke and Phase 4 tool-suite runs use deterministic run IDs, reject duplicate starts where
+Codex Smoke Stage smoke and Research Stage tool-suite runs use deterministic run IDs, reject duplicate starts where
 applicable, and preserve prior successful outputs if a later transactional tool retry fails.
 
-Phase 4 live/offline behavior is selected through a run-mode adapter. The service asks the adapter
+Research Stage live/offline behavior is selected through a run-mode adapter. The service asks the adapter
 for provider choices, instrument identity, data-mode metadata, macro availability, and live
 no-evidence policy instead of branching separately inside each tool runner.
 
@@ -141,13 +141,13 @@ unsupported or ambiguous instrument resolutions, and contradictory source eviden
 structured insufficient-evidence, provider-health, audit-manifest, or contradicted-candidate context
 instead of being hidden or converted into unsupported conclusions.
 
-Phase 6 evaluation artifacts remain independent audit files, not inline report calculations. When a
+Evaluation Stage evaluation artifacts remain independent audit files, not inline report calculations. When a
 report is rendered for a run with persisted outcome evaluations or calibration runs, the renderer
 adds those artifacts to the audit manifest, surfaces outcome evaluations as prior-outcome reviews,
 and references calibration artifacts as tool artifacts so downstream readers can audit prediction
 quality without treating it as trading performance.
 
-The public evaluation surface is a thin phase-neutral layer over the same run graph. The CLI group
+The public evaluation surface is a thin public layer over the same run graph. The CLI group
 `python -m nlp_stock_prediction evaluation` and the local MCP registration both expose registry
 derived evaluation tools for inspection, live outcome materialization, outcome loading and summary,
 artifact freshness, evidence aging, source reliability, provider playbooks, calibration,

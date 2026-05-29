@@ -1,4 +1,4 @@
-"""Implementation for the opt-in Phase 4 real Codex MCP smoke test."""
+"""Implementation for the opt-in Research Stage real Codex MCP smoke test."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from nlp_stock_prediction.orchestration.phase2_common import (
+from nlp_stock_prediction.orchestration.orchestration_common import (
     ALLOWED_WRITE_ROOTS,
     is_relative_to,
     symbol_slug,
@@ -45,7 +45,7 @@ class CodexSmokeConfig:
     @property
     def database_arg_path(self) -> Path:
         filename = (
-            f"phase4-codex-smoke-{self.run_date.isoformat()}-{symbol_slug(self.symbol)}.sqlite3"
+            f"research-codex-smoke-{self.run_date.isoformat()}-{symbol_slug(self.symbol)}.sqlite3"
         )
         return Path("data") / filename
 
@@ -59,8 +59,8 @@ def build_codex_prompt(config: CodexSmokeConfig) -> str:
 
     return "\n".join(
         [
-            "You are smoke-testing Phase 4 of nlp-stock-prediction.",
-            "Use the nlp-stock-prediction Phase 4 MCP tools; do not edit source files.",
+            "You are smoke-testing Research Stage of nlp-stock-prediction.",
+            "Use the nlp-stock-prediction Research Stage MCP tools; do not edit source files.",
             "Do not import project modules directly or run shell fallbacks for MCP tools.",
             "If an MCP tool call is unavailable or cancelled, stop and report smoke failure.",
             f"Run date: {config.run_date.isoformat()}",
@@ -70,15 +70,15 @@ def build_codex_prompt(config: CodexSmokeConfig) -> str:
             "Required tool workflow:",
             "1. start_research_run",
             "2. list_research_tool_plan",
-            "3. phase4_universe_discovery",
-            "4. phase4_market_data",
-            "5. phase4_technical_package",
-            "6. phase4_social_evidence",
-            "7. phase4_news_catalyst",
-            "8. phase4_fundamentals",
-            "9. phase4_sector_macro",
-            "10. phase4_prediction_candidate_synthesis",
-            "11. phase4_prediction_evaluation",
+            "3. research_universe_discovery",
+            "4. research_market_data",
+            "5. research_technical_package",
+            "6. research_social_evidence",
+            "7. research_news_catalyst",
+            "8. research_fundamentals",
+            "9. research_sector_macro",
+            "10. research_prediction_candidate_synthesis",
+            "11. research_prediction_evaluation",
             "12. render_prediction_report",
             "13. inspect_research_run",
             "",
@@ -142,7 +142,7 @@ def verify_smoke_outputs(config: CodexSmokeConfig, *, require_sqlite: bool = Tru
         "not produced",
         "shell fallback",
         "fastmcp stdio transport was blocked",
-        "phase2mcpservice",
+        "codex_smokemcpservice",
         "record_codex_search_evidence",
         "run_dummy_universe_tool",
         "run_dummy_analysis_tool",
@@ -154,7 +154,7 @@ def verify_smoke_outputs(config: CodexSmokeConfig, *, require_sqlite: bool = Tru
     report_payload = json.loads(json_path.read_text(encoding="utf-8"))
     report_text = json.dumps(report_payload, sort_keys=True).lower()
     data_failure_markers = (
-        "phase2mcpservice",
+        "codex_smokemcpservice",
         "record_codex_search_evidence",
         "run_dummy_universe_tool",
         "run_dummy_analysis_tool",
@@ -304,7 +304,7 @@ def _python_has_mcp(python_executable: Path, *, cwd: Path) -> bool:
 
 
 def expected_run_id(config: CodexSmokeConfig) -> str:
-    return f"phase4-{config.run_date.isoformat()}-{symbol_slug(config.symbol)}"
+    return f"research-{config.run_date.isoformat()}-{symbol_slug(config.symbol)}"
 
 
 def snapshot_restricted_paths(repo_root: Path) -> RestrictedPathSnapshot:

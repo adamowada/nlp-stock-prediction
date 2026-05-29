@@ -1,4 +1,4 @@
-"""Cohort-level calibration summaries for Phase 6 prediction quality."""
+"""Cohort-level calibration summaries for Evaluation Stage prediction quality."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ from nlp_stock_prediction.evaluation.common import (
 )
 from nlp_stock_prediction.evaluation.outcomes import PointInTimeOutcomeEvaluationArtifacts
 from nlp_stock_prediction.orchestration.artifacts import ArtifactIndex
-from nlp_stock_prediction.orchestration.phase4_common import safe_phase4_tool_execution
+from nlp_stock_prediction.orchestration.research_common import safe_research_tool_execution
 from nlp_stock_prediction.storage.records import (
     CalibrationRunRecord,
     CalibrationSliceRecord,
@@ -59,8 +59,8 @@ from nlp_stock_prediction.storage.records import (
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
-PHASE6_CALIBRATION_TOOL_NAME = "phase6_calibration_summary"
-PHASE6_CALIBRATION_TOOL_VERSION = "phase6.calibration-summary.v1"
+EVALUATION_CALIBRATION_TOOL_NAME = "calibration_summary"
+EVALUATION_CALIBRATION_TOOL_VERSION = "evaluation.calibration-summary.v1"
 DEFAULT_CALIBRATION_BIN_EDGES = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
 
 
@@ -354,8 +354,8 @@ def write_calibration_summary_artifact(
                 ToolRunRecord(
                     tool_run_id=resolved_tool_run_id,
                     run_id=run_id,
-                    tool_name=PHASE6_CALIBRATION_TOOL_NAME,
-                    tool_version=PHASE6_CALIBRATION_TOOL_VERSION,
+                    tool_name=EVALUATION_CALIBRATION_TOOL_NAME,
+                    tool_version=EVALUATION_CALIBRATION_TOOL_VERSION,
                     status="successful",
                     started_at=created,
                     completed_at=created,
@@ -369,7 +369,7 @@ def write_calibration_summary_artifact(
             repo_root=repo_root,
             base_dir=artifact_dir,
             created_at=created,
-            produced_by=PHASE6_CALIBRATION_TOOL_NAME,
+            produced_by=EVALUATION_CALIBRATION_TOOL_NAME,
             tool_run_id=resolved_tool_run_id if record_tool_run or tool_run_id else None,
             schema_version=payload.schema_version,
         ).write_json(
@@ -391,7 +391,7 @@ def write_calibration_summary_artifact(
         calibration_run = CalibrationRunRecord(
             calibration_id=resolved_calibration_id,
             run_id=run_id,
-            method_version=PHASE6_CALIBRATION_TOOL_VERSION,
+            method_version=EVALUATION_CALIBRATION_TOOL_VERSION,
             created_at=created,
             point_in_time_cutoff=cutoff,
             tool_run_id=resolved_tool_run_id if record_tool_run or tool_run_id else None,
@@ -438,13 +438,13 @@ def write_calibration_summary_artifact(
     if not record_tool_run:
         return write_records()
 
-    with safe_phase4_tool_execution(
+    with safe_research_tool_execution(
         store=store,
         artifact_roots=(artifact_dir,),
         tool_run_id=resolved_tool_run_id,
         run_id=run_id,
-        tool_name=PHASE6_CALIBRATION_TOOL_NAME,
-        tool_version=PHASE6_CALIBRATION_TOOL_VERSION,
+        tool_name=EVALUATION_CALIBRATION_TOOL_NAME,
+        tool_version=EVALUATION_CALIBRATION_TOOL_VERSION,
         started_at=created,
         inputs=tool_inputs,
     ):
@@ -995,8 +995,8 @@ def _edge_label(value: float) -> str:
 
 __all__ = [
     "DEFAULT_CALIBRATION_BIN_EDGES",
-    "PHASE6_CALIBRATION_TOOL_NAME",
-    "PHASE6_CALIBRATION_TOOL_VERSION",
+    "EVALUATION_CALIBRATION_TOOL_NAME",
+    "EVALUATION_CALIBRATION_TOOL_VERSION",
     "CalibrationSummaryArtifactPayload",
     "CalibrationSummaryArtifacts",
     "CalibrationSummaryInput",

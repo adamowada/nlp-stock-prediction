@@ -243,7 +243,7 @@ def test_markdown_covers_structured_insufficient_evidence_report(tmp_path: Path)
 
 
 @pytest.mark.unit
-def test_json_renderer_preserves_phase3_report_fields(tmp_path: Path) -> None:
+def test_json_renderer_preserves_instrument_universe_report_fields(tmp_path: Path) -> None:
     config = RunConfig(run_date=RUN_DATE, output_dir=tmp_path, offline=True)
     report = build_offline_fixture_bundle(config).report
 

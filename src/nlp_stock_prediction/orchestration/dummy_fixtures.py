@@ -13,12 +13,12 @@ from nlp_stock_prediction.contracts import (
 )
 from nlp_stock_prediction.contracts.instruments import InstrumentUniverse
 from nlp_stock_prediction.orchestration.context import RunContext
-from nlp_stock_prediction.orchestration.phase3_universe import build_phase3_fixture_universe
+from nlp_stock_prediction.orchestration.instrument_universe import build_fixture_universe
 
 
 def dummy_instrument_universe(context: RunContext) -> InstrumentUniverse:
-    return build_phase3_fixture_universe(
-        request_id=f"phase3-fixture-universe-{context.run_id}",
+    return build_fixture_universe(
+        request_id=f"instrument_universe-fixture-universe-{context.run_id}",
         generated_at=context.generated_at,
         primary_symbol="TSLA",
     )

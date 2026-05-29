@@ -6,10 +6,13 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from nlp_stock_prediction.orchestration.phase4_mcp_registration import register_phase4_mcp_tools
-from nlp_stock_prediction.orchestration.phase4_service import Phase4Service
-from nlp_stock_prediction.orchestration.phase6_mcp_registration import register_phase6_mcp_tools
-from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
+from nlp_stock_prediction.environment import load_local_dotenv
+from nlp_stock_prediction.orchestration.evaluation_mcp_registration import (
+    register_evaluation_mcp_tools,
+)
+from nlp_stock_prediction.orchestration.evaluation_service import EvaluationService
+from nlp_stock_prediction.orchestration.research_mcp_registration import register_research_mcp_tools
+from nlp_stock_prediction.orchestration.research_service import ResearchService
 
 
 def build_server(repo_root: Path | None = None, database_path: Path | None = None) -> Any:
@@ -27,6 +30,7 @@ def build_server(repo_root: Path | None = None, database_path: Path | None = Non
         ) from exc
 
     resolved_repo_root = (repo_root or Path.cwd()).resolve()
+    load_local_dotenv(resolved_repo_root)
     if database_path is None:
         raise ValueError("database_path is required for the Codex MCP server")
     resolved_database_path = (
@@ -37,18 +41,18 @@ def build_server(repo_root: Path | None = None, database_path: Path | None = Non
             "database_path must reference an existing research SQLite database: "
             f"{resolved_database_path}"
         )
-    phase4_service = Phase4Service(
+    research_service = ResearchService(
         repo_root=resolved_repo_root,
         database_path=resolved_database_path,
     )
-    phase6_service = Phase6Service(
+    evaluation_service = EvaluationService(
         repo_root=resolved_repo_root,
         database_path=resolved_database_path,
     )
     server = FastMCP("nlp-stock-prediction")
 
-    register_phase4_mcp_tools(server, phase4_service)
-    register_phase6_mcp_tools(server, phase6_service)
+    register_research_mcp_tools(server, research_service)
+    register_evaluation_mcp_tools(server, evaluation_service)
     return server
 
 

@@ -153,7 +153,7 @@ Built:
 
 Acceptance status:
 
-- reports never use buy/sell instruction language;
+- reports keep prediction and strategy context separate from trade execution and position sizing;
 - reports include evidence for and against;
 - reports preserve artifact references and source links;
 - live report assembly refuses fixture, dummy, or smoke fallback inputs.

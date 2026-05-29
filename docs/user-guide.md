@@ -46,6 +46,12 @@ On Windows, you can also call the virtual environment interpreter directly:
 
 ## Command Map
 
+Launch the persistent terminal app:
+
+```sh
+python main.py
+```
+
 Show the top-level command list:
 
 ```sh
@@ -58,6 +64,12 @@ Show research command help:
 python -m nlp_stock_prediction research --help
 ```
 
+Show terminal UI help:
+
+```sh
+python -m nlp_stock_prediction tui --help
+```
+
 Show evaluation command help:
 
 ```sh
@@ -68,10 +80,33 @@ The top-level commands are:
 
 | Command | Use it when you want to |
 | --- | --- |
+| `app` | Launch the persistent menu app from the package entrypoint. |
 | `research` | Generate a Markdown report, JSON report, and audit artifacts for a symbol. |
+| `tui` | Launch a Rich-styled terminal workflow for guided report generation. |
 | `evaluation` | Inspect or write evaluation-hardening artifacts for an existing research database and run ID. |
 
+`python main.py` and `python -m nlp_stock_prediction app` open the same app. The app defaults
+research to today's date, live mode, and `reports/`; it asks for a symbol unless one is remembered in
+Settings. Report summaries are concise by default; provider, evidence, and audit details are
+available from report submenus. In an interactive terminal, menu commands clear and redraw the current
+screen so tables, report summaries, and command output do not accumulate as scrollback.
+Agent Chat can summarize selected reports and use project MCP tools; independent web-search chat
+context is not audited report evidence unless those tools persist it. While Codex is working, Agent
+Chat shows a `Thinking` animation with a sanitized activity trace of observable events such as tool
+use, response drafting, and retries. It does not expose private chain-of-thought; ask for a reasoning
+summary when you want the rationale behind an answer.
+
 ## Quick Start: Generate Your First Report
+
+For normal interactive use, start with the app:
+
+```sh
+python main.py
+```
+
+Choose `Research` to run live research with the current date, enter the symbol when prompted, or use
+the advanced Research prompt when you need offline fixtures or a historical report date. Choose
+`Reports` to view generated reports inside the app instead of browsing for files manually.
 
 The safest first run is an offline report. Offline mode is deterministic and does not use network
 providers or live credentials:
@@ -91,11 +126,37 @@ reports/2026-05-12/tsla/audit/audit-manifest.json
 The run ID for that command is:
 
 ```text
-phase4-2026-05-12-tsla
+research-2026-05-12-tsla
 ```
 
 Open `report.md` first. Use `report.json` when you need a machine-readable payload. Use
 `audit/audit-manifest.json` when you need to trace which artifacts and hashes support the report.
+
+When stdout is an interactive terminal, the `research` command renders a Rich terminal dashboard
+when the run completes. Captured or redirected `research` output keeps the plain one-line report
+path records used by scripts. The dashboard shows the report files, provider health, prediction
+scenario summary, evidence preview, and tool-run status while preserving the same
+Markdown/JSON/audit files on disk.
+
+## Launch The Rich Terminal UI
+
+Use `tui` when you want a more app-like terminal flow. If you run it in an interactive terminal, it
+prompts for the report date, output directory, and offline/live mode:
+
+```sh
+python -m nlp_stock_prediction tui
+```
+
+You can also pass the same options as `research` for a non-interactive Rich-styled run:
+
+```sh
+python -m nlp_stock_prediction tui --date 2026-05-12 --symbol TSLA --output reports/ --offline
+python -m nlp_stock_prediction tui --date 2026-05-12 --symbol TSLA --output reports/ --live
+```
+
+The terminal UI is presentation only. Report contracts, evidence provenance, audit artifacts, and
+SQLite metadata are the same artifacts produced by `research`. Rich styling degrades to
+no-color/plain text when terminal capabilities are limited.
 
 ## Generate A Live Report
 
@@ -167,7 +228,8 @@ Use `--live` when:
   reports.
 
 Offline reports are useful, but they are fixture-backed. Live reports are the real provider path.
-Neither mode produces trading instructions.
+Neither mode places trades or manages position sizing; reports may discuss prediction scenarios,
+price levels, and strategy context when the evidence supports it.
 
 ## Instrument Symbols
 
@@ -203,12 +265,12 @@ the primary files are:
 | `reports/2026-05-12/tsla/report.json` | Machine-readable report contract payload. |
 | `reports/2026-05-12/tsla/audit/audit-manifest.json` | Audit manifest of report and supporting artifacts. |
 | `reports/2026-05-12/tsla/audit/` | Tool artifacts, source reliability notes, freshness reviews, and other audit files. |
-| `data/phase4-live-runtime-2026-05-12-<symbol-hash>-<output-hash>.sqlite3` | Ignored runtime research database for the run. |
+| `data/research-live-runtime-2026-05-12-<symbol-hash>-<output-hash>.sqlite3` | Ignored runtime research database for the run. |
 
 Offline mode uses the same report layout and an offline runtime database named:
 
 ```text
-data/phase4-offline-runtime-<date>-<symbol-hash>-<output-hash>.sqlite3
+data/research-offline-runtime-<date>-<symbol-hash>-<output-hash>.sqlite3
 ```
 
 Generated reports, provider caches, runtime research databases, and raw artifacts are local working
@@ -285,10 +347,14 @@ Common variables:
 | `NLP_STOCK_PREDICTION_FRED_API_KEY` | Optional FRED key for macro context. |
 | `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | Optional X/Twitter bearer token for X-backed provider experiments. |
 | `NLP_STOCK_PREDICTION_SEC_USER_AGENT` | Contact user agent for SEC EDGAR requests. |
-| `NLP_STOCK_PREDICTION_SEC_CIK_MAP` | Optional comma-separated `SYMBOL=CIK` map for SEC lookup expansion. |
 | `NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` | User agent for public HTML scraping providers. |
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | Contact user agent for opt-in live provider smoke tests. |
 | `OPENAI_API_KEY` | Required only for workflows that call OpenAI-backed tooling. |
+
+SEC EDGAR ticker-to-CIK resolution is automatic through SEC's public
+`company_tickers_exchange.json` dataset. If that dataset cannot be fetched, parsed, or matched to
+the requested ticker, the live report records a loud SEC provider failure rather than asking for a
+per-symbol local mapping.
 
 Example `.env`:
 
@@ -325,7 +391,7 @@ python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output
 the run ID is:
 
 ```text
-phase4-2026-05-12-tsla
+research-2026-05-12-tsla
 ```
 
 and the usual audit artifact root is:
@@ -337,7 +403,7 @@ reports/2026-05-12/tsla/audit
 To find the newest CLI runtime database on Windows PowerShell:
 
 ```powershell
-Get-ChildItem data\phase4-*-runtime-*.sqlite3 |
+Get-ChildItem data\research-*-runtime-*.sqlite3 |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
 ```
@@ -345,7 +411,7 @@ Get-ChildItem data\phase4-*-runtime-*.sqlite3 |
 On macOS/Linux:
 
 ```sh
-ls -t data/phase4-*-runtime-*.sqlite3 | head -1
+ls -t data/research-*-runtime-*.sqlite3 | head -1
 ```
 
 In the examples below, set these variables to match your run.
@@ -353,8 +419,8 @@ In the examples below, set these variables to match your run.
 Windows PowerShell:
 
 ```powershell
-$DATABASE = "data/phase4-live-runtime-2026-05-12-REPLACE_WITH_HASHES.sqlite3"
-$RUN_ID = "phase4-2026-05-12-tsla"
+$DATABASE = "data/research-live-runtime-2026-05-12-REPLACE_WITH_HASHES.sqlite3"
+$RUN_ID = "research-2026-05-12-tsla"
 $AUDIT_ROOT = "reports/2026-05-12/tsla/audit"
 $CANDIDATE_ID = "candidate-id-from-report-json"
 ```
@@ -362,8 +428,8 @@ $CANDIDATE_ID = "candidate-id-from-report-json"
 macOS/Linux:
 
 ```sh
-DATABASE="data/phase4-live-runtime-2026-05-12-REPLACE_WITH_HASHES.sqlite3"
-RUN_ID="phase4-2026-05-12-tsla"
+DATABASE="data/research-live-runtime-2026-05-12-REPLACE_WITH_HASHES.sqlite3"
+RUN_ID="research-2026-05-12-tsla"
 AUDIT_ROOT="reports/2026-05-12/tsla/audit"
 CANDIDATE_ID="candidate-id-from-report-json"
 ```
@@ -615,8 +681,8 @@ Optional drift thresholds:
 4. Confirm the runtime database and run ID:
 
    ```text
-   Database: data/phase4-live-runtime-2026-05-12-<symbol-hash>-<output-hash>.sqlite3
-   Run ID: phase4-2026-05-12-tsla
+   Database: data/research-live-runtime-2026-05-12-<symbol-hash>-<output-hash>.sqlite3
+   Run ID: research-2026-05-12-tsla
    Audit root: reports/2026-05-12/tsla/audit
    ```
 

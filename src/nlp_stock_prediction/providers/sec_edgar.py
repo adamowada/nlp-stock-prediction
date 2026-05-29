@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from nlp_stock_prediction.contracts import (
     CredentialState,
@@ -44,6 +45,7 @@ from nlp_stock_prediction.providers._base import (
 
 SEC_COMPANY_FACTS_ENDPOINT = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 SEC_SUBMISSIONS_ENDPOINT = "https://data.sec.gov/submissions/CIK{cik}.json"
+SEC_COMPANY_TICKERS_EXCHANGE_ENDPOINT = "https://www.sec.gov/files/company_tickers_exchange.json"
 SEC_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_SEC_USER_AGENT"
 LIVE_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_LIVE_USER_AGENT"
 DEFAULT_SEC_USER_AGENT = ""
@@ -57,18 +59,18 @@ class SecEdgarFundamentalsProvider:
     def __init__(
         self,
         *,
-        ticker_cik_map: Mapping[str, str],
         company_facts_endpoint: str = SEC_COMPANY_FACTS_ENDPOINT,
         submissions_endpoint: str = SEC_SUBMISSIONS_ENDPOINT,
+        company_tickers_endpoint: str = SEC_COMPANY_TICKERS_EXCHANGE_ENDPOINT,
         user_agent: str | None = None,
         transport: JsonTransport | None = None,
         cache: ProviderCache | None = None,
         now: Callable[[], datetime] = utc_now,
         timeout: float = 10.0,
     ) -> None:
-        self._ticker_cik_map = {ticker.upper(): cik for ticker, cik in ticker_cik_map.items()}
         self._company_facts_endpoint = company_facts_endpoint
         self._submissions_endpoint = submissions_endpoint
+        self._company_tickers_endpoint = company_tickers_endpoint
         self._user_agent = (
             user_agent
             or os.environ.get(SEC_USER_AGENT_ENV)
@@ -101,28 +103,58 @@ class SecEdgarFundamentalsProvider:
                 fetched_at=fetched_at,
                 message="SEC EDGAR fundamentals request did not include a ticker",
             )
-        cik = self._ticker_cik_map.get(ticker)
+        headers = {"User-Agent": self._user_agent, "Accept": "application/json"}
+        try:
+            company_tickers = self._fetch_company_tickers(
+                request=request,
+                fetched_at=fetched_at,
+                headers=headers,
+            )
+            cik = _cik_for_ticker(company_tickers.payload, ticker)
+        except ProviderTransportError as exc:
+            return transport_error_result(
+                provider_name=self.provider_name,
+                request=request,
+                fetched_at=fetched_at,
+                error=exc,
+                credential_state=CredentialState.NOT_REQUIRED,
+            )
+        except MalformedProviderResponse as exc:
+            return malformed_result(
+                provider_name=self.provider_name,
+                request=request,
+                fetched_at=fetched_at,
+                message=str(exc),
+                credential_state=CredentialState.NOT_REQUIRED,
+            )
         if not cik:
             warning = provider_warning(
                 provider_name=self.provider_name,
                 code=WarningCode.NO_DATA,
-                severity=WarningSeverity.WARNING,
-                message=f"SEC EDGAR CIK mapping is not configured for {ticker}",
+                severity=WarningSeverity.ERROR,
+                message=(
+                    f"SEC company tickers exchange dataset did not resolve CIK for {ticker}; "
+                    "SEC fundamentals cannot run without an official ticker-to-CIK match."
+                ),
                 occurred_at=fetched_at,
+                provider_error_type="cik_lookup_failed",
+                raw_snapshot_id=company_tickers.raw_snapshot_id,
+                source_url=self._company_tickers_endpoint,
                 metadata={"ticker": ticker},
             )
             return provider_result(
                 provider_name=self.provider_name,
-                status=ProviderStatus.UNCONFIGURED,
+                status=ProviderStatus.FAILED,
                 request=request,
                 fetched_at=fetched_at,
                 credential_state=CredentialState.NOT_REQUIRED,
                 warnings=(warning,),
+                raw_snapshot_id=company_tickers.raw_snapshot_id,
+                cache_key=company_tickers.cache_key,
             )
         normalized_cik = _normalize_cik(cik)
         facts_url = self._company_facts_endpoint.format(cik=normalized_cik)
         submissions_url = self._submissions_endpoint.format(cik=normalized_cik)
-        headers = {"User-Agent": self._user_agent, "Accept": "application/json"}
         facts_cache_key = build_cache_key(
             provider_name=self.provider_name,
             source="sec-edgar-companyfacts",
@@ -248,6 +280,32 @@ class SecEdgarFundamentalsProvider:
             metadata={"credential_name": SEC_USER_AGENT_ENV},
         )
 
+    def _fetch_company_tickers(
+        self,
+        *,
+        request: FundamentalsRequest,
+        fetched_at: datetime,
+        headers: Mapping[str, str],
+    ) -> JsonFetch:
+        cache_key = build_cache_key(
+            provider_name=self.provider_name,
+            source="sec-company-tickers-exchange",
+            run_date=request.run_date,
+            url=self._company_tickers_endpoint,
+        )
+        return fetch_json(
+            transport=self._transport,
+            url=self._company_tickers_endpoint,
+            run_date=request.run_date,
+            ticker=None,
+            source="sec-company-tickers-exchange",
+            cache_key=cache_key,
+            fetched_at=fetched_at,
+            cache=self._cache,
+            headers=headers,
+            timeout=self._timeout,
+        )
+
     def _map_payload(
         self,
         ticker: str,
@@ -265,6 +323,71 @@ class SecEdgarFundamentalsProvider:
             company_name=company_name,
             metrics=tuple(metrics),
         )
+
+
+def _cik_for_ticker(payload: Mapping[str, Any], ticker: str) -> str | None:
+    normalized_ticker = ticker.strip().upper()
+    fields = payload.get("fields")
+    data = payload.get("data")
+    if isinstance(fields, Sequence) and not isinstance(fields, str | bytes):
+        return _cik_for_exchange_dataset(
+            fields=tuple(fields),
+            data=data,
+            ticker=normalized_ticker,
+        )
+    return _cik_for_company_tickers_object(payload, normalized_ticker)
+
+
+def _cik_for_exchange_dataset(
+    *,
+    fields: Sequence[object],
+    data: object,
+    ticker: str,
+) -> str | None:
+    field_names = tuple(str(field).strip().lower() for field in fields)
+    required_fields = {"cik", "ticker"}
+    if not required_fields.issubset(field_names):
+        raise MalformedProviderResponse(
+            "SEC company tickers exchange response missing cik/ticker fields"
+        )
+    if not isinstance(data, Sequence) or isinstance(data, str | bytes):
+        raise MalformedProviderResponse("SEC company tickers exchange response missing data rows")
+    cik_index = field_names.index("cik")
+    ticker_index = field_names.index("ticker")
+    for row in data:
+        if not isinstance(row, Sequence) or isinstance(row, str | bytes):
+            raise MalformedProviderResponse("SEC company tickers exchange row must be an array")
+        if max(cik_index, ticker_index) >= len(row):
+            raise MalformedProviderResponse(
+                "SEC company tickers exchange row missing cik/ticker values"
+            )
+        if str(row[ticker_index]).strip().upper() == ticker:
+            return _cik_text(row[cik_index])
+    return None
+
+
+def _cik_for_company_tickers_object(payload: Mapping[str, Any], ticker: str) -> str | None:
+    saw_company_record = False
+    for record in payload.values():
+        if not isinstance(record, Mapping):
+            continue
+        if "ticker" not in record or "cik_str" not in record:
+            continue
+        saw_company_record = True
+        if str(record["ticker"]).strip().upper() == ticker:
+            return _cik_text(record["cik_str"])
+    if not saw_company_record:
+        raise MalformedProviderResponse(
+            "SEC company tickers response missing ticker/cik_str records"
+        )
+    return None
+
+
+def _cik_text(value: object) -> str:
+    normalized = "".join(character for character in str(value) if character.isdigit())
+    if not normalized:
+        raise MalformedProviderResponse("SEC company tickers response included an empty CIK")
+    return normalized
 
 
 def _company_fact_metrics(fetched: JsonFetch) -> tuple[ProviderMetric, ...]:
@@ -394,4 +517,9 @@ def _optional_text(value: object) -> str | None:
     return text or None
 
 
-__all__ = ["LIVE_USER_AGENT_ENV", "SEC_USER_AGENT_ENV", "SecEdgarFundamentalsProvider"]
+__all__ = [
+    "LIVE_USER_AGENT_ENV",
+    "SEC_COMPANY_TICKERS_EXCHANGE_ENDPOINT",
+    "SEC_USER_AGENT_ENV",
+    "SecEdgarFundamentalsProvider",
+]

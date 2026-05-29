@@ -8,60 +8,13 @@ from nlp_stock_prediction.orchestration.artifacts import (
     ArtifactType,
     ArtifactWriter,
 )
+from nlp_stock_prediction.orchestration.codex_smoke_service import CodexSmokeMcpService
 from nlp_stock_prediction.orchestration.context import RunContext, deterministic_generated_at
 from nlp_stock_prediction.orchestration.dummy import (
     DEFAULT_STAGE_ORDER,
     DUMMY_ORCHESTRATION_DISABLED_MESSAGE,
     build_dummy_tool_registry,
     generate_dummy_report_bundle,
-)
-from nlp_stock_prediction.orchestration.phase2_service import Phase2McpService
-from nlp_stock_prediction.orchestration.phase4_common import Phase4ToolResult
-from nlp_stock_prediction.orchestration.phase4_fundamentals import (
-    Phase4FundamentalsTool,
-    run_phase4_fundamentals_tool,
-)
-from nlp_stock_prediction.orchestration.phase4_live_providers import (
-    Phase4LiveProviderFactory,
-    Phase4LiveProviderFactoryProtocol,
-)
-from nlp_stock_prediction.orchestration.phase4_market_data import (
-    MarketDataToolResult,
-    Phase4MarketDataArtifact,
-    Phase4MarketDataTool,
-)
-from nlp_stock_prediction.orchestration.phase4_news import (
-    Phase4NewsCatalystTool,
-    run_phase4_news_catalyst_tool,
-)
-from nlp_stock_prediction.orchestration.phase4_sector_macro import (
-    Phase4SectorMacroTool,
-    run_phase4_sector_macro_tool,
-)
-from nlp_stock_prediction.orchestration.phase4_service import (
-    PHASE4_STAGE_ORDER,
-    Phase4Service,
-    Phase4ToolExecutionError,
-    Phase4ToolMetadata,
-    Phase4ToolRegistry,
-    Phase4ToolRunContext,
-    Phase4ToolRunOutcome,
-    build_phase4_tool_registry,
-    execute_phase4_tool,
-    phase4_research_tool_plan,
-)
-from nlp_stock_prediction.orchestration.phase4_social import (
-    Phase4SocialEvidenceTool,
-    run_phase4_social_evidence_tool,
-)
-from nlp_stock_prediction.orchestration.phase4_technical_package import (
-    Phase4TechnicalPackageArtifact,
-    Phase4TechnicalPackageTool,
-    TechnicalPackageToolResult,
-)
-from nlp_stock_prediction.orchestration.phase4_universe_discovery import (
-    Phase4UniverseDiscoveryTool,
-    Phase4UniverseDiscoveryToolResult,
 )
 from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
 from nlp_stock_prediction.orchestration.report_data_modes import (
@@ -77,6 +30,53 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
     report_data_mode_from_run,
     report_data_mode_metadata,
 )
+from nlp_stock_prediction.orchestration.research_common import ResearchToolResult
+from nlp_stock_prediction.orchestration.research_fundamentals import (
+    ResearchFundamentalsTool,
+    run_research_fundamentals_tool,
+)
+from nlp_stock_prediction.orchestration.research_live_providers import (
+    ResearchLiveProviderFactory,
+    ResearchLiveProviderFactoryProtocol,
+)
+from nlp_stock_prediction.orchestration.research_market_data import (
+    MarketDataToolResult,
+    ResearchMarketDataArtifact,
+    ResearchMarketDataTool,
+)
+from nlp_stock_prediction.orchestration.research_news import (
+    ResearchNewsCatalystTool,
+    run_research_news_catalyst_tool,
+)
+from nlp_stock_prediction.orchestration.research_sector_macro import (
+    ResearchSectorMacroTool,
+    run_research_sector_macro_tool,
+)
+from nlp_stock_prediction.orchestration.research_service import (
+    RESEARCH_STAGE_ORDER,
+    ResearchService,
+    ResearchToolExecutionError,
+    ResearchToolMetadata,
+    ResearchToolRegistry,
+    ResearchToolRunContext,
+    ResearchToolRunOutcome,
+    build_research_tool_registry,
+    execute_research_tool,
+    research_tool_plan,
+)
+from nlp_stock_prediction.orchestration.research_social import (
+    ResearchSocialEvidenceTool,
+    run_research_social_evidence_tool,
+)
+from nlp_stock_prediction.orchestration.research_technical_package import (
+    ResearchTechnicalPackageArtifact,
+    ResearchTechnicalPackageTool,
+    TechnicalPackageToolResult,
+)
+from nlp_stock_prediction.orchestration.research_universe_discovery import (
+    ResearchUniverseDiscoveryTool,
+    ResearchUniverseDiscoveryToolResult,
+)
 from nlp_stock_prediction.orchestration.runtime import (
     OrchestrationExecutionError,
     OrchestrationState,
@@ -91,27 +91,27 @@ from nlp_stock_prediction.orchestration.tools import (
     ToolSpec,
 )
 
-_PHASE6_EXPORTS = {
-    "PHASE6_ABLATION_TOOL_ID",
-    "PHASE6_CALIBRATION_TOOL_ID",
-    "PHASE6_INSPECT_TOOL_ID",
-    "PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID",
-    "PHASE6_OUTCOME_EVALUATION_TOOL_ID",
-    "PHASE6_STAGE_ORDER",
-    "PHASE6_WALK_FORWARD_TOOL_ID",
-    "Phase6Service",
-    "Phase6ToolMetadata",
-    "Phase6ToolRegistry",
-    "build_phase6_tool_registry",
-    "phase6_evaluation_tool_plan",
+_EVALUATION_EXPORTS = {
+    "EVALUATION_ABLATION_TOOL_ID",
+    "EVALUATION_CALIBRATION_TOOL_ID",
+    "EVALUATION_INSPECT_TOOL_ID",
+    "EVALUATION_LOAD_OUTCOME_EVALUATIONS_TOOL_ID",
+    "EVALUATION_OUTCOME_EVALUATION_TOOL_ID",
+    "EVALUATION_STAGE_ORDER",
+    "EVALUATION_WALK_FORWARD_TOOL_ID",
+    "EvaluationService",
+    "EvaluationToolMetadata",
+    "EvaluationToolRegistry",
+    "build_evaluation_tool_registry",
+    "evaluation_tool_plan",
 }
 
 
 def __getattr__(name: str) -> Any:
-    if name in _PHASE6_EXPORTS:
-        from nlp_stock_prediction.orchestration import phase6_service
+    if name in _EVALUATION_EXPORTS:
+        from nlp_stock_prediction.orchestration import evaluation_service
 
-        value = getattr(phase6_service, name)
+        value = getattr(evaluation_service, name)
         globals()[name] = value
         return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -122,51 +122,51 @@ __all__ = [
     "DEFAULT_STAGE_ORDER",
     "DUMMY_ORCHESTRATION_DISABLED_MESSAGE",
     "DUMMY_SMOKE_REPORT_DATA_MODE",
+    "EVALUATION_ABLATION_TOOL_ID",
+    "EVALUATION_CALIBRATION_TOOL_ID",
+    "EVALUATION_INSPECT_TOOL_ID",
+    "EVALUATION_LOAD_OUTCOME_EVALUATIONS_TOOL_ID",
+    "EVALUATION_OUTCOME_EVALUATION_TOOL_ID",
+    "EVALUATION_STAGE_ORDER",
+    "EVALUATION_WALK_FORWARD_TOOL_ID",
     "LIVE_REPORT_DATA_MODE",
     "OFFLINE_FIXTURE_REPORT_DATA_MODE",
-    "PHASE4_STAGE_ORDER",
-    "PHASE6_ABLATION_TOOL_ID",
-    "PHASE6_CALIBRATION_TOOL_ID",
-    "PHASE6_INSPECT_TOOL_ID",
-    "PHASE6_LOAD_OUTCOME_EVALUATIONS_TOOL_ID",
-    "PHASE6_OUTCOME_EVALUATION_TOOL_ID",
-    "PHASE6_STAGE_ORDER",
-    "PHASE6_WALK_FORWARD_TOOL_ID",
     "REPORT_DATA_MODE_KEY",
+    "RESEARCH_STAGE_ORDER",
     "ArtifactFileTransaction",
     "ArtifactIndex",
     "ArtifactType",
     "ArtifactWriter",
+    "CodexSmokeMcpService",
+    "EvaluationService",
+    "EvaluationToolMetadata",
+    "EvaluationToolRegistry",
     "MarketDataToolResult",
     "OrchestrationExecutionError",
     "OrchestrationState",
     "OrchestrationTool",
-    "Phase2McpService",
-    "Phase4FundamentalsTool",
-    "Phase4LiveProviderFactory",
-    "Phase4LiveProviderFactoryProtocol",
-    "Phase4MarketDataArtifact",
-    "Phase4MarketDataTool",
-    "Phase4NewsCatalystTool",
-    "Phase4SectorMacroTool",
-    "Phase4Service",
-    "Phase4SocialEvidenceTool",
-    "Phase4TechnicalPackageArtifact",
-    "Phase4TechnicalPackageTool",
-    "Phase4ToolExecutionError",
-    "Phase4ToolMetadata",
-    "Phase4ToolRegistry",
-    "Phase4ToolResult",
-    "Phase4ToolRunContext",
-    "Phase4ToolRunOutcome",
-    "Phase4UniverseDiscoveryTool",
-    "Phase4UniverseDiscoveryToolResult",
-    "Phase6Service",
-    "Phase6ToolMetadata",
-    "Phase6ToolRegistry",
     "ReportBundle",
     "ReportDataMode",
     "ReportInputBoundaryViolation",
+    "ResearchFundamentalsTool",
+    "ResearchLiveProviderFactory",
+    "ResearchLiveProviderFactoryProtocol",
+    "ResearchMarketDataArtifact",
+    "ResearchMarketDataTool",
+    "ResearchNewsCatalystTool",
+    "ResearchSectorMacroTool",
+    "ResearchService",
+    "ResearchSocialEvidenceTool",
+    "ResearchTechnicalPackageArtifact",
+    "ResearchTechnicalPackageTool",
+    "ResearchToolExecutionError",
+    "ResearchToolMetadata",
+    "ResearchToolRegistry",
+    "ResearchToolResult",
+    "ResearchToolRunContext",
+    "ResearchToolRunOutcome",
+    "ResearchUniverseDiscoveryTool",
+    "ResearchUniverseDiscoveryToolResult",
     "RunContext",
     "StagedExecutionResult",
     "StagedExecutor",
@@ -176,19 +176,19 @@ __all__ = [
     "ToolRunResult",
     "ToolSpec",
     "build_dummy_tool_registry",
-    "build_phase4_tool_registry",
-    "build_phase6_tool_registry",
+    "build_evaluation_tool_registry",
+    "build_research_tool_registry",
     "deterministic_generated_at",
     "enforce_live_report_input_boundary",
-    "execute_phase4_tool",
+    "evaluation_tool_plan",
+    "execute_research_tool",
     "find_non_live_report_input_violations",
     "generate_dummy_report_bundle",
-    "phase4_research_tool_plan",
-    "phase6_evaluation_tool_plan",
     "report_data_mode_from_run",
     "report_data_mode_metadata",
-    "run_phase4_fundamentals_tool",
-    "run_phase4_news_catalyst_tool",
-    "run_phase4_sector_macro_tool",
-    "run_phase4_social_evidence_tool",
+    "research_tool_plan",
+    "run_research_fundamentals_tool",
+    "run_research_news_catalyst_tool",
+    "run_research_sector_macro_tool",
+    "run_research_social_evidence_tool",
 ]

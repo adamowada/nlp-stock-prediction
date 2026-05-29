@@ -10,11 +10,19 @@ from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
+from rich.console import Console
+
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.evaluation.calibration import DEFAULT_CALIBRATION_BIN_EDGES
-from nlp_stock_prediction.orchestration.phase6_service import Phase6Service
+from nlp_stock_prediction.orchestration.evaluation_service import EvaluationService
 from nlp_stock_prediction.pipeline import generate_daily_report
+from nlp_stock_prediction.terminal_ui import (
+    print_research_paths,
+    prompt_for_research_config,
+    render_research_error,
+    run_research_terminal,
+)
 
 CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 _CLI_EPILOG = """Examples:
@@ -32,10 +40,10 @@ Configuration:
 """
 _EVALUATION_EPILOG = """Examples:
   python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 \\
-    inspect --run-id phase4-msft-2026-05-14
+    inspect --run-id research-msft-2026-05-14
   python -m nlp_stock_prediction evaluation --database data/prediction-research.sqlite3 \\
-    calibration --run-id phase4-msft-2026-05-14 --cohort-id msft-swing \\
-    --as-of 2026-05-22T00:00:00+00:00 --artifact-root reports/phase4-msft-2026-05-14/audit
+    calibration --run-id research-msft-2026-05-14 --cohort-id msft-swing \\
+    --as-of 2026-05-22T00:00:00+00:00 --artifact-root reports/research-msft-2026-05-14/audit
 
 Evaluation commands read an explicit SQLite run database and require --run-id.
 Commands that write audit artifacts require --artifact-root and use the repository write policy.
@@ -110,7 +118,60 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use live providers and public-source adapters without fixture fallback.",
     )
+    tui_parser = subparsers.add_parser(
+        "tui",
+        help="Launch the Rich terminal UI for guided report generation.",
+        description=(
+            "Launch a Rich-styled terminal workflow for generating a research report. "
+            "Provide options for a non-interactive run, or omit them in an interactive terminal "
+            "to be prompted."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_CLI_EPILOG,
+    )
+    tui_parser.add_argument(
+        "--date",
+        dest="run_date",
+        type=_parse_date,
+        help="Report date in YYYY-MM-DD format. Prompted when omitted in an interactive terminal.",
+    )
+    tui_parser.add_argument(
+        "--output",
+        dest="output_dir",
+        type=Path,
+        help="Base output directory. Prompted when omitted in an interactive terminal.",
+    )
+    tui_parser.add_argument(
+        "--symbol",
+        help="Instrument symbol or pair to research, for example TSLA or BTC-USD.",
+    )
+    tui_parser.add_argument(
+        "--fixture-dir",
+        type=Path,
+        help="Optional fixture root recorded in command metadata.",
+    )
+    tui_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help="Optional provider cache directory recorded in command metadata.",
+    )
+    tui_mode_group = tui_parser.add_mutually_exclusive_group()
+    tui_mode_group.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use deterministic offline fixtures.",
+    )
+    tui_mode_group.add_argument(
+        "--live",
+        action="store_true",
+        help="Use live providers and public-source adapters without fixture fallback.",
+    )
     _add_evaluation_parser(subparsers)
+    subparsers.add_parser(
+        "app",
+        help="Launch the persistent terminal app.",
+        description="Launch the menu-driven research assistant app.",
+    )
     return parser
 
 
@@ -287,7 +348,19 @@ def build_research_config(args: argparse.Namespace) -> RunConfig:
     )
 
 
-def build_evaluation_service(args: argparse.Namespace) -> Phase6Service:
+def build_tui_research_config(args: argparse.Namespace) -> RunConfig:
+    return prompt_for_research_config(
+        run_date=args.run_date,
+        output_dir=args.output_dir,
+        symbol=args.symbol,
+        fixture_dir=args.fixture_dir,
+        cache_dir=args.cache_dir,
+        offline=args.offline,
+        live=args.live,
+    )
+
+
+def build_evaluation_service(args: argparse.Namespace) -> EvaluationService:
     repo_root = args.repo_root.resolve()
     database_path = args.database if args.database.is_absolute() else repo_root / args.database
     if not database_path.exists():
@@ -295,7 +368,7 @@ def build_evaluation_service(args: argparse.Namespace) -> Phase6Service:
             "--database must reference an existing research SQLite database; "
             f"not found: {database_path}"
         )
-    return Phase6Service(repo_root=repo_root, database_path=database_path)
+    return EvaluationService(repo_root=repo_root, database_path=database_path)
 
 
 def run_evaluation_command(args: argparse.Namespace) -> int:
@@ -408,14 +481,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.command == "research":
+        console = Console()
         try:
-            bundle = generate_daily_report(build_research_config(args))
+            config = build_research_config(args)
+            if console.is_interactive:
+                run_research_terminal(
+                    config,
+                    report_generator=generate_daily_report,
+                    console=console,
+                )
+            else:
+                bundle = generate_daily_report(config)
+                print_research_paths(bundle)
         except ValueError as exc:
-            print(str(exc), file=sys.stderr)
+            render_research_error(str(exc), console=Console(stderr=True))
             return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
-        print(f"Wrote Markdown report: {bundle.markdown_path}")
-        print(f"Wrote JSON report: {bundle.json_path}")
-        print(f"Wrote audit artifacts: {bundle.audit_dir}")
+        return 0
+    if args.command == "tui":
+        try:
+            run_research_terminal(
+                build_tui_research_config(args),
+                report_generator=generate_daily_report,
+            )
+        except ValueError as exc:
+            render_research_error(str(exc), console=Console(stderr=True))
+            return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
         return 0
     if args.command == "evaluation":
         try:
@@ -423,6 +513,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
+    if args.command == "app":
+        from nlp_stock_prediction.app import run_app
+
+        return run_app()
     parser.error(f"unknown command: {args.command}")
 
 
@@ -431,6 +525,7 @@ __all__ = [
     "build_evaluation_service",
     "build_parser",
     "build_research_config",
+    "build_tui_research_config",
     "main",
     "run_evaluation_command",
 ]

@@ -1,4 +1,4 @@
-"""Live market-data materialization for Phase 7 outcome evaluation."""
+"""Live market-data materialization for Reliability Stage outcome evaluation."""
 
 from __future__ import annotations
 
@@ -46,12 +46,12 @@ from nlp_stock_prediction.orchestration.live_market_data import (
 from nlp_stock_prediction.orchestration.live_market_data import (
     LiveMarketDataSelection as LiveOutcomeMarketDataSelection,
 )
-from nlp_stock_prediction.orchestration.phase4_market_data import (
-    PHASE4_MARKET_DATA_TOOL_NAME,
+from nlp_stock_prediction.orchestration.research_market_data import (
+    RESEARCH_MARKET_DATA_TOOL_NAME,
     MarketDataToolResult,
-    Phase4MarketDataArtifact,
-    Phase4MarketDataTool,
-    load_phase4_market_data_artifact,
+    ResearchMarketDataArtifact,
+    ResearchMarketDataTool,
+    load_research_market_data_artifact,
 )
 from nlp_stock_prediction.providers.market import YahooFinanceChartMarketDataProvider
 from nlp_stock_prediction.storage.records import (
@@ -63,8 +63,8 @@ from nlp_stock_prediction.storage.records import (
 )
 from nlp_stock_prediction.storage.sqlite import SQLiteStore
 
-PHASE7_LIVE_OUTCOME_TOOL_NAME = "phase7_live_outcome_materialization"
-PHASE7_LIVE_OUTCOME_TOOL_VERSION = "phase7.live-outcome-materialization.v1"
+RELIABILITY_LIVE_OUTCOME_TOOL_NAME = "live_outcome_materialization"
+RELIABILITY_LIVE_OUTCOME_TOOL_VERSION = "reliability.live-outcome-materialization.v1"
 SUPPORTED_LIVE_OUTCOME_ASSET_CLASSES = SUPPORTED_LIVE_MARKET_OUTCOME_ASSET_CLASSES
 
 
@@ -142,7 +142,7 @@ class _Observation:
     baseline_value: float
     result_summary: str
     evidence_id: str
-    artifact_payload: Phase4MarketDataArtifact
+    artifact_payload: ResearchMarketDataArtifact
 
 
 @dataclass(frozen=True)
@@ -205,12 +205,12 @@ def materialize_live_prediction_outcome_artifacts(
         market_artifact_ids=provided_market_artifact_ids,
     )
     attempt_id = (
-        "attempt-phase7-live-outcome-"
+        "attempt-reliability-live-outcome-"
         f"{slug(candidate_id, fallback='candidate', allow_file_safe_punctuation=True)}-"
         f"{run_identity[:10]}"
     )
     tool_run_id = (
-        "tool-phase7-live-outcome-"
+        "tool-reliability-live-outcome-"
         f"{slug(candidate_id, fallback='candidate', allow_file_safe_punctuation=True)}-"
         f"{run_identity[:10]}"
     )
@@ -229,8 +229,8 @@ def materialize_live_prediction_outcome_artifacts(
         ToolRunRecord(
             tool_run_id=tool_run_id,
             run_id=run_id,
-            tool_name=PHASE7_LIVE_OUTCOME_TOOL_NAME,
-            tool_version=PHASE7_LIVE_OUTCOME_TOOL_VERSION,
+            tool_name=RELIABILITY_LIVE_OUTCOME_TOOL_NAME,
+            tool_version=RELIABILITY_LIVE_OUTCOME_TOOL_VERSION,
             status="running",
             started_at=created,
             inputs={
@@ -431,7 +431,7 @@ def materialize_live_prediction_outcome_artifacts(
             metadata=cast(
                 JsonObject,
                 {
-                    "source": PHASE7_LIVE_OUTCOME_TOOL_NAME,
+                    "source": RELIABILITY_LIVE_OUTCOME_TOOL_NAME,
                     "provider_attempts": provider_attempts,
                 },
             ),
@@ -442,16 +442,8 @@ def materialize_live_prediction_outcome_artifacts(
             evaluation_attempt_id=attempt_id,
             outcome_id=outcome_id,
             outcome_evaluation_id=outcome_evaluation_id,
-            outcome_artifact_filename=(
-                "prediction-outcomes/live/"
-                f"{slug(candidate_id, fallback='candidate', allow_file_safe_punctuation=True)}-"
-                f"{run_identity[:8]}.json"
-            ),
-            outcome_evaluation_artifact_filename=(
-                "prediction-outcome-evaluations/live/"
-                f"{slug(candidate_id, fallback='candidate', allow_file_safe_punctuation=True)}-"
-                f"{run_identity[:8]}.json"
-            ),
+            outcome_artifact_filename=f"outcomes/live/{run_identity[:8]}.json",
+            outcome_evaluation_artifact_filename=f"outcome-reviews/live/{run_identity[:8]}.json",
         )
     except Exception as exc:
         _record_live_outcome_failure(
@@ -497,8 +489,8 @@ def materialize_live_prediction_outcome_artifacts(
         ToolRunRecord(
             tool_run_id=tool_run_id,
             run_id=run_id,
-            tool_name=PHASE7_LIVE_OUTCOME_TOOL_NAME,
-            tool_version=PHASE7_LIVE_OUTCOME_TOOL_VERSION,
+            tool_name=RELIABILITY_LIVE_OUTCOME_TOOL_NAME,
+            tool_version=RELIABILITY_LIVE_OUTCOME_TOOL_VERSION,
             status=final_status,
             started_at=created,
             completed_at=evaluated,
@@ -533,14 +525,14 @@ def _fetch_market_artifact(
     index: int,
     selection: LiveOutcomeMarketDataSelection,
 ) -> MarketDataToolResult:
-    request_id = f"phase7-live-outcome-market-data-{attempt_digest[:12]}-{index}"
+    request_id = f"reliability-live-outcome-market-data-{attempt_digest[:12]}-{index}"
     provider_slug = slug(_provider_name(selection.provider), fallback="provider")
     source_url = _source_url_for_selection(
         selection=selection,
         target=target,
         evaluated_at=evaluated_at,
     )
-    tool = Phase4MarketDataTool(
+    tool = ResearchMarketDataTool(
         store=store,
         repo_root=repo_root,
         artifact_dir=artifact_dir,
@@ -555,15 +547,11 @@ def _fetch_market_artifact(
         instrument_id=target.instrument_id,
         request_id=request_id,
         source_url=source_url,
-        options={"phase7_live_outcome_role": selection.role, **selection.options},
-        tool_run_id=f"tool-phase7-market-data-{provider_slug}-{attempt_digest[:10]}-{index}",
-        artifact_id=f"artifact-phase7-market-data-{provider_slug}-{attempt_digest[:10]}-{index}",
-        artifact_filename=(
-            "market-data/live-outcomes/"
-            f"{slug(target.candidate_id, fallback='candidate')}-{provider_slug}-"
-            f"{attempt_digest[:8]}-{index}.json"
-        ),
-        source_query_id=f"query-phase7-market-data-{provider_slug}-{attempt_digest[:10]}-{index}",
+        options={"reliability_live_outcome_role": selection.role, **selection.options},
+        tool_run_id=f"tool-reliability-market-data-{provider_slug}-{attempt_digest[:10]}-{index}",
+        artifact_id=f"artifact-reliability-market-data-{provider_slug}-{attempt_digest[:10]}-{index}",
+        artifact_filename=f"market/live/{attempt_digest[:8]}-{index}.json",
+        source_query_id=f"query-reliability-market-data-{provider_slug}-{attempt_digest[:10]}-{index}",
     )
     _validate_live_market_payload(
         store=store,
@@ -577,7 +565,7 @@ def _fetch_market_artifact(
 def _inspect_market_payload(
     *,
     target: PredictionEvaluationTarget,
-    artifact_payload: Phase4MarketDataArtifact,
+    artifact_payload: ResearchMarketDataArtifact,
     evaluated_at: datetime,
 ) -> _InspectionResult:
     limitations: list[str] = []
@@ -721,7 +709,7 @@ def _record_outcome_evidence(
         },
         metadata={
             "target_id": target.target_id,
-            "source": PHASE7_LIVE_OUTCOME_TOOL_NAME,
+            "source": RELIABILITY_LIVE_OUTCOME_TOOL_NAME,
             "result_value": observation.result_value,
             "baseline_value": observation.baseline_value,
             "observed_result": observation.observed_result.value,
@@ -806,8 +794,8 @@ def _record_live_outcome_failure(
             ToolRunRecord(
                 tool_run_id=tool_run_id,
                 run_id=run_id,
-                tool_name=PHASE7_LIVE_OUTCOME_TOOL_NAME,
-                tool_version=PHASE7_LIVE_OUTCOME_TOOL_VERSION,
+                tool_name=RELIABILITY_LIVE_OUTCOME_TOOL_NAME,
+                tool_version=RELIABILITY_LIVE_OUTCOME_TOOL_VERSION,
                 status="failed",
                 started_at=started_at,
                 completed_at=completed_at,
@@ -828,15 +816,16 @@ def _load_live_market_artifact(
     repo_root: Path,
     target: PredictionEvaluationTarget,
     artifact_id: str,
-) -> Phase4MarketDataArtifact:
+) -> ResearchMarketDataArtifact:
     artifact = store.get_artifact(artifact_id)
     if artifact is None:
         raise ValueError(f"market artifact does not exist: {artifact_id}")
     if artifact.artifact_type != "market_data":
         raise ValueError(f"market artifact must be market_data: {artifact_id}")
-    if artifact.produced_by != PHASE4_MARKET_DATA_TOOL_NAME:
+    if artifact.produced_by != RESEARCH_MARKET_DATA_TOOL_NAME:
         raise ValueError(
-            f"live market artifact must be produced by the Phase 4 market-data tool: {artifact_id}"
+            "live market artifact must be produced by the Research Stage market-data tool: "
+            f"{artifact_id}"
         )
     if artifact.tool_run_id is None:
         raise ValueError(f"live market artifact is missing tool_run_id: {artifact_id}")
@@ -858,7 +847,7 @@ def _load_live_market_artifact(
     actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
     if actual_sha256 != artifact.sha256:
         raise ValueError(f"live market artifact hash does not match storage row: {artifact_id}")
-    payload = load_phase4_market_data_artifact(path)
+    payload = load_research_market_data_artifact(path)
     _validate_live_market_payload(
         store=store,
         artifact=artifact,
@@ -872,7 +861,7 @@ def _validate_live_market_payload(
     *,
     store: SQLiteStore,
     artifact: ArtifactRecord | None,
-    payload: Phase4MarketDataArtifact,
+    payload: ResearchMarketDataArtifact,
     target: PredictionEvaluationTarget,
 ) -> None:
     if artifact is None:
@@ -945,7 +934,7 @@ def _provider_attempt_summary(
     *,
     role: str,
     artifact_id: str,
-    payload: Phase4MarketDataArtifact,
+    payload: ResearchMarketDataArtifact,
     inspection: _InspectionResult,
 ) -> JsonObject:
     return {
@@ -1021,7 +1010,7 @@ def _bar_observed_at(bar: PriceBar) -> datetime:
 def _outcome_evidence_id(
     *,
     target: PredictionEvaluationTarget,
-    artifact_payload: Phase4MarketDataArtifact,
+    artifact_payload: ResearchMarketDataArtifact,
 ) -> str:
     evidence_digest = digest(
         "|".join(
@@ -1073,8 +1062,8 @@ def _final_attempt_status(status: PredictionOutcomeStatus) -> str:
 
 
 __all__ = [
-    "PHASE7_LIVE_OUTCOME_TOOL_NAME",
-    "PHASE7_LIVE_OUTCOME_TOOL_VERSION",
+    "RELIABILITY_LIVE_OUTCOME_TOOL_NAME",
+    "RELIABILITY_LIVE_OUTCOME_TOOL_VERSION",
     "SUPPORTED_LIVE_OUTCOME_ASSET_CLASSES",
     "DefaultLiveOutcomeProviderFactory",
     "LiveOutcomeMarketDataSelection",

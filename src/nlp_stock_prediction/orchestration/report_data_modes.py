@@ -80,6 +80,21 @@ _NON_LIVE_MODE_MARKERS = frozenset(
         "test",
     }
 )
+_LIVE_RUN_KIND_MARKERS = frozenset(
+    {
+        "ablation",
+        "calibration",
+        "drift",
+        "evaluation",
+        "live_outcome",
+        "outcome_evaluation",
+        "provider_playbook",
+        "reliability",
+        "signal_family",
+        "source_reliability",
+        "walk_forward",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -187,7 +202,7 @@ def report_data_mode_from_run(
     *,
     default: ReportDataMode | None = None,
 ) -> ReportDataMode:
-    """Resolve a run's report data mode, including legacy run-kind inference."""
+    """Resolve a run's report data mode, including run-kind inference."""
 
     raw_mode = run.metadata.get(REPORT_DATA_MODE_KEY)
     if raw_mode is not None:
@@ -195,7 +210,7 @@ def report_data_mode_from_run(
     if default is not None:
         return default
     run_kind = run.run_kind.lower()
-    if "phase6" in run_kind:
+    if any(marker in run_kind for marker in _LIVE_RUN_KIND_MARKERS):
         return LIVE_REPORT_DATA_MODE
     if "codex_smoke" in run_kind or "codex-smoke" in run_kind:
         return CODEX_SMOKE_REPORT_DATA_MODE

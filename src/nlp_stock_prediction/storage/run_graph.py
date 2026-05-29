@@ -9,14 +9,14 @@ run_candidates AS (
     SELECT candidate_id FROM prediction_candidates
     WHERE run_id = ?
 ),
-phase6_outcome_evaluations AS (
+evaluation_outcome_evaluations AS (
     SELECT outcome_evaluation_id FROM prediction_outcome_evaluations
     WHERE run_id = ?
 ),
-phase6_outcomes AS (
+evaluation_outcomes AS (
     SELECT DISTINCT outcome_id FROM prediction_outcome_evaluations
     WHERE outcome_evaluation_id IN (
-        SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+        SELECT outcome_evaluation_id FROM evaluation_outcome_evaluations
     )
 )
 """
@@ -49,10 +49,10 @@ WHERE direct_tool_runs.run_id = ?
     OR artifact_tool_runs.run_id = ?
     OR evidence_candidates.run_id = ?
     OR outcome_evidence_links.outcome_id IN (
-        SELECT outcome_id FROM phase6_outcomes
+        SELECT outcome_id FROM evaluation_outcomes
     )
     OR outcome_evaluation_evidence_links.outcome_evaluation_id IN (
-        SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+        SELECT outcome_evaluation_id FROM evaluation_outcome_evaluations
     )
 """
 
@@ -99,7 +99,7 @@ def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
         f"""
         WITH {_RUN_SCOPE_CTES},
         {_run_evidence_cte("evidence_items.artifact_id", "artifact_id")},
-        phase6_artifacts AS (
+        evaluation_artifacts AS (
             SELECT artifact_id FROM prediction_evaluations
             WHERE artifact_id IS NOT NULL
                 AND (
@@ -108,17 +108,17 @@ def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
                 )
             UNION
             SELECT artifact_id FROM outcome_artifact_links
-            WHERE outcome_id IN (SELECT outcome_id FROM phase6_outcomes)
+            WHERE outcome_id IN (SELECT outcome_id FROM evaluation_outcomes)
             UNION
             SELECT artifact_id FROM prediction_outcome_evaluations
             WHERE artifact_id IS NOT NULL
                 AND outcome_evaluation_id IN (
-                    SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+                    SELECT outcome_evaluation_id FROM evaluation_outcome_evaluations
                 )
             UNION
             SELECT artifact_id FROM outcome_evaluation_artifact_links
             WHERE outcome_evaluation_id IN (
-                SELECT outcome_evaluation_id FROM phase6_outcome_evaluations
+                SELECT outcome_evaluation_id FROM evaluation_outcome_evaluations
             )
             UNION
             SELECT artifact_id FROM calibration_runs
@@ -141,7 +141,7 @@ def fetch_artifact_rows(connection: sqlite3.Connection, run_id: str) -> tuple[sq
         WHERE tool_runs.run_id = ?
             OR artifact_candidates.run_id = ?
             OR run_evidence.evidence_id IS NOT NULL
-            OR artifacts.artifact_id IN (SELECT artifact_id FROM phase6_artifacts)
+            OR artifacts.artifact_id IN (SELECT artifact_id FROM evaluation_artifacts)
         ORDER BY artifacts.created_at, artifacts.artifact_id
         """,
         (

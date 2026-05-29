@@ -1,4 +1,4 @@
-"""Phase-neutral conversion helpers for stored prediction candidates."""
+"""Public conversion helpers for stored prediction candidates."""
 
 from __future__ import annotations
 

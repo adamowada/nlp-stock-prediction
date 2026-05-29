@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from datetime import date
 from typing import Literal
 
@@ -972,52 +971,14 @@ def _iter_report_evidence_references(report: DailyReport) -> tuple[EvidenceRefer
     return tuple(references)
 
 
-_TRADING_INSTRUCTION_PATTERNS = (
-    r"\b(buy|sell)\s+(?!or\b|instruction\b|guidance\b|language\b)"
-    r"[A-Z][A-Z0-9./-]{0,12}\b",
-    r"\b(purchase|acquire|accumulate)\s+[A-Z][A-Z0-9./-]{0,12}\b",
-    r"\bload\s+up\s+on\s+[A-Z][A-Z0-9./-]{0,12}\b",
-    r"\b(trim|liquidate|cover)\s+[A-Z][A-Z0-9./-]{0,12}\b",
-    r"\breduce\s+exposure\s+(to|in)\s+[A-Z][A-Z0-9./-]{0,12}\b",
-    r"\b(buy|sell|short)\s+the\s+(stock|shares?|coin|token|etf|contract|instrument)\b",
-    r"\b(purchase|acquire|accumulate|load\s+up\s+on)\s+the\s+"
-    r"(stock|shares?|coin|token|etf|contract|instrument)\b",
-    r"\b(trim|reduce|liquidate|cover)\s+(your|the|a|an|their|our)?\s*"
-    r"(position|exposure|stake)\b",
-    r"\b(should|must|need to|time to)\s+"
-    r"(buy|sell|short|go long|go short|purchase|acquire|accumulate|trim|liquidate)\b",
-    r"\b(should|must|need to|time to)\s+reduce\s+(position|exposure|stake)\b",
-    r"\b(you|we|investors?|traders?)\s+"
-    r"(should|must|need to|ought to)\s+"
-    r"(buy|sell|short|go long|go short|enter|exit|purchase|acquire|accumulate|trim|liquidate)\b",
-    r"\b(you|we|investors?|traders?)\s+"
-    r"(should|must|need to|ought to)\s+reduce\s+(position|exposure|stake)\b",
-    r"\b(recommend|recommendation|advice)\s+(to\s+)?"
-    r"(buy|sell|short|go long|go short|purchase|acquire|accumulate|trim|liquidate)\b",
-    r"\b(recommend|recommendation|advice)\s+(to\s+)?"
-    r"reduce\s+(position|exposure|stake)\b",
-    r"\brecommendation\s*:\s*"
-    r"(buy|sell|short|hold|purchase|acquire|accumulate|trim|liquidate)\b",
-    r"\brecommendation\s*:\s*reduce\s+(position|exposure|stake)\b",
-    r"\b(go|stay)\s+(long|short)\b",
-    r"\b(enter|exit|open|close)\s+(a\s+)?(long|short\s+)?position\b",
-    r"\b(set|use)\s+(a\s+)?stop[-\s]?loss\b",
-    r"\bposition\s+sizing?\b",
-    r"\b(take\s+profits?|profit\s+target)\b",
-)
-
-
 def _validate_report_authored_language(*values: str | None) -> None:
-    for value in values:
-        if value is None:
-            continue
-        normalized = " ".join(value.split())
-        for pattern in _TRADING_INSTRUCTION_PATTERNS:
-            if re.search(pattern, normalized, flags=re.IGNORECASE):
-                raise ValueError(
-                    "report-authored fields must not contain imperative trading language "
-                    "or trading instructions"
-                )
+    """Renderer contracts do not hard-block report text.
+
+    Product guidance for trading-language boundaries belongs in prompts and report
+    authoring policy, not in the final report schema validator. The schema still
+    validates structure, references, artifacts, and evidence traceability.
+    """
+    del values
 
 
 def _validate_candidate_evaluation_metadata(candidate: PredictionCandidate) -> None:

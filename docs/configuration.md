@@ -20,6 +20,15 @@ context; tuning and promotion workflows are outside the product workflow.
 
 ## Current Commands
 
+Launch the persistent terminal app:
+
+```sh
+python main.py
+```
+
+The app stores remembered menu settings and report/chat indexes in ignored
+`data/app-state.json`, with Codex chat transcripts under ignored `data/codex-sessions/`.
+
 Generate the deterministic offline report:
 
 ```sh
@@ -32,7 +41,17 @@ Generate a guarded live-provider report:
 python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --live
 ```
 
+Launch the Rich terminal UI from an interactive terminal:
+
+```sh
+python -m nlp_stock_prediction tui
+```
+
 Reports are written under `<output>/<YYYY-MM-DD>/<symbol-slug>/`.
+
+When stdout is captured or redirected, the canonical `research` command keeps plain one-line report
+path output for scripts. Rich styling degrades to no-color/plain text when terminal capabilities are
+limited.
 
 ## Report Data Modes
 
@@ -41,13 +60,13 @@ Report assembly records a machine-checkable `report_data_mode` in run metadata, 
 
 Implemented modes:
 
-- `offline_fixture`: the `research --offline` Phase 4 path. It uses deterministic fixture
+- `offline_fixture`: the `research --offline` Research Stage path. It uses deterministic fixture
   providers and is allowed only when the caller explicitly requests offline mode.
 - `dummy_smoke`: the legacy deterministic dummy orchestration path. It is structural validation only
   and refuses non-offline configs.
 - `codex_smoke`: the optional Codex smoke path that may include live Codex search evidence but still
   uses smoke-only structural tools.
-- `live`: the guarded `research --live` Phase 4 path. It uses live provider adapters and public
+- `live`: the guarded `research --live` Research Stage path. It uses live provider adapters and public
   source adapters only, records missing credentials or upstream failures as tool/provider warnings,
   and refuses stored fixture, dummy, or smoke inputs. If a live run has no admissible stored evidence
   or candidates, the report renders structured insufficient evidence rather than falling back to
@@ -60,7 +79,7 @@ set, so callers cannot accidentally route live requests to fixture or dummy data
 
 ## Report Assembly Source Of Truth
 
-Phase 5 report assembly reads from the stored research SQLite run graph and persisted artifacts. The
+Report Stage report assembly reads from the stored research SQLite run graph and persisted artifacts. The
 renderer uses stored evidence, prediction candidates, candidate-evidence links, candidate-artifact
 links, tool runs, artifact paths, and artifact hashes as the report source of truth. It does not
 synthesize replacement candidates or fixture fallback data during final report rendering.
@@ -87,8 +106,10 @@ triggers, prior-outcome reviews, source references, the evidence ledger, and aud
 
 Observed source claims are labeled separately from report-authored scenario analysis and labeled
 inference. Candidate sections preserve evidence-for and evidence-against references, uncertainty
-drivers, dissenting evidence, evaluation quality metadata, and prior-outcome review links without
-using recommendation, position sizing, or trade-instruction framing. Structured insufficient-evidence
+drivers, dissenting evidence, evaluation quality metadata, and prior-outcome review links. Final
+report rendering preserves authored prediction, pricing, recommendation, and strategy language
+instead of failing schema validation on those words; report authorship should still distinguish
+research scenarios from app-executed orders or position sizing. Structured insufficient-evidence
 reports render their blocking reasons, providers, evidence, artifacts, and metadata instead of
 inventing a fallback scenario.
 
@@ -119,16 +140,16 @@ When a prior report is usable, the current report records follow-up evidence as 
 links the prior JSON artifact in the current audit manifest, and adds change triggers for supporting
 or contradictory evidence, outcome data, baseline changes, and provider refreshes where applicable.
 
-Run the optional Phase 4 real-Codex smoke after installing the MCP extra:
+Run the optional Research Stage real-Codex smoke after installing the MCP extra:
 
 ```sh
 python -m pip install -e ".[dev,codex-smoke]"
-NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_phase2_codex_smoke.py --date 2026-05-13 --output reports/phase4-codex-smoke --symbol TSLA
+NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1 python scripts/run_codex_smoke.py --date 2026-05-13 --output reports/research-codex-smoke --symbol TSLA
 ```
 
 The smoke command launches `codex --search` against the local
 `python -B -m nlp_stock_prediction.codex_mcp` server so the MCP process does not write bytecode
-caches outside artifact roots. It drives the Phase 4 MCP tool suite and writes only ignored local
+caches outside artifact roots. It drives the Research Stage MCP tool suite and writes only ignored local
 artifacts. On the current Windows Codex CLI, the runner uses `danger-full-access` because stdio MCP
 tool calls are cancelled under `workspace-write`; the MCP service still enforces write roots and the
 runner fails if tracked files or restricted ignored repo files change. Each smoke run uses a
@@ -166,7 +187,7 @@ The SQLite foundation is implemented in `nlp_stock_prediction.storage`. The plan
 `plans/planning.sqlite3` and is tracked in git. The default service research database is
 `data/prediction-research.sqlite3` and is generated local state ignored by git. The CLI `research`
 command writes isolated runtime databases named
-`data/phase4-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3` so separate report
+`data/research-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3` so separate report
 invocations do not silently share stored evidence. Create or verify the default databases with:
 
 ```python
@@ -199,7 +220,6 @@ NLP_STOCK_PREDICTION_FRED_API_KEY
 NLP_STOCK_PREDICTION_X_BEARER_TOKEN
 NLP_STOCK_PREDICTION_LIVE_USER_AGENT
 NLP_STOCK_PREDICTION_SEC_USER_AGENT
-NLP_STOCK_PREDICTION_SEC_CIK_MAP
 NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT
 NEWS_* provider keys
 MARKET_DATA_* provider keys
@@ -208,12 +228,19 @@ NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL
 NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT
 ```
 
-`NLP_STOCK_PREDICTION_SEC_CIK_MAP` accepts comma-separated `SYMBOL=CIK` entries for SEC EDGAR
-lookups. The live path also honors `ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`,
-`FRED_API_KEY`, and `X_BEARER_TOKEN` as fallback names. When Alpha Vantage is not configured, live
-stock/ETF market data can use the credential-free Yahoo Finance chart endpoint. Missing optional
-credentials are surfaced in the run graph and final report instead of being replaced with fixture
-data.
+SEC EDGAR ticker-to-CIK resolution is automatic through SEC's public
+`company_tickers_exchange.json` dataset. The live path does not accept local per-symbol CIK
+environment mappings; if the official dataset cannot be fetched, parsed, or matched to the requested
+ticker, the SEC provider fails loudly in provider health. The live path also honors
+`ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`, `FRED_API_KEY`, and `X_BEARER_TOKEN`
+as fallback names. Live stock/ETF market data prefers Alpha Vantage when configured, then falls
+back to credential-free public providers such as Yahoo Finance chart data when Alpha Vantage is
+rate-limited, unavailable, or returns no usable bars. Missing optional credentials are surfaced in
+the run graph and final report instead of being replaced with fixture data.
+
+The AP News live adapter searches AP's public search page for the requested ticker before falling
+back to the financial-markets hub. AP search results are still filtered through ticker matching, so
+irrelevant search-page links are skipped and recorded as provider warnings when appropriate.
 
 ## Internet Search
 
@@ -231,9 +258,12 @@ recorded with:
 Repeatable provider integrations should still be implemented as tools when they become important to
 regular reports.
 
+In-app Agent Chat may also use Codex web search when enabled in Settings. Search-only chat answers are
+unaudited context unless a project MCP tool writes evidence, provider metadata, and report artifacts.
+
 ## Evaluation Reliability And Provider Replacement
 
-Live report rendering writes Phase 7 reliability audit artifacts for live-mode inputs:
+Live report rendering writes Reliability Stage reliability audit artifacts for live-mode inputs:
 
 - `source_reliability_note` artifacts are derived from stored evidence rows and their provenance.
   They preserve provider name, retrieval method, freshness status, extraction confidence, source
@@ -274,9 +304,9 @@ Available subcommands are `inspect`, `materialize-outcome`, `load-outcomes`, `ou
 
 ## Instrument Universe
 
-The implemented Phase 3 universe layer is contract and storage infrastructure. The live `research`
+The implemented Instrument-Universe Stage universe layer is contract and storage infrastructure. The live `research`
 path materializes requested symbols as live-mode instrument identities, then relies on provider
-artifacts and warnings to establish actual data availability. The legacy-named optional Phase 4
+artifacts and warnings to establish actual data availability. The legacy-named optional Research Stage
 Codex smoke runner remains separate from the live-provider CLI path.
 
 The target universe is retail-accessible instruments, including:
@@ -308,6 +338,6 @@ Universe requests may include direct instrument queries and watchlists. Resoluti
 explicitly marked as `resolved`, `ambiguous`, `unsupported`, or `unavailable`; ambiguous symbols must
 retain their candidate matches until a caller supplies enough context to select one.
 
-Fixture-backed Phase 3 scenarios live in `tests/fixtures/tools/universe_discovery/`. Runtime
+Fixture-backed Instrument-Universe Stage scenarios live in `tests/fixtures/tools/universe_discovery/`. Runtime
 universe artifacts created by local runs should stay under ignored `artifacts/`, `reports/`, or
 `data/` paths unless deliberately promoted as small scrubbed fixtures.
