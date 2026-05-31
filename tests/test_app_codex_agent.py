@@ -73,6 +73,17 @@ def test_codex_jsonl_parser_treats_missing_output_as_empty() -> None:
     assert parse_codex_jsonl(None) == ()
 
 
+def test_codex_jsonl_parser_accepts_json_array_payloads() -> None:
+    events = parse_codex_jsonl(
+        '[{"type":"thread.started","thread_id":"thread-array"},{"type":"turn.completed"}]\n'
+    )
+
+    assert events == (
+        {"type": "thread.started", "thread_id": "thread-array"},
+        {"type": "turn.completed"},
+    )
+
+
 def test_subprocess_runner_decodes_codex_output_as_utf8(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -345,7 +345,6 @@ Common variables:
 | --- | --- |
 | `NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY` | Optional Alpha Vantage key for live market data and fundamentals. |
 | `NLP_STOCK_PREDICTION_FRED_API_KEY` | Optional FRED key for macro context. |
-| `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | Optional X/Twitter bearer token for X-backed provider experiments. |
 | `NLP_STOCK_PREDICTION_SEC_USER_AGENT` | Contact user agent for SEC EDGAR requests. |
 | `NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` | User agent for public HTML scraping providers. |
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | Contact user agent for opt-in live provider smoke tests. |
@@ -364,6 +363,10 @@ NLP_STOCK_PREDICTION_FRED_API_KEY=your-key
 NLP_STOCK_PREDICTION_SEC_USER_AGENT=Your Name your.email@example.com
 NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT=Your Name your.email@example.com
 ```
+
+Social evidence comes only from Reddit public search and public discussion-page scraping. Reddit
+posts and comments are treated as observed discussion, not verified fact, and provider warnings stay
+visible when search results are empty, blocked, stale, malformed, or rate-limited.
 
 See [configuration.md](configuration.md) for the full configuration reference.
 

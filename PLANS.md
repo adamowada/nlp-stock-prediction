@@ -167,9 +167,9 @@ store.add_plan_progress(
 )
 ```
 
-Current public helpers cover plans, decisions, and progress events. If a task needs milestones,
-acceptance criteria, artifact links, or commit links, add typed helper methods to the storage layer
-before using those tables. Do not scatter direct SQL across feature code.
+Current public helpers cover plans, milestones, acceptance criteria, decisions, progress events,
+artifact links, and commit links. Use those typed helpers instead of direct SQL whenever a task
+updates planning state.
 
 ## Correct Usage
 
@@ -185,6 +185,13 @@ For each active plan:
 - update `plans.status` instead of deleting completed or abandoned plans;
 - link artifacts and commits once the relevant helper methods exist;
 - update Markdown source-of-truth docs when durable behavior changes.
+
+Provider/source removal plans must include a deletion map, search-gate acceptance criteria, and a
+doc update checklist. When a source is intentionally removed from the product surface, do not leave
+credential setup, fixture factories, provider protocols, or report wording that imply new runs can
+still use it. As of the Reddit-only social evidence implementation, social-source plans should treat
+Reddit public search and public discussion-page scraping as the only active social provider lane
+unless a later user request creates a new plan and policy decision.
 
 Do not:
 

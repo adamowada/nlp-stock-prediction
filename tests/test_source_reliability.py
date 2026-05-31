@@ -73,7 +73,7 @@ def test_low_confidence_official_api_evidence_builds_low_reliability_note() -> N
 
 def test_public_scrape_missing_observed_timestamp_builds_limited_note() -> None:
     evidence = _evidence_record(
-        provider="reddit-public-page",
+        provider="reddit-public-search",
         source_kind=SourceKind.REDDIT_POST,
         retrieval_method=RetrievalMethod.PUBLIC_SCRAPE,
         observed_at=None,

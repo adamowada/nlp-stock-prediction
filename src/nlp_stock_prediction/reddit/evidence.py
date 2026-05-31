@@ -18,7 +18,7 @@ from nlp_stock_prediction.contracts import (
 from nlp_stock_prediction.reddit.matching import find_ticker_matches, matched_tickers
 
 _DEFAULT_FRESHNESS_WINDOW_SECONDS = 86_400
-_DEFAULT_SOURCE_URL = "https://www.reddit.com/r/wallstreetbets/"
+_DEFAULT_SOURCE_URL = "https://www.reddit.com/search/"
 
 
 def normalize_reddit_evidence(
@@ -53,7 +53,12 @@ def normalize_reddit_evidence(
         reddit_id = _string(record, "id") or f"record-{source_rank}"
         created_at = _created_at(record)
         permalink = _string(record, "permalink")
-        source_url = _string(record, "url") or permalink or _DEFAULT_SOURCE_URL
+        source_url = (
+            _string(record, "source_url")
+            or _string(record, "url")
+            or permalink
+            or _DEFAULT_SOURCE_URL
+        )
         freshness_status, freshness_seconds = _freshness(
             created_at=created_at,
             fetched_at=fetched_at,
@@ -102,6 +107,7 @@ def normalize_reddit_evidence(
                         "reddit_id": reddit_id,
                         "reddit_kind": reddit_kind,
                         "source_rank": source_rank,
+                        **_provenance_metadata(record),
                     },
                 ),
                 metadata=metadata,
@@ -137,6 +143,11 @@ def _metadata(
 ) -> dict[str, object]:
     keys = (
         "subreddit",
+        "source_url",
+        "search_query",
+        "search_url",
+        "discussion_url",
+        "result_rank",
         "parent_id",
         "link_id",
         "depth",
@@ -157,6 +168,18 @@ def _metadata(
         if _is_json_scalar(value):
             metadata[key] = value
     return metadata
+
+
+def _provenance_metadata(record: Mapping[str, object]) -> dict[str, object]:
+    keys = (
+        "source_url",
+        "search_query",
+        "search_url",
+        "discussion_url",
+        "result_rank",
+        "subreddit",
+    )
+    return {key: value for key in keys if _is_json_scalar(value := record.get(key))}
 
 
 def _author_hash(record: Mapping[str, object]) -> str | None:

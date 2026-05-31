@@ -28,7 +28,7 @@ def test_app_state_persists_only_allow_listed_settings(tmp_path: Path) -> None:
             "default_mode": "offline",
             "output_dir": "custom-reports",
             "OPENAI_API_KEY": "sk-not-a-real-key",
-            "NLP_STOCK_PREDICTION_X_BEARER_TOKEN": "secret",
+            "NLP_STOCK_PREDICTION_FRED_API_KEY": "secret",
         }
     )
     state = AppState(settings=loaded)
@@ -39,7 +39,7 @@ def test_app_state_persists_only_allow_listed_settings(tmp_path: Path) -> None:
     assert payload["settings"]["default_symbol"] == "MSFT"
     assert payload["settings"]["default_mode"] == "offline"
     assert "OPENAI_API_KEY" not in payload["settings"]
-    assert "NLP_STOCK_PREDICTION_X_BEARER_TOKEN" not in payload["settings"]
+    assert "NLP_STOCK_PREDICTION_FRED_API_KEY" not in payload["settings"]
     assert load_app_state(tmp_path).settings.default_symbol == "MSFT"
 
 

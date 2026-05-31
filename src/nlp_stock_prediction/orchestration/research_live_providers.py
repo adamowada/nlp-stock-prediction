@@ -14,7 +14,6 @@ from nlp_stock_prediction.contracts.providers import (
     MarketDataProvider,
     NewsProvider,
     RedditProvider,
-    XProvider,
 )
 from nlp_stock_prediction.orchestration.live_market_data import (
     ALPHA_VANTAGE_API_KEY_ENV,
@@ -34,14 +33,11 @@ from nlp_stock_prediction.providers.market import (
 from nlp_stock_prediction.providers.reddit_scrape import RedditPublicPageProvider
 from nlp_stock_prediction.providers.scraping import HtmlCache, configured_scrape_user_agent
 from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
-from nlp_stock_prediction.providers.social import XRecentSearchProvider
 
 FRED_API_KEY_ENV = "NLP_STOCK_PREDICTION_FRED_API_KEY"
-X_BEARER_TOKEN_ENV = "NLP_STOCK_PREDICTION_X_BEARER_TOKEN"
 LIVE_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_LIVE_USER_AGENT"
 
 _FALLBACK_FRED_API_KEY_ENVS = ("FRED_API_KEY",)
-_FALLBACK_X_BEARER_TOKEN_ENVS = ("X_BEARER_TOKEN",)
 
 
 class ResearchLiveProviderFactoryProtocol(Protocol):
@@ -54,8 +50,6 @@ class ResearchLiveProviderFactoryProtocol(Protocol):
     def market_data_source_query_url(self, symbol: str) -> str | None: ...
 
     def reddit_provider(self) -> RedditProvider | None: ...
-
-    def x_provider(self, symbol: str) -> XProvider | None: ...
 
     def news_providers(self, symbol: str) -> tuple[NewsProvider, ...]: ...
 
@@ -86,13 +80,6 @@ class ResearchLiveProviderFactory:
             allow_live_scraping=True,
             user_agent=self._scrape_user_agent(),
             cache=self._html_cache(),
-        )
-
-    def x_provider(self, symbol: str) -> XProvider | None:
-        del symbol
-        return XRecentSearchProvider(
-            bearer_token=self._first_env(X_BEARER_TOKEN_ENV, *_FALLBACK_X_BEARER_TOKEN_ENVS),
-            cache=self._json_cache(),
         )
 
     def news_providers(self, symbol: str) -> tuple[NewsProvider, ...]:
@@ -163,7 +150,6 @@ __all__ = [
     "ALPHA_VANTAGE_API_KEY_ENV",
     "FRED_API_KEY_ENV",
     "LIVE_USER_AGENT_ENV",
-    "X_BEARER_TOKEN_ENV",
     "ResearchLiveProviderFactory",
     "ResearchLiveProviderFactoryProtocol",
 ]

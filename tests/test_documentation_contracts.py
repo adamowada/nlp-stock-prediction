@@ -178,24 +178,24 @@ def test_provider_result_envelope_serializes_health_and_request() -> None:
         query="$TSLA lang:en",
     )
     health = ProviderHealth(
-        provider_name="fixture-x",
+        provider_name="fixture-provider",
         status=ProviderStatus.OK,
         checked_at=_fetched_at(),
         credential_state=CredentialState.NOT_REQUIRED,
     )
     result = ProviderResult[tuple[str, ...]](
-        provider_name="fixture-x",
+        provider_name="fixture-provider",
         status=ProviderStatus.OK,
         request=request,
         fetched_at=_fetched_at(),
         data=("ok",),
         health=health,
-        raw_snapshot_id="raw-x-tsla",
+        raw_snapshot_id="raw-provider-tsla",
     )
 
     dumped = result.model_dump(mode="json")
 
-    assert dumped["provider_name"] == "fixture-x"
+    assert dumped["provider_name"] == "fixture-provider"
     assert dumped["health"]["status"] == "ok"
     assert dumped["request"]["query"] == "$TSLA lang:en"
 
@@ -204,13 +204,13 @@ def test_provider_result_envelope_serializes_health_and_request() -> None:
 def test_provider_result_rejects_inconsistent_failure_shapes() -> None:
     request = ProviderRequest(request_id="provider-request-1", run_date=date(2026, 5, 11))
     ok_health = ProviderHealth(
-        provider_name="fixture-x",
+        provider_name="fixture-provider",
         status=ProviderStatus.OK,
         checked_at=_fetched_at(),
         credential_state=CredentialState.NOT_REQUIRED,
     )
     failed_health = ProviderHealth(
-        provider_name="fixture-x",
+        provider_name="fixture-provider",
         status=ProviderStatus.FAILED,
         checked_at=_fetched_at(),
         credential_state=CredentialState.NOT_REQUIRED,
@@ -219,13 +219,13 @@ def test_provider_result_rejects_inconsistent_failure_shapes() -> None:
         code=WarningCode.UPSTREAM_UNAVAILABLE,
         severity=WarningSeverity.ERROR,
         message="fixture provider unavailable",
-        provider_name="fixture-x",
+        provider_name="fixture-provider",
         occurred_at=_fetched_at(),
     )
 
     with pytest.raises(ValidationError):
         ProviderResult[str](
-            provider_name="fixture-x",
+            provider_name="fixture-provider",
             status=ProviderStatus.OK,
             request=request,
             fetched_at=_fetched_at(),
@@ -235,7 +235,7 @@ def test_provider_result_rejects_inconsistent_failure_shapes() -> None:
 
     with pytest.raises(ValidationError):
         ProviderResult[str](
-            provider_name="fixture-x",
+            provider_name="fixture-provider",
             status=ProviderStatus.FAILED,
             request=request,
             fetched_at=_fetched_at(),
@@ -246,7 +246,7 @@ def test_provider_result_rejects_inconsistent_failure_shapes() -> None:
 
     with pytest.raises(ValidationError):
         ProviderResult[str](
-            provider_name="fixture-x",
+            provider_name="fixture-provider",
             status=ProviderStatus.FAILED,
             request=request,
             fetched_at=_fetched_at(),

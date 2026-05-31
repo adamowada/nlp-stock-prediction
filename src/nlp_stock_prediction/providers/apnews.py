@@ -667,7 +667,6 @@ def _extract_article(
     headline = _first_text(
         jsonld.get("headline"),
         parser.meta.get("og:title"),
-        parser.meta.get("twitter:title"),
         parser.headings[0] if parser.headings else None,
         fallback_headline,
         parser.title,

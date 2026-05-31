@@ -814,7 +814,10 @@ class ResearchService:
     def research_social_evidence(self, *, run_id: str, symbol: str) -> JsonObject:
         run = self._require_run(run_id)
         normalized_symbol = self._validated_symbol(run, symbol)
-        providers = self._mode_adapter(run).social_providers(normalized_symbol)
+        mode_adapter = self._mode_adapter(run)
+        providers = mode_adapter.social_providers(normalized_symbol)
+        instrument_id = mode_adapter.instrument_id(normalized_symbol)
+        instrument = self.store.get_instrument(instrument_id)
         result = run_research_social_evidence_tool(
             store=self.store,
             repo_root=self.repo_root,
@@ -824,8 +827,9 @@ class ResearchService:
             run_date=run_date_from_run(run),
             generated_at=_research_timestamp_for_run(run),
             reddit_provider=providers.reddit_provider,
-            x_provider=providers.x_provider,
-            instrument_id=self._mode_adapter(run).instrument_id(normalized_symbol),
+            instrument_id=instrument_id,
+            company_name=instrument.name if instrument is not None else None,
+            aliases=instrument.aliases if instrument is not None else (),
         )
         return _research_tool_result_payload(result)
 

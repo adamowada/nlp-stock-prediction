@@ -296,6 +296,8 @@ def parse_codex_jsonl(payload: str | None) -> tuple[dict[str, object], ...]:
             continue
         if isinstance(parsed, dict):
             events.append(parsed)
+        elif isinstance(parsed, list):
+            events.extend(item for item in parsed if isinstance(item, dict))
     return tuple(events)
 
 

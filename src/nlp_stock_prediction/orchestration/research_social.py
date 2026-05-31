@@ -14,7 +14,6 @@ from nlp_stock_prediction.contracts.providers import (
     EvidenceRequest,
     ProviderResult,
     RedditProvider,
-    XProvider,
 )
 from nlp_stock_prediction.orchestration.orchestration_common import source_evidence_ticker
 from nlp_stock_prediction.orchestration.research_common import (
@@ -51,7 +50,6 @@ class ResearchSocialEvidenceTool:
     """Aggregate social providers into run-scoped source evidence and labels."""
 
     reddit_provider: RedditProvider | None = None
-    x_provider: XProvider | None = None
 
     def run(
         self,
@@ -64,17 +62,31 @@ class ResearchSocialEvidenceTool:
         run_date: date,
         generated_at: datetime,
         instrument_id: str | None = None,
+        company_name: str | None = None,
+        aliases: Sequence[str] = (),
         extra_tickers: Sequence[str] = (),
         limit: int = 25,
     ) -> ResearchToolResult:
         normalized_symbol = symbol.strip().upper()
         tickers = _request_tickers(normalized_symbol, extra_tickers)
+        search_terms = _reddit_search_terms(
+            symbol=normalized_symbol,
+            tickers=tickers,
+            company_name=company_name,
+            aliases=aliases,
+        )
         request = EvidenceRequest(
             request_id=f"research-social-{run_id}-{normalized_symbol}",
             run_date=run_date,
             tickers=tickers,
             limit=limit,
-            query=" OR ".join(f"${ticker}" for ticker in tickers),
+            query=" OR ".join(search_terms),
+            options={
+                "social_provider": "reddit-public-search",
+                "reddit_search_terms": list(search_terms),
+                "company_name": company_name,
+                "aliases": list(aliases),
+            },
             include_posts=True,
             include_comments=True,
         )
@@ -203,8 +215,6 @@ class ResearchSocialEvidenceTool:
         results: list[ProviderResult[tuple[SourceEvidence, ...]]] = []
         if self.reddit_provider is not None:
             results.append(self.reddit_provider.fetch_discussion(request))
-        if self.x_provider is not None:
-            results.append(self.x_provider.fetch_social_posts(request))
         return tuple(results)
 
 
@@ -218,8 +228,9 @@ def run_research_social_evidence_tool(
     run_date: date,
     generated_at: datetime,
     reddit_provider: RedditProvider | None = None,
-    x_provider: XProvider | None = None,
     instrument_id: str | None = None,
+    company_name: str | None = None,
+    aliases: Sequence[str] = (),
     extra_tickers: Sequence[str] = (),
     limit: int = 25,
 ) -> ResearchToolResult:
@@ -227,7 +238,6 @@ def run_research_social_evidence_tool(
 
     return ResearchSocialEvidenceTool(
         reddit_provider=reddit_provider,
-        x_provider=x_provider,
     ).run(
         store=store,
         repo_root=repo_root,
@@ -237,6 +247,8 @@ def run_research_social_evidence_tool(
         run_date=run_date,
         generated_at=generated_at,
         instrument_id=instrument_id,
+        company_name=company_name,
+        aliases=aliases,
         extra_tickers=extra_tickers,
         limit=limit,
     )
@@ -249,6 +261,32 @@ def _request_tickers(symbol: str, extra_tickers: Sequence[str]) -> tuple[str, ..
         if ticker is not None and ticker not in normalized:
             normalized.append(ticker)
     return tuple(normalized or [symbol])
+
+
+def _reddit_search_terms(
+    *,
+    symbol: str,
+    tickers: Sequence[str],
+    company_name: str | None,
+    aliases: Sequence[str],
+) -> tuple[str, ...]:
+    terms: list[str] = []
+    for ticker in tickers:
+        _append_unique(terms, f"${ticker}")
+        _append_unique(terms, f"{ticker} stock")
+    if company_name is not None:
+        _append_unique(terms, f"{company_name.strip()} stock")
+    for alias in aliases:
+        cleaned = alias.strip()
+        if cleaned and cleaned.upper() != symbol:
+            _append_unique(terms, f"{cleaned} stock")
+    return tuple(terms or [f"${symbol}"])
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    normalized = " ".join(value.split())
+    if normalized and normalized not in values:
+        values.append(normalized)
 
 
 def _artifact_payload(

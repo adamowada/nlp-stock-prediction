@@ -6,9 +6,9 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
-_DEFAULT_SOURCE_URL = "https://www.reddit.com/r/wallstreetbets/"
+_DEFAULT_SOURCE_URL = "https://www.reddit.com/search/"
 
 
 @dataclass(slots=True)
@@ -51,11 +51,17 @@ class _DiscussionRecordBuilder:
             digest_source = f"{self.kind}:{permalink or source_url}:{title}:{body}"
             raw_identifier = f"{_thing_prefix(self.kind)}_scraped_{_stable_hash(digest_source)}"
 
+        subreddit = (
+            _first_attr(self.raw_attributes, "subreddit", "data-subreddit")
+            or _subreddit_from_url(permalink)
+            or _subreddit_from_url(source_url)
+        )
         record: dict[str, object] = {
             "kind": self.kind,
             "id": raw_identifier,
-            "subreddit": "wallstreetbets",
         }
+        if subreddit:
+            record["subreddit"] = subreddit
         if title and self.kind == "post":
             record["title"] = title
         if body:
@@ -173,6 +179,67 @@ class _ObservedAtHtmlParser(HTMLParser):
                 self.values.append(attr_map["content"])
 
 
+@dataclass(slots=True)
+class _SearchLinkBuilder:
+    href: str
+    source_rank: int
+    text_parts: list[str] = field(default_factory=list)
+
+    def append(self, text: str) -> None:
+        self.text_parts.append(text)
+
+    def to_record(self, *, source_url: str) -> dict[str, object] | None:
+        permalink = _normalize_url(self.href, source_url)
+        if not _is_public_discussion_url(permalink):
+            return None
+        title = _clean_text(self.text_parts)
+        raw_identifier = _reddit_id_from_url(permalink)
+        if raw_identifier is None:
+            raw_identifier = f"t3_search_{_stable_hash(permalink or self.href)}"
+        record: dict[str, object] = {
+            "kind": "post",
+            "id": raw_identifier,
+            "permalink": permalink,
+            "url": permalink,
+            "source_url": source_url,
+            "result_rank": self.source_rank,
+        }
+        subreddit = _subreddit_from_url(permalink)
+        if subreddit:
+            record["subreddit"] = subreddit
+        if title:
+            record["title"] = title
+        return record
+
+
+class _RedditSearchHtmlParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.links: list[_SearchLinkBuilder] = []
+        self._link_stack: list[tuple[int, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        normalized_tag = tag.lower()
+        attr_map = _attrs_to_dict(attrs)
+        href = attr_map.get("href")
+        if normalized_tag != "a" or href is None:
+            return
+        if "/comments/" not in href:
+            return
+        self.links.append(_SearchLinkBuilder(href=href, source_rank=len(self.links)))
+        self._link_stack.append((len(self.links) - 1, normalized_tag))
+
+    def handle_data(self, data: str) -> None:
+        if not data.strip() or not self._link_stack:
+            return
+        self.links[self._link_stack[-1][0]].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized_tag = tag.lower()
+        if self._link_stack and self._link_stack[-1][1] == normalized_tag:
+            self._link_stack.pop()
+
+
 def extract_reddit_discussion_records_from_public_html(
     html: str,
     *,
@@ -193,6 +260,50 @@ def extract_reddit_discussion_records_from_public_html(
         record = builder.to_record(source_url=source_url)
         if record is not None:
             records.append(record)
+    return tuple(records)
+
+
+def extract_reddit_search_results_from_public_html(
+    html: str,
+    *,
+    source_url: str = _DEFAULT_SOURCE_URL,
+) -> tuple[dict[str, object], ...]:
+    """Extract public Reddit search result links without consuming API payloads."""
+
+    records: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    for record in extract_reddit_discussion_records_from_public_html(
+        html,
+        source_url=source_url,
+    ):
+        permalink = _string(record.get("permalink")) or _string(record.get("url"))
+        if not _is_public_discussion_url(permalink):
+            continue
+        key = _canonical_url(permalink)
+        if key in seen:
+            continue
+        seen.add(key)
+        result = dict(record)
+        result["source_url"] = source_url
+        result["result_rank"] = len(records)
+        records.append(result)
+
+    parser = _RedditSearchHtmlParser()
+    parser.feed(html)
+    parser.close()
+    for builder in parser.links:
+        link_record = builder.to_record(source_url=source_url)
+        if link_record is None:
+            continue
+        permalink = _string(link_record.get("permalink"))
+        key = _canonical_url(permalink)
+        if key in seen:
+            continue
+        seen.add(key)
+        link_record["result_rank"] = len(records)
+        records.append(link_record)
+
     return tuple(records)
 
 
@@ -308,6 +419,46 @@ def _normalize_url(value: str | None, source_url: str) -> str | None:
     return urljoin(source_url, stripped)
 
 
+def _is_public_discussion_url(value: str | None) -> bool:
+    if value is None:
+        return False
+    parsed = urlsplit(value)
+    path = parsed.path.lower()
+    return path.startswith("/r/") and "/comments/" in path
+
+
+def _subreddit_from_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    parts = [part for part in urlsplit(value).path.split("/") if part]
+    if len(parts) >= 2 and parts[0].lower() == "r":
+        return parts[1]
+    return None
+
+
+def _reddit_id_from_url(value: str | None) -> str | None:
+    if value is None:
+        return None
+    parts = [part for part in urlsplit(value).path.split("/") if part]
+    if len(parts) >= 4 and parts[0].lower() == "r" and parts[2].lower() == "comments":
+        return f"t3_{parts[3]}"
+    return None
+
+
+def _canonical_url(value: str | None) -> str:
+    if value is None:
+        return ""
+    parsed = urlsplit(value)
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/"
+
+
+def _string(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 def _clean_text(parts: list[str]) -> str | None:
     text = " ".join("".join(parts).split())
     return text or None
@@ -323,5 +474,6 @@ def _thing_prefix(kind: str) -> str:
 
 __all__ = [
     "extract_reddit_discussion_records_from_public_html",
+    "extract_reddit_search_results_from_public_html",
     "extract_snapshot_observed_at",
 ]

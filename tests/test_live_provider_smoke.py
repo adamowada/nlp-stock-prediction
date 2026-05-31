@@ -16,19 +16,16 @@ from nlp_stock_prediction.contracts import (
     EvidenceRequest,
     MarketDataRequest,
     ProviderStatus,
-    TickerDiscoveryRequest,
 )
 from nlp_stock_prediction.providers.apnews import APNewsProvider
 from nlp_stock_prediction.providers.candlecharts import CandlechartsMarketDataProvider
 from nlp_stock_prediction.providers.market import YahooFinanceChartMarketDataProvider
 from nlp_stock_prediction.providers.reddit_scrape import RedditPublicPageProvider
-from nlp_stock_prediction.providers.social import XRecentSearchProvider
 
 ALLOW_LIVE_ENV = "NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS"
 LIVE_USER_AGENT_ENV = "NLP_STOCK_PREDICTION_LIVE_USER_AGENT"
 LIVE_SCRAPE_URL_ENV = "NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL"
 LIVE_SCRAPE_EXPECT_TEXT_ENV = "NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT"
-X_BEARER_TOKEN_ENV = "NLP_STOCK_PREDICTION_X_BEARER_TOKEN"
 
 
 @dataclass(frozen=True)
@@ -175,27 +172,6 @@ def test_live_public_scraping_configured_url_smoke() -> None:
 
 
 @pytest.mark.live_api
-def test_live_x_recent_search_smoke() -> None:
-    _require_live_tests_enabled("X recent-search live API")
-    bearer_token = _require_env(
-        X_BEARER_TOKEN_ENV,
-        "an X app-only Bearer Token for recent-search smoke coverage",
-    )
-    provider = XRecentSearchProvider(bearer_token=bearer_token)
-
-    result = provider.fetch_social_posts(
-        EvidenceRequest(
-            request_id="live-x-aapl-smoke",
-            run_date=_recent_market_smoke_date(),
-            tickers=("AAPL",),
-        )
-    )
-
-    assert result.status in {ProviderStatus.OK, ProviderStatus.EMPTY, ProviderStatus.STALE}
-    assert result.health.credential_state.value == "configured"
-
-
-@pytest.mark.live_api
 def test_live_yahoo_finance_chart_market_data_smoke() -> None:
     _require_live_tests_enabled("Yahoo Finance chart live API")
     provider = YahooFinanceChartMarketDataProvider()
@@ -219,25 +195,26 @@ def test_live_yahoo_finance_chart_market_data_smoke() -> None:
 
 
 @pytest.mark.live_scraping
-def test_live_reddit_public_page_shape_smoke() -> None:
-    _require_live_tests_enabled("Reddit public-page live scraping")
+def test_live_reddit_public_search_shape_smoke() -> None:
+    _require_live_tests_enabled("Reddit public-search live scraping")
     provider = RedditPublicPageProvider(allow_live_scraping=True)
 
-    result = provider.discover_tickers(
-        TickerDiscoveryRequest(
-            request_id="live-reddit-wsb-smoke",
+    result = provider.fetch_discussion(
+        EvidenceRequest(
+            request_id="live-reddit-public-search-aapl-smoke",
             run_date=_recent_market_smoke_date(),
-            source_url="https://www.reddit.com/r/wallstreetbets/",
+            tickers=("AAPL",),
+            options={"reddit_search_terms": ["$AAPL", "Apple stock"]},
+            limit=5,
         )
     )
 
-    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL}:
+    if result.status not in {ProviderStatus.OK, ProviderStatus.PARTIAL, ProviderStatus.EMPTY}:
         pytest.fail(
-            "Reddit public-page live scraping smoke did not return usable ticker output: "
+            "Reddit public-search live scraping smoke did not return a contract-shaped result: "
             + "; ".join(warning.message for warning in result.warnings)
         )
-    assert result.data is not None
-    assert result.data.candidates
+    assert result.health.credential_state.value == "not_required"
 
 
 @pytest.mark.live_scraping

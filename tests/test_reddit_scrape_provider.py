@@ -19,6 +19,7 @@ from nlp_stock_prediction.providers._base import ProviderTransportError
 from nlp_stock_prediction.providers.reddit_scrape import (
     RedditPublicPageProvider,
     StaticHtmlTransport,
+    build_reddit_public_search_url,
 )
 from nlp_stock_prediction.providers.scraping import HtmlCache, HtmlResponse
 
@@ -88,10 +89,12 @@ def _provider(
     pages: Mapping[str, str | HtmlResponse],
     *,
     discussion_urls: tuple[str, ...] = (),
+    discussion_page_limit: int = 6,
 ) -> RedditPublicPageProvider:
     return RedditPublicPageProvider(
         transport=StaticHtmlTransport(pages),
         discussion_urls=discussion_urls,
+        discussion_page_limit=discussion_page_limit,
         now=lambda: FETCHED_AT,
     )
 
@@ -108,7 +111,7 @@ def test_public_page_provider_discovers_valid_six_ticker_card_from_fixture_html(
     assert result.data.tickers == ("TSLA", "NVDA", "AMD", "AI", "MU", "ON")
     assert result.raw_snapshot_id is not None
     assert result.raw_snapshot_id.startswith("raw-reddit-ticker-card-")
-    assert result.data.candidates[0].provenance.provider_name == "reddit-public-page"
+    assert result.data.candidates[0].provenance.provider_name == "reddit-public-search"
     assert result.data.candidates[0].provenance.retrieval_method == RetrievalMethod.PUBLIC_SCRAPE
     assert result.data.candidates[0].provenance.source_url == SUBREDDIT_URL
     assert result.warnings == ()
@@ -265,6 +268,64 @@ def test_public_page_discussion_html_normalizes_to_source_evidence() -> None:
     assert comment.matched_tickers == ("AI", "MU")
     assert comment.metadata["parent_id"] == "t3_public001"
     assert comment.metadata["link_id"] == "t3_public001"
+
+
+@pytest.mark.contract
+def test_public_search_scraper_searches_reddit_and_expands_discussions() -> None:
+    search_url = build_reddit_public_search_url("$TSLA")
+    provider = _provider(
+        {
+            search_url: _html("public_search_tsla.html"),
+            "public001/daily_watch": _html("public_post_discussion.html"),
+        },
+        discussion_page_limit=1,
+    )
+
+    result = provider.fetch_discussion(
+        EvidenceRequest(
+            request_id="reddit-public-search-tsla",
+            run_date=RUN_DATE,
+            tickers=("TSLA", "MU", "AI", "ON"),
+            query="$TSLA",
+            options={"reddit_search_terms": ["$TSLA"]},
+        )
+    )
+
+    assert result.status == ProviderStatus.OK
+    assert result.data is not None
+    assert {record.metadata["subreddit"] for record in result.data} == {"stocks"}
+    assert result.data[0].provenance.provider_name == "reddit-public-search"
+    assert result.data[0].provenance.provider_metadata["search_query"] == "$TSLA"
+    assert result.data[0].provenance.provider_metadata["search_url"] == search_url
+    discussion_url = result.data[0].provenance.provider_metadata["discussion_url"]
+    assert isinstance(discussion_url, str)
+    assert discussion_url.endswith("/r/stocks/comments/public001/daily_watch/")
+    assert result.data[0].provenance.raw_snapshot_id is not None
+    assert result.raw_snapshot_id is not None
+    assert "raw-reddit-search-page-" in result.raw_snapshot_id
+    assert "raw-reddit-discussion-page-" in result.raw_snapshot_id
+
+
+@pytest.mark.contract
+def test_public_search_policy_allows_global_search_but_blocks_api_paths() -> None:
+    transport = _CountingTransport(_html("public_search_tsla.html"))
+    provider = RedditPublicPageProvider(
+        transport=transport,
+        discussion_page_limit=1,
+        now=lambda: FETCHED_AT,
+    )
+
+    result = provider.fetch_discussion(
+        EvidenceRequest(
+            request_id="reddit-search-policy",
+            run_date=RUN_DATE,
+            tickers=("TSLA",),
+            options={"reddit_search_terms": ["$TSLA"]},
+        )
+    )
+
+    assert transport.calls == 2
+    assert result.status == ProviderStatus.OK
 
 
 @pytest.mark.contract

@@ -137,7 +137,6 @@ from nlp_stock_prediction.contracts.providers import (
     RedditProvider,
     RunConfig,
     TickerDiscoveryRequest,
-    XProvider,
 )
 from nlp_stock_prediction.contracts.report import (
     DEFAULT_JSON_REPORT_CONTRACT,
@@ -302,5 +301,4 @@ __all__ = [
     "WarningSeverity",
     "Watchlist",
     "WatchlistEntry",
-    "XProvider",
 ]

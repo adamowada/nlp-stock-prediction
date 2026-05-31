@@ -128,8 +128,7 @@ def test_research_service_e2e_runs_complete_fixture_backed_tool_suite(
         "audit_manifest",
     }.issubset(artifact_types)
     assert {
-        "reddit",
-        "fixture-x-recent-search",
+        "reddit-public-search",
         "fixture-news",
         "fixture-sec-edgar",
     }.issubset(evidence_providers)

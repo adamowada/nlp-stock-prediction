@@ -54,8 +54,12 @@ introduced.
   separate.
 - Preserve provenance for all external data: provider, query, URL/permalink, retrieved timestamp,
   published timestamp when available, raw identifier, freshness, and extraction confidence.
-- Separate observed claims from the app's analysis. Reddit, X/Twitter, forums, news, filings, and web
+- Separate observed claims from the app's analysis. Reddit, forums, news, filings, and web
   pages are evidence sources, not automatically true statements.
+- Treat Reddit public search and public discussion-page scraping as the only social-evidence lane
+  unless the user explicitly asks to introduce another social source. Preserve search query,
+  result-page, discussion permalink, snapshot, freshness, and warning provenance for every Reddit
+  item.
 - Make internet and live-provider calls through explicit adapters or Codex browsing/search paths that
   write evidence records.
 - Keep secrets out of the repo. Load API keys from environment variables or ignored `.env` files.

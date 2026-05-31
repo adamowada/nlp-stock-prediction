@@ -653,10 +653,16 @@ def retrieval_method_for_provider(provider_name: str) -> RetrievalMethod:
         "sec-edgar",
         "alpha-vantage-fundamentals",
         "alpha-vantage-market-data",
-        "x-recent-search",
     }:
         return RetrievalMethod.OFFICIAL_API
-    if normalized in {"reddit", "ap-news", "candlecharts-market-data", "yahoo-finance-chart"}:
+    if normalized in {
+        "reddit",
+        "reddit-public-search",
+        "reddit-public-page",
+        "ap-news",
+        "candlecharts-market-data",
+        "yahoo-finance-chart",
+    }:
         return RetrievalMethod.PUBLIC_SCRAPE
     return RetrievalMethod.DERIVED
 

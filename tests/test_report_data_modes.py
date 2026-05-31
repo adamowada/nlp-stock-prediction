@@ -20,7 +20,6 @@ from nlp_stock_prediction.contracts import (
     RedditProvider,
     RunConfig,
     SourceEvidence,
-    XProvider,
 )
 from nlp_stock_prediction.orchestration import (
     LIVE_REPORT_DATA_MODE,
@@ -472,10 +471,6 @@ class _UnitLiveProviderFactory(ResearchLiveProviderFactoryProtocol):
         return f"https://live.example.invalid/market-data?symbol={symbol.strip().upper()}"
 
     def reddit_provider(self) -> RedditProvider | None:
-        return None
-
-    def x_provider(self, symbol: str) -> XProvider | None:
-        del symbol
         return None
 
     def news_providers(self, symbol: str) -> tuple[NewsProvider, ...]:

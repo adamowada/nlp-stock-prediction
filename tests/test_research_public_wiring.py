@@ -131,19 +131,20 @@ def test_research_fixture_providers_mark_fixture_provenance() -> None:
         request_id="fixture-provenance-tsla",
         run_date="2026-05-11",
         tickers=("TSLA",),
-        query="TSLA",
+        query="$TSLA",
+        options={"reddit_search_terms": ["$TSLA"]},
         limit=10,
     )
-    x_provider = factory.x_provider("TSLA")
+    reddit_provider = factory.reddit_provider()
     news_provider = factory.news_providers("TSLA")[0]
 
-    assert x_provider is not None
-    x_result = x_provider.fetch_social_posts(request)
+    assert reddit_provider is not None
+    reddit_result = reddit_provider.fetch_discussion(request)
     news_result = news_provider.fetch_articles(request)
 
-    assert x_result.data is not None
+    assert reddit_result.data is not None
     assert news_result.data is not None
-    assert x_result.data[0].provenance.retrieval_method == RetrievalMethod.FIXTURE
+    assert reddit_result.data[0].provenance.retrieval_method == RetrievalMethod.PUBLIC_SCRAPE
     assert news_result.data[0].provenance.retrieval_method == RetrievalMethod.FIXTURE
 
 

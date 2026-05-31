@@ -17,7 +17,6 @@ class SourceKind(StrEnum):
     REDDIT_POST = "reddit_post"
     REDDIT_COMMENT = "reddit_comment"
     REDDIT_TICKER_CARD = "reddit_ticker_card"
-    X_POST = "x_post"
     NEWS_ARTICLE = "news_article"
     MARKET_DATA = "market_data"
     FUNDAMENTAL_DATA = "fundamental_data"

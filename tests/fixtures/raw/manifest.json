@@ -10,7 +10,6 @@
     }
   },
   "fixtures": [
-    ["fixture-x", "recent_tsla", "raw/x/recent_tsla.json", "application/json"],
     ["fixture-news", "tsla", "raw/news/tsla.json", "application/json"],
     ["fixture-candlecharts", "widget_only_tsla", "raw/candlecharts/widget_only_tsla.html", "text/html"],
     ["fixture-candlecharts", "stale_ohlcv_tsla", "raw/candlecharts/stale_ohlcv_tsla.html", "text/html"],

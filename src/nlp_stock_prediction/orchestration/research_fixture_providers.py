@@ -17,9 +17,11 @@ from nlp_stock_prediction.contracts.providers import (
 )
 from nlp_stock_prediction.providers._base import JsonResponse, ProviderTransportError
 from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
+from nlp_stock_prediction.providers.reddit_scrape import (
+    RedditPublicPageProvider,
+    StaticHtmlTransport,
+)
 from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
-from nlp_stock_prediction.providers.social import XRecentSearchProvider
-from nlp_stock_prediction.reddit.provider import FixtureRedditProvider
 
 OFFLINE_FIXTURE_FETCHED_AT = datetime(2026, 5, 14, tzinfo=UTC)
 
@@ -39,34 +41,24 @@ class ResearchFixtureProviderFactory:
         )
 
     def reddit_provider(self) -> RedditProvider | None:
-        card_path = self.fixture_path("reddit", "devvit_card_normal.html")
-        records = self.fixture_json("reddit", "discussion_records.json")
-        if card_path is None or not isinstance(records, list):
+        search_path = self.fixture_path("reddit", "public_search_tsla.html")
+        discussion_path = self.fixture_path("reddit", "public_post_discussion.html")
+        if search_path is None or discussion_path is None:
             return None
         return cast(
             RedditProvider,
-            FixtureRedditProvider(
-                ticker_card_html=card_path.read_text(encoding="utf-8"),
-                discussion_records=cast(list[dict[str, object]], records),
-                fetched_at=self.fetched_at,
-                raw_ticker_snapshot_id="raw-reddit-ticker-card",
-                raw_discussion_snapshot_id="raw-reddit-discussion",
+            RedditPublicPageProvider(
+                transport=StaticHtmlTransport(
+                    {
+                        "/search/": search_path.read_text(encoding="utf-8"),
+                        "public001/daily_watch": discussion_path.read_text(encoding="utf-8"),
+                    }
+                ),
+                discussion_page_limit=1,
+                stale_after_seconds=7 * 86_400,
+                now=lambda: self.fetched_at,
             ),
         )
-
-    def x_provider(self, symbol: str) -> XRecentSearchProvider | None:
-        if symbol.upper() != "TSLA":
-            return None
-        payload = self.fixture_json("raw", "x", "recent_tsla.json")
-        if payload is None:
-            return None
-        provider = XRecentSearchProvider(
-            bearer_token="fixture-token",
-            transport=_StaticJsonTransport({"tweets/search/recent": cast(JsonObject, payload)}),
-            now=lambda: self.fetched_at,
-        )
-        provider.provider_name = "fixture-x-recent-search"
-        return provider
 
     def news_providers(self, symbol: str) -> tuple[NewsProvider, ...]:
         if symbol.upper() != "TSLA":

@@ -1,4 +1,4 @@
-"""Policy-aware public Reddit page scraper for r/wallstreetbets."""
+"""Policy-aware public Reddit search and discussion scraper."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import TypeVar
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from nlp_stock_prediction.contracts import (
     CredentialState,
@@ -49,16 +49,19 @@ from nlp_stock_prediction.reddit.discovery import discover_tickers_from_devvit_h
 from nlp_stock_prediction.reddit.evidence import normalize_reddit_evidence
 from nlp_stock_prediction.reddit.public_html import (
     extract_reddit_discussion_records_from_public_html,
+    extract_reddit_search_results_from_public_html,
     extract_snapshot_observed_at,
 )
 
 T = TypeVar("T")
 
-_DEFAULT_SUBREDDIT_URL = "https://www.reddit.com/r/wallstreetbets/"
+_DEFAULT_REDDIT_SEARCH_URL = "https://www.reddit.com/search/"
 _DEFAULT_USER_AGENT = (
     "nlp-stock-prediction/0.1 (educational fixture-backed stock report; public Reddit pages only)"
 )
 _DEFAULT_FRESHNESS_WINDOW_SECONDS = 86_400
+_DEFAULT_SEARCH_RESULT_LIMIT = 8
+_DEFAULT_DISCUSSION_PAGE_LIMIT = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +80,11 @@ class StaticHtmlTransport:
     ) -> HtmlResponse:
         del headers, timeout, max_bytes
         page = self.pages.get(url)
+        if page is None:
+            for url_fragment, candidate in self.pages.items():
+                if url_fragment in url:
+                    page = candidate
+                    break
         if page is None:
             raise ProviderTransportError(
                 f"No fixture HTML is registered for {url}",
@@ -97,11 +105,19 @@ class RedditPublicPagePolicyDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class _RedditSearchSelection:
+    discussion_urls: tuple[str, ...]
+    metadata_by_url: Mapping[str, Mapping[str, object]]
+    warnings: tuple[ProviderWarning, ...]
+    raw_snapshot_ids: tuple[str, ...]
+    search_urls: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RedditPublicPagePolicy:
-    """Allow only public r/wallstreetbets HTML pages, never API/private/login paths."""
+    """Allow only public Reddit HTML pages, never API/private/login paths."""
 
     allowed_hosts: tuple[str, ...] = ("www.reddit.com", "reddit.com")
-    subreddit_path: str = "/r/wallstreetbets"
 
     def evaluate(self, url: str) -> RedditPublicPagePolicyDecision:
         parsed = urlsplit(url)
@@ -121,7 +137,6 @@ class RedditPublicPagePolicy:
                 "/dev/",
                 "/login/",
                 "/register/",
-                "/search/",
                 "/settings/",
                 "/user/",
                 "/users/",
@@ -129,20 +144,20 @@ class RedditPublicPagePolicy:
             )
         ):
             return RedditPublicPagePolicyDecision(False, "reddit_private_or_endpoint_path")
-        if path != self.subreddit_path and not path.startswith(f"{self.subreddit_path}/"):
-            return RedditPublicPagePolicyDecision(False, "outside_wallstreetbets_public_path")
-        return RedditPublicPagePolicyDecision(True, "allowed_public_wallstreetbets_html")
+        if path in {"/search", "/search/"} or path.startswith("/r/"):
+            return RedditPublicPagePolicyDecision(True, "allowed_public_reddit_html")
+        return RedditPublicPagePolicyDecision(False, "outside_public_reddit_html_path")
 
 
 class RedditPublicPageProvider:
-    """Scrape public r/wallstreetbets HTML and normalize it into existing contracts."""
+    """Scrape public Reddit search/discussion HTML into existing contracts."""
 
-    provider_name = "reddit-public-page"
+    provider_name = "reddit-public-search"
 
     def __init__(
         self,
         *,
-        subreddit_url: str = _DEFAULT_SUBREDDIT_URL,
+        source_url: str = _DEFAULT_REDDIT_SEARCH_URL,
         discussion_urls: Sequence[str] = (),
         transport: HtmlTransport | None = None,
         allow_live_scraping: bool = False,
@@ -150,17 +165,23 @@ class RedditPublicPageProvider:
         now: Callable[[], datetime] = utc_now,
         timeout: float = 10.0,
         stale_after_seconds: int = _DEFAULT_FRESHNESS_WINDOW_SECONDS,
+        search_result_limit: int = _DEFAULT_SEARCH_RESULT_LIMIT,
+        discussion_page_limit: int = _DEFAULT_DISCUSSION_PAGE_LIMIT,
+        search_sort: str = "new",
         user_agent: str = _DEFAULT_USER_AGENT,
         latency_ms: int | None = None,
         cache: HtmlCache | None = None,
     ) -> None:
-        self._subreddit_url = subreddit_url
+        self._source_url = source_url
         self._discussion_urls = tuple(discussion_urls)
         self._transport = transport or (UrllibHtmlTransport() if allow_live_scraping else None)
         self._policy = policy or RedditPublicPagePolicy()
         self._now = now
         self._timeout = timeout
         self._stale_after_seconds = stale_after_seconds
+        self._search_result_limit = max(1, search_result_limit)
+        self._discussion_page_limit = max(1, discussion_page_limit)
+        self._search_sort = search_sort
         self._user_agent = user_agent
         self._latency_ms = latency_ms
         self._cache = cache
@@ -170,7 +191,7 @@ class RedditPublicPageProvider:
         request: TickerDiscoveryRequest,
     ) -> ProviderResult[TickerDiscoveryResult]:
         fetched_at = self._now()
-        source_url = request.source_url or self._subreddit_url
+        source_url = request.source_url or self._source_url
         cache_key = build_cache_key(
             provider_name=self.provider_name,
             source="reddit-ticker-card",
@@ -270,14 +291,26 @@ class RedditPublicPageProvider:
         request: EvidenceRequest,
     ) -> ProviderResult[tuple[SourceEvidence, ...]]:
         fetched_at = self._now()
-        source_urls = self._request_discussion_urls(request)
+        explicit_urls = self._request_discussion_urls(request)
+        search_selection = (
+            _RedditSearchSelection(
+                discussion_urls=explicit_urls,
+                metadata_by_url={},
+                warnings=(),
+                raw_snapshot_ids=(),
+                search_urls=(),
+            )
+            if explicit_urls
+            else self._search_discussion_urls(request, fetched_at)
+        )
+        source_urls = search_selection.discussion_urls
         cache_key = build_cache_key(
             provider_name=self.provider_name,
             source="reddit-discussion-pages",
             run_date=request.run_date,
             tickers=request.tickers,
             query=request.query,
-            url="|".join(source_urls),
+            url="|".join((*search_selection.search_urls, *source_urls)),
         )
         disabled: ProviderResult[tuple[SourceEvidence, ...]] | None = self._disabled_result(
             request=request,
@@ -288,8 +321,8 @@ class RedditPublicPageProvider:
             return disabled
 
         evidence: list[SourceEvidence] = []
-        warnings: list[ProviderWarning] = []
-        raw_snapshot_ids: list[str] = []
+        warnings: list[ProviderWarning] = list(search_selection.warnings)
+        raw_snapshot_ids: list[str] = list(search_selection.raw_snapshot_ids)
         for source_url in source_urls:
             policy_warning = self._policy_warning(source_url, fetched_at)
             if policy_warning is not None:
@@ -331,6 +364,15 @@ class RedditPublicPageProvider:
                 response.html,
                 source_url=source_url,
             )
+            metadata = search_selection.metadata_by_url.get(_canonical_url(source_url), {})
+            records = tuple(
+                _record_with_retrieval_metadata(
+                    record,
+                    discussion_url=source_url,
+                    metadata=metadata,
+                )
+                for record in records
+            )
             login_warning = self._login_wall_warning(
                 response.html,
                 source_url,
@@ -367,6 +409,8 @@ class RedditPublicPageProvider:
                         metadata={
                             "validation": "no_public_discussion_evidence",
                             "source_urls": list(source_urls),
+                            "search_urls": list(search_selection.search_urls),
+                            "search_terms": list(_reddit_search_terms(request)),
                         },
                     )
                 )
@@ -466,7 +510,118 @@ class RedditPublicPageProvider:
                 return urls
         if self._discussion_urls:
             return self._discussion_urls
-        return (self._subreddit_url,)
+        return ()
+
+    def _search_discussion_urls(
+        self,
+        request: EvidenceRequest,
+        fetched_at: datetime,
+    ) -> _RedditSearchSelection:
+        search_terms = _reddit_search_terms(request)
+        search_urls = tuple(
+            build_reddit_public_search_url(term, sort=self._search_sort) for term in search_terms
+        )
+        warnings: list[ProviderWarning] = []
+        raw_snapshot_ids: list[str] = []
+        discussion_urls: list[str] = []
+        metadata_by_url: dict[str, Mapping[str, object]] = {}
+        seen: set[str] = set()
+
+        for search_url, search_term in zip(search_urls, search_terms, strict=True):
+            policy_warning = self._policy_warning(search_url, fetched_at)
+            if policy_warning is not None:
+                warnings.append(policy_warning)
+                continue
+            try:
+                response = self._fetch(
+                    search_url,
+                    run_date=request.run_date,
+                    ticker=None,
+                    source="reddit-search-page",
+                    cache_key=build_cache_key(
+                        provider_name=self.provider_name,
+                        source="reddit-search-page",
+                        run_date=request.run_date,
+                        tickers=request.tickers,
+                        query=search_term,
+                        url=search_url,
+                    ),
+                )
+            except ProviderTransportError as exc:
+                warnings.append(
+                    provider_warning(
+                        provider_name=self.provider_name,
+                        code=_warning_code_from_transport(exc),
+                        severity=WarningSeverity.ERROR,
+                        message=str(exc),
+                        occurred_at=fetched_at,
+                        retryable=exc.retryable,
+                        provider_status_code=exc.status_code,
+                        provider_error_type=exc.error_type,
+                        source_url=search_url,
+                        metadata={"search_query": search_term},
+                    )
+                )
+                continue
+            raw_snapshot_ids.append(response.raw_snapshot_id)
+            results = extract_reddit_search_results_from_public_html(
+                response.html,
+                source_url=search_url,
+            )
+            login_warning = self._login_wall_warning(
+                response.html,
+                search_url,
+                fetched_at,
+                has_public_content=bool(results),
+            )
+            if login_warning is not None:
+                warnings.append(login_warning)
+                continue
+            for rank, result in enumerate(results[: self._search_result_limit]):
+                permalink = _string(result.get("permalink")) or _string(result.get("url"))
+                if permalink is None:
+                    continue
+                key = _canonical_url(permalink)
+                if key in seen:
+                    continue
+                seen.add(key)
+                discussion_urls.append(permalink)
+                metadata_by_url[key] = {
+                    "search_query": search_term,
+                    "search_url": search_url,
+                    "result_rank": rank,
+                    "result_title": result.get("title"),
+                    "result_subreddit": result.get("subreddit"),
+                }
+                if len(discussion_urls) >= self._discussion_page_limit:
+                    break
+            if len(discussion_urls) >= self._discussion_page_limit:
+                break
+
+        if not discussion_urls:
+            warnings.append(
+                provider_warning(
+                    provider_name=self.provider_name,
+                    code=WarningCode.NO_DATA,
+                    severity=WarningSeverity.INFO,
+                    message="Reddit public search returned no discussion result links.",
+                    occurred_at=fetched_at,
+                    raw_snapshot_id="|".join(raw_snapshot_ids) or None,
+                    metadata={
+                        "validation": "no_public_search_results",
+                        "search_terms": list(search_terms),
+                        "search_urls": list(search_urls),
+                    },
+                )
+            )
+
+        return _RedditSearchSelection(
+            discussion_urls=tuple(discussion_urls[: self._discussion_page_limit]),
+            metadata_by_url=metadata_by_url,
+            warnings=tuple(warnings),
+            raw_snapshot_ids=tuple(raw_snapshot_ids),
+            search_urls=search_urls,
+        )
 
     def _policy_warning(self, source_url: str, fetched_at: datetime) -> ProviderWarning | None:
         decision = self._policy.evaluate(source_url)
@@ -573,6 +728,73 @@ def _raw_snapshot_id(source: str, html: str) -> str:
     return raw_snapshot_id_for_html(source, html)
 
 
+def build_reddit_public_search_url(term: str, *, sort: str = "new") -> str:
+    """Return the public Reddit HTML search URL for a bounded scrape query."""
+
+    query = urlencode({"q": " ".join(term.split()), "type": "link", "sort": sort})
+    return f"{_DEFAULT_REDDIT_SEARCH_URL}?{query}"
+
+
+def _reddit_search_terms(request: EvidenceRequest) -> tuple[str, ...]:
+    option_terms = request.options.get("reddit_search_terms")
+    if isinstance(option_terms, Sequence) and not isinstance(option_terms, str):
+        option_term_values = tuple(
+            dict.fromkeys(item.strip() for item in option_terms if isinstance(item, str) and item)
+        )
+        if option_term_values:
+            return option_term_values
+    terms: list[str] = []
+    for ticker in request.tickers:
+        normalized = ticker.strip().upper()
+        if not normalized:
+            continue
+        terms.append(f"${normalized}")
+        terms.append(f"{normalized} stock")
+    company_name = request.options.get("company_name")
+    if isinstance(company_name, str) and company_name.strip():
+        terms.append(f"{company_name.strip()} stock")
+    aliases = request.options.get("aliases")
+    if isinstance(aliases, Sequence) and not isinstance(aliases, str):
+        for alias in aliases:
+            if isinstance(alias, str) and alias.strip():
+                terms.append(f"{alias.strip()} stock")
+    if request.query and not terms:
+        terms.append(request.query)
+    return tuple(dict.fromkeys(terms or ["stock market"]))
+
+
+def _record_with_retrieval_metadata(
+    record: Mapping[str, object],
+    *,
+    discussion_url: str,
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    copied = dict(record)
+    copied["source_url"] = discussion_url
+    copied["discussion_url"] = discussion_url
+    for key in ("search_query", "search_url", "result_rank"):
+        value = metadata.get(key)
+        if _is_json_scalar(value):
+            copied[key] = value
+    return copied
+
+
+def _canonical_url(value: str) -> str:
+    parsed = urlsplit(value)
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path.rstrip('/')}/"
+
+
+def _string(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _is_json_scalar(value: object) -> bool:
+    return isinstance(value, str | int | float | bool) or value is None
+
+
 def _is_stale_observation(discovery: TickerDiscoveryResult) -> bool:
     return any(
         candidate.provenance.freshness_status == FreshnessStatus.STALE
@@ -632,4 +854,5 @@ __all__ = [
     "RedditPublicPageProvider",
     "StaticHtmlTransport",
     "UrllibHtmlTransport",
+    "build_reddit_public_search_url",
 ]

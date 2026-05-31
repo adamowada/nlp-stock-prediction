@@ -216,9 +216,8 @@ Live outcome materialization uses only live-mode market artifacts, rejects same-
 that were not observable at the cutoff, and marks started attempts as failed if a late validation or
 persistence step raises. SQLite outcome rows reject impossible observed/non-observed shapes, report
 artifact index rows must align with their tool run, and JSON metadata writes reject non-finite
-numbers. Provider hardening keeps X API limits within the real provider contract, routes Reddit
-public-page scraping through the shared HTML retry/cache path, and preserves timeout/cache-failure
-classification without substituting fixture or dummy data.
+numbers. Provider hardening routes Reddit public-search scraping through the shared HTML retry/cache
+path and preserves timeout/cache-failure classification without substituting fixture or dummy data.
 
 The canonical public interface is public:
 
@@ -257,7 +256,6 @@ variables or ignored `.env` files.
 | `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE` | No | Set to `1` to opt in to the real Codex smoke path. |
 | `NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY` | No | Optional Alpha Vantage key for live market data and fundamentals; live stock/ETF market data can still use credential-free public chart data when this is absent. |
 | `NLP_STOCK_PREDICTION_FRED_API_KEY` | No | Optional FRED key for live macro context. |
-| `NLP_STOCK_PREDICTION_X_BEARER_TOKEN` | No | Token for X/Twitter-backed provider experiments. |
 | `NLP_STOCK_PREDICTION_LIVE_USER_AGENT` | No | Contact User-Agent for opt-in live provider smoke tests. |
 | `NLP_STOCK_PREDICTION_SEC_USER_AGENT` | No | Contact User-Agent for SEC EDGAR requests. |
 | `NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT` | No | User agent for public HTML scraping providers. |
@@ -268,6 +266,10 @@ variables or ignored `.env` files.
 SEC EDGAR ticker-to-CIK resolution is automatic through SEC's public
 `company_tickers_exchange.json` dataset; unresolved or malformed lookups surface as provider
 failures instead of requiring local per-symbol environment mappings.
+
+Social evidence is Reddit-only. Live runs use bounded public Reddit search and public discussion
+HTML scraping, preserve search/discussion provenance, and surface empty results, login walls, rate
+limits, stale content, or malformed pages as provider warnings rather than inferred sentiment.
 
 The project uses two SQLite databases:
 

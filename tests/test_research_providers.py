@@ -14,13 +14,11 @@ import pytest
 from nlp_stock_prediction.contracts import (
     CredentialState,
     EvidenceRequest,
-    FreshnessStatus,
     FundamentalsRequest,
     MacroRequest,
     MarketDataRequest,
     ProviderResult,
     ProviderStatus,
-    RetrievalMethod,
     SourceKind,
     TimeHorizon,
     WarningCode,
@@ -41,7 +39,6 @@ from nlp_stock_prediction.providers.market import (
 )
 from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
 from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
-from nlp_stock_prediction.providers.social import XRecentSearchProvider, build_x_recent_search_query
 
 RUN_DATE = date(2026, 5, 11)
 FETCHED_AT = datetime(2026, 5, 11, 18, 0, tzinfo=UTC)
@@ -205,107 +202,6 @@ class _SequencedJsonTransport:
 
 
 @pytest.mark.unit
-def test_x_recent_search_builds_cashtag_query() -> None:
-    assert build_x_recent_search_query("tsla") == "$TSLA lang:en -is:retweet"
-    assert build_x_recent_search_query("NVDA", lang="en", exclude_retweets=False) == "$NVDA lang:en"
-
-
-@pytest.mark.contract
-def test_x_provider_maps_recent_search_posts_to_evidence() -> None:
-    transport = _FakeJsonTransport(
-        {"tweets/search/recent": JsonResponse(payload=_fixture("x", "recent_tsla.json"))}
-    )
-    provider = XRecentSearchProvider(
-        bearer_token="fixture-token",
-        transport=transport,
-        now=lambda: FETCHED_AT,
-    )
-    request = EvidenceRequest(
-        request_id="x-tsla-2026-05-11",
-        run_date=RUN_DATE,
-        tickers=("TSLA",),
-        limit=10,
-    )
-
-    result = provider.fetch_social_posts(request)
-
-    assert result.status == ProviderStatus.OK
-    assert result.health.credential_state == CredentialState.CONFIGURED
-    assert result.data is not None
-    assert len(result.data) == 1
-    evidence = result.data[0]
-    assert evidence.source_kind == SourceKind.X_POST
-    assert evidence.ticker == "TSLA"
-    assert evidence.text == "$TSLA call spreads into robotaxi catalyst. Risk stays defined."
-    assert evidence.author_hash is not None
-    assert evidence.author_hash != "raw-author-1"
-    assert evidence.permalink == "https://x.com/i/web/status/1789000000000000001"
-    assert evidence.matched_tickers == ("TSLA",)
-    assert evidence.match_spans[0].text == "$TSLA"
-    assert evidence.provenance.provider_name == "x-recent-search"
-    assert evidence.provenance.retrieval_method == RetrievalMethod.OFFICIAL_API
-    assert evidence.provenance.query == "$TSLA lang:en -is:retweet"
-    assert evidence.provenance.provider_metadata["sort_order"] == "relevancy"
-    assert evidence.provenance.raw_snapshot_id == result.raw_snapshot_id
-    assert evidence.provenance.freshness_status == FreshnessStatus.FRESH
-    assert "query=%24TSLA+lang%3Aen+-is%3Aretweet" in transport.calls[0]
-    assert "sort_order=relevancy" in transport.calls[0]
-    assert "max_results=10" in transport.calls[0]
-
-
-@pytest.mark.contract
-def test_x_provider_defaults_to_relevancy_and_fifty_posts() -> None:
-    transport = _FakeJsonTransport(
-        {"tweets/search/recent": JsonResponse(payload=_fixture("x", "recent_tsla.json"))}
-    )
-    provider = XRecentSearchProvider(
-        bearer_token="fixture-token",
-        transport=transport,
-        now=lambda: FETCHED_AT,
-    )
-    request = EvidenceRequest(
-        request_id="x-tsla-defaults-2026-05-11",
-        run_date=RUN_DATE,
-        tickers=("TSLA",),
-    )
-
-    result = provider.fetch_social_posts(request)
-
-    assert result.status == ProviderStatus.OK
-    assert "sort_order=relevancy" in transport.calls[0]
-    assert "max_results=50" in transport.calls[0]
-
-
-@pytest.mark.contract
-def test_x_provider_clamps_api_limit_and_slices_results_locally() -> None:
-    payload = _fixture("x", "recent_tsla.json")
-    first = cast(list[dict[str, object]], payload["data"])[0]
-    payload["data"] = [
-        {**first, "id": f"178900000000000000{index}", "text": f"$TSLA post {index}"}
-        for index in range(12)
-    ]
-    transport = _FakeJsonTransport({"tweets/search/recent": JsonResponse(payload=payload)})
-    provider = XRecentSearchProvider(
-        bearer_token="fixture-token",
-        transport=transport,
-        now=lambda: FETCHED_AT,
-    )
-
-    result = provider.fetch_social_posts(
-        EvidenceRequest(
-            request_id="x-tsla-small-limit-2026-05-11",
-            run_date=RUN_DATE,
-            tickers=("TSLA",),
-            limit=3,
-        )
-    )
-
-    assert "max_results=10" in transport.calls[0]
-    assert result.data is not None
-    assert len(result.data) == 3
-
-
-@pytest.mark.unit
 def test_urllib_json_transport_classifies_wrapped_socket_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -318,66 +214,6 @@ def test_urllib_json_transport_classifies_wrapped_socket_timeout(
         UrllibJsonTransport().get_json("https://example.com/data.json")
 
     assert exc.value.error_type == "timeout"
-
-
-@pytest.mark.contract
-def test_x_provider_returns_unconfigured_warning_without_credentials() -> None:
-    provider = XRecentSearchProvider(transport=_FakeJsonTransport({}), now=lambda: FETCHED_AT)
-    request = EvidenceRequest(
-        request_id="x-missing-token-2026-05-11",
-        run_date=RUN_DATE,
-        tickers=("TSLA",),
-    )
-
-    result = provider.fetch_social_posts(request)
-
-    assert result.status == ProviderStatus.UNCONFIGURED
-    assert result.data is None
-    assert result.warnings[0].code == WarningCode.MISSING_CREDENTIALS
-    assert result.health.credential_state == CredentialState.MISSING
-
-
-@pytest.mark.contract
-def test_x_provider_returns_empty_without_query_or_ticker() -> None:
-    transport = _FakeJsonTransport({})
-    provider = XRecentSearchProvider(
-        bearer_token="fixture-token",
-        transport=transport,
-        now=lambda: FETCHED_AT,
-    )
-    request = EvidenceRequest(
-        request_id="x-empty-query-2026-05-11",
-        run_date=RUN_DATE,
-        tickers=(),
-    )
-
-    result = provider.fetch_social_posts(request)
-
-    assert result.status == ProviderStatus.EMPTY
-    assert result.warnings[0].code == WarningCode.NO_DATA
-    assert transport.calls == []
-
-
-@pytest.mark.contract
-def test_x_provider_treats_no_result_meta_as_empty() -> None:
-    transport = _FakeJsonTransport(
-        {"tweets/search/recent": JsonResponse(payload={"meta": {"result_count": 0}})}
-    )
-    provider = XRecentSearchProvider(
-        bearer_token="fixture-token",
-        transport=transport,
-        now=lambda: FETCHED_AT,
-    )
-    request = EvidenceRequest(
-        request_id="x-no-results-2026-05-11",
-        run_date=RUN_DATE,
-        tickers=("TSLA",),
-    )
-
-    result = provider.fetch_social_posts(request)
-
-    assert result.status == ProviderStatus.EMPTY
-    assert result.warnings[0].code == WarningCode.NO_DATA
 
 
 @pytest.mark.contract
@@ -545,37 +381,6 @@ def test_public_news_provider_does_not_attribute_unmatched_articles_to_requested
     )
 
     result = provider.fetch_articles(request)
-
-    assert result.status == ProviderStatus.EMPTY
-    assert result.data is None
-    assert result.warnings[0].code == WarningCode.NO_DATA
-
-
-@pytest.mark.contract
-def test_x_provider_does_not_attribute_unmatched_posts_to_requested_ticker() -> None:
-    payload = {
-        "data": [
-            {
-                "id": "1789000000000000999",
-                "text": "Copper miners rally on supply concerns.",
-                "created_at": FETCHED_AT.isoformat(),
-                "public_metrics": {"like_count": 4},
-            }
-        ]
-    }
-    transport = _FakeJsonTransport({"tweets/search/recent": JsonResponse(payload=payload)})
-    provider = XRecentSearchProvider(
-        bearer_token="fixture-token",
-        transport=transport,
-        now=lambda: FETCHED_AT,
-    )
-    request = EvidenceRequest(
-        request_id="x-unmatched-2026-05-11",
-        run_date=RUN_DATE,
-        tickers=("TSLA",),
-    )
-
-    result = provider.fetch_social_posts(request)
 
     assert result.status == ProviderStatus.EMPTY
     assert result.data is None

@@ -48,7 +48,6 @@ from nlp_stock_prediction.contracts import (
     TimeHorizon,
     WarningCode,
     WarningSeverity,
-    XProvider,
 )
 
 RUN_DATE = date(2026, 5, 11)
@@ -178,27 +177,6 @@ class _FakeRedditProvider:
             health=self.health(),
             raw_snapshot_id="raw-reddit-discussion-2026-05-11",
             cache_key="reddit:discussion:TSLA:2026-05-11",
-        )
-
-    def health(self) -> ProviderHealth:
-        return _health(self.provider_name)
-
-
-class _FakeXProvider:
-    provider_name = "fixture-x"
-
-    def fetch_social_posts(
-        self, request: EvidenceRequest
-    ) -> ProviderResult[tuple[SourceEvidence, ...]]:
-        return ProviderResult[tuple[SourceEvidence, ...]](
-            provider_name=self.provider_name,
-            status=ProviderStatus.OK,
-            request=request,
-            fetched_at=FETCHED_AT,
-            data=(_evidence(self.provider_name, SourceKind.X_POST),),
-            health=self.health(),
-            raw_snapshot_id="raw-x-posts-2026-05-11",
-            cache_key="x:posts:TSLA:2026-05-11",
         )
 
     def health(self) -> ProviderHealth:
@@ -383,7 +361,6 @@ class _FakeLLMExtractor:
 @pytest.mark.integration
 def test_deterministic_fake_providers_return_protocol_result_shapes() -> None:
     reddit: RedditProvider = _FakeRedditProvider()
-    x_provider: XProvider = _FakeXProvider()
     news: NewsProvider = _FakeNewsProvider()
     market: MarketDataProvider = _FakeMarketDataProvider()
     fundamentals: FundamentalsProvider = _FakeFundamentalsProvider()
@@ -423,7 +400,6 @@ def test_deterministic_fake_providers_return_protocol_result_shapes() -> None:
 
     discovery = reddit.discover_tickers(ticker_request)
     reddit_discussion = reddit.fetch_discussion(evidence_request)
-    x_posts = x_provider.fetch_social_posts(evidence_request)
     articles = news.fetch_articles(evidence_request)
     candles = market.fetch_daily_candles(market_request)
     fundamental_snapshot = fundamentals.fetch_fundamentals(fundamentals_request)
@@ -442,8 +418,6 @@ def test_deterministic_fake_providers_return_protocol_result_shapes() -> None:
     assert discovery.data.tickers == TICKERS
     assert reddit_discussion.data is not None
     assert reddit_discussion.data[0].provenance.provider_name == "fixture-reddit"
-    assert x_posts.data is not None
-    assert x_posts.data[0].source_kind == SourceKind.X_POST
     assert articles.data is not None
     assert articles.data[0].source_kind == SourceKind.NEWS_ARTICLE
     assert candles.data is not None
@@ -644,7 +618,7 @@ def test_provider_request_round_trips_through_json_serialization() -> None:
         options={
             "include_removed": False,
             "minimum_score": 10,
-            "source_weights": {"reddit": 0.7, "x": 0.3},
+            "source_weights": {"reddit": 1.0},
         },
         include_comments=True,
         include_posts=False,
@@ -659,7 +633,7 @@ def test_provider_request_round_trips_through_json_serialization() -> None:
     assert dumped["tickers"] == ["TSLA", "NVDA"]
     assert dumped["window"]["start"].startswith("2026-05-10T09:30:00")
     assert dumped["limit"] == 25
-    assert dumped["options"]["source_weights"] == {"reddit": 0.7, "x": 0.3}
+    assert dumped["options"]["source_weights"] == {"reddit": 1.0}
     assert dumped["include_comments"] is True
     assert dumped["include_posts"] is False
     assert decoded == request

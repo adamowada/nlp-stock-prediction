@@ -106,16 +106,16 @@ Acceptance status:
 Goal: convert research capabilities into first-class independent tools.
 
 Status: fixture-backed first-class tools are implemented for offline reports, and the guarded live
-report path now wires live market, social, news, fundamentals, and macro providers without fixture or
-dummy fallback. Tool runs write typed artifacts, index SQLite run-graph rows, and expose recoverable
-failures as visible warning/error results.
+report path now wires live market, Reddit-only social, news, fundamentals, and macro providers
+without fixture or dummy fallback. Tool runs write typed artifacts, index SQLite run-graph rows, and
+expose recoverable failures as visible warning/error results.
 
 Built:
 
 - universe discovery tool over the Phase 3 contracts and registry;
 - market data tool;
 - technical package tool;
-- social evidence tool;
+- Reddit public-search social evidence tool;
 - news/catalyst tool;
 - fundamentals tool;
 - sector/macro tool;

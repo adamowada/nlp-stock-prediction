@@ -217,7 +217,6 @@ OPENAI_API_KEY
 NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE
 NLP_STOCK_PREDICTION_ALPHA_VANTAGE_API_KEY
 NLP_STOCK_PREDICTION_FRED_API_KEY
-NLP_STOCK_PREDICTION_X_BEARER_TOKEN
 NLP_STOCK_PREDICTION_LIVE_USER_AGENT
 NLP_STOCK_PREDICTION_SEC_USER_AGENT
 NLP_STOCK_PREDICTION_SCRAPE_USER_AGENT
@@ -232,11 +231,15 @@ SEC EDGAR ticker-to-CIK resolution is automatic through SEC's public
 `company_tickers_exchange.json` dataset. The live path does not accept local per-symbol CIK
 environment mappings; if the official dataset cannot be fetched, parsed, or matched to the requested
 ticker, the SEC provider fails loudly in provider health. The live path also honors
-`ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`, `FRED_API_KEY`, and `X_BEARER_TOKEN`
+`ALPHA_VANTAGE_API_KEY`, `MARKET_DATA_ALPHA_VANTAGE_API_KEY`, and `FRED_API_KEY`
 as fallback names. Live stock/ETF market data prefers Alpha Vantage when configured, then falls
 back to credential-free public providers such as Yahoo Finance chart data when Alpha Vantage is
 rate-limited, unavailable, or returns no usable bars. Missing optional credentials are surfaced in
 the run graph and final report instead of being replaced with fixture data.
+
+Social evidence has no credentialed social-network provider surface. The live path uses bounded
+public Reddit search and public discussion-page HTML scraping through the shared scraping cache,
+with warnings for login walls, rate limits, empty results, stale content, and malformed pages.
 
 The AP News live adapter searches AP's public search page for the requested ticker before falling
 back to the financial-markets hub. AP search results are still filtered through ticker matching, so

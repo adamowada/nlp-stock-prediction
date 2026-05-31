@@ -607,7 +607,7 @@ _DEFAULT_PROVIDER_REPLACEMENT_SPECS = (
     ),
     ProviderReplacementSpec(
         provider_family="social",
-        source_provider="x-recent-search",
+        source_provider="reddit-public-search",
         replacement_provider="reddit-public-page",
         preserved_fields=tuple(
             field for field in _REQUIRED_FIELDS_BY_FAMILY["social"] if field != "published_at"
@@ -640,7 +640,7 @@ _DEFAULT_PROVIDER_REPLACEMENT_SPECS = (
     ),
     ProviderReplacementSpec(
         provider_family="scraping",
-        source_provider="reddit-public-page",
+        source_provider="reddit-public-search",
         replacement_provider="ap-news",
         preserved_fields=_REQUIRED_FIELDS_BY_FAMILY["scraping"],
         expected_artifact_type="normalized_evidence",

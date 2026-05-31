@@ -40,10 +40,13 @@ from nlp_stock_prediction.providers._base import JsonResponse
 from nlp_stock_prediction.providers.apnews import APNewsProvider, APNewsProviderConfig
 from nlp_stock_prediction.providers.fred import FredMacroProvider
 from nlp_stock_prediction.providers.news import PublicNewsProvider, PublicNewsProviderConfig
+from nlp_stock_prediction.providers.reddit_scrape import (
+    RedditPublicPageProvider,
+    StaticHtmlTransport,
+    build_reddit_public_search_url,
+)
 from nlp_stock_prediction.providers.scraping import HtmlResponse
 from nlp_stock_prediction.providers.sec_edgar import SecEdgarFundamentalsProvider
-from nlp_stock_prediction.providers.social import XRecentSearchProvider
-from nlp_stock_prediction.reddit.provider import FixtureRedditProvider
 from nlp_stock_prediction.storage import ResearchRunRecord, SQLiteStore
 
 pytestmark = pytest.mark.integration
@@ -114,17 +117,6 @@ def _sec_company_tickers_exchange_payload() -> dict[str, Any]:
     }
 
 
-def _reddit_records() -> list[dict[str, object]]:
-    return cast(
-        list[dict[str, object]],
-        json.loads((FIXTURE_ROOT / "reddit" / "discussion_records.json").read_text("utf-8")),
-    )
-
-
-def _reddit_html() -> str:
-    return (FIXTURE_ROOT / "reddit" / "devvit_card_normal.html").read_text("utf-8")
-
-
 def _ap_html(name: str) -> str:
     return (RAW_FIXTURE_ROOT / "apnews" / name).read_text("utf-8")
 
@@ -179,19 +171,20 @@ def store_evidence_text_with_newlines() -> SourceEvidence:
 
 def test_research_social_tool_indexes_social_evidence_and_derived_labels(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    reddit_provider = FixtureRedditProvider(
-        ticker_card_html=_reddit_html(),
-        discussion_records=_reddit_records(),
-        fetched_at=FETCHED_AT,
-        raw_ticker_snapshot_id="raw-reddit-ticker-card",
-        raw_discussion_snapshot_id="raw-reddit-discussion",
-    )
-    x_provider = XRecentSearchProvider(
-        bearer_token="fixture-token",
-        transport=_FakeJsonTransport(
-            {"tweets/search/recent": JsonResponse(payload=_json_fixture("x", "recent_tsla.json"))}
+    search_url = build_reddit_public_search_url("$TSLA")
+    reddit_provider = RedditPublicPageProvider(
+        transport=StaticHtmlTransport(
+            {
+                search_url: (FIXTURE_ROOT / "reddit" / "public_search_tsla.html").read_text(
+                    "utf-8"
+                ),
+                "public001/daily_watch": (
+                    FIXTURE_ROOT / "reddit" / "public_post_discussion.html"
+                ).read_text("utf-8"),
+            }
         ),
         now=lambda: FETCHED_AT,
+        discussion_page_limit=1,
     )
 
     result = run_research_social_evidence_tool(
@@ -203,8 +196,8 @@ def test_research_social_tool_indexes_social_evidence_and_derived_labels(tmp_pat
         run_date=RUN_DATE,
         generated_at=FETCHED_AT,
         reddit_provider=cast(RedditProvider, reddit_provider),
-        x_provider=x_provider,
         instrument_id="instrument:equity:us:tsla",
+        company_name="Tesla, Inc.",
         extra_tickers=("AI", "MU", "ON"),
         limit=25,
     )
@@ -216,22 +209,21 @@ def test_research_social_tool_indexes_social_evidence_and_derived_labels(tmp_pat
     assert result.status == "successful"
     assert store.get_tool_run(result.tool_run_id) is not None
     assert store.get_artifact(result.artifact_id) is not None
-    assert len(store.list_source_queries_for_run(RUN_ID)) == 2
-    assert len(evidence_rows) == 3
+    assert len(store.list_source_queries_for_run(RUN_ID)) == 1
+    assert len(evidence_rows) == 2
     assert any(label["stance"] == "contradicts" for label in labels)
-    assert any(label["catalysts"] == ["robotaxi"] for label in labels)
     assert all(row.metadata["source_evidence"] for row in evidence_rows)
     assert any("AI calls look expensive" in row.claim for row in evidence_rows)
     assert all("derived_analysis" in row.metadata for row in evidence_rows)
     assert any(evidence_stance_from_record(row) == "contradicts" for row in evidence_rows)
-    x_query = next(
-        query
-        for query in store.list_source_queries_for_run(RUN_ID)
-        if query.provider == "x-recent-search"
+    source_query = store.list_source_queries_for_run(RUN_ID)[0]
+    assert source_query.provider == "reddit-public-search"
+    assert source_query.url is not None
+    assert "reddit.com" in source_query.url
+    assert payload["request"]["options"]["company_name"] == "Tesla, Inc."
+    assert payload["source_evidence"][0]["provenance"]["provider_metadata"]["search_url"] == (
+        search_url
     )
-    assert x_query.url is not None
-    assert "tweets/search/recent" in x_query.url
-    assert "x.com/i/web/status" not in x_query.url
 
 
 def test_research_news_tool_preserves_articles_and_catalyst_labels(tmp_path: Path) -> None:

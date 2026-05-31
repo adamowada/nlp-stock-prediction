@@ -38,7 +38,7 @@ First-class tools should be independently callable and should emit typed artifac
 - instrument registry;
 - market data;
 - technical package;
-- social evidence;
+- social evidence through bounded Reddit public search and public discussion-page scraping;
 - news and catalyst evidence;
 - fundamentals;
 - sector and macro context;
@@ -102,6 +102,11 @@ Every material report claim should trace to one of:
 
 Evidence for and evidence against must both be preserved. Contradictions are useful signal, not
 reporting noise.
+
+The implemented social-evidence lane is Reddit-only. Reddit search pages and discussion permalinks
+are provenance sources, and Reddit posts/comments are observed discussion rather than verified fact.
+Empty searches, login walls, rate limits, stale content, and malformed pages remain visible provider
+warnings instead of being converted into sentiment.
 
 Implemented hardening currently enforces that normalized source match spans and report evidence
 reference quotes point back into the stored evidence text. External evidence provenance must remain

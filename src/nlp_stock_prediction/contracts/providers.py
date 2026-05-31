@@ -223,16 +223,6 @@ class RedditProvider(Protocol):
     def health(self) -> ProviderHealth: ...
 
 
-class XProvider(Protocol):
-    provider_name: str
-
-    def fetch_social_posts(
-        self, request: EvidenceRequest
-    ) -> ProviderResult[tuple[SourceEvidence, ...]]: ...
-
-    def health(self) -> ProviderHealth: ...
-
-
 class NewsProvider(Protocol):
     provider_name: str
 
@@ -302,5 +292,4 @@ __all__ = [
     "RedditProvider",
     "RunConfig",
     "TickerDiscoveryRequest",
-    "XProvider",
 ]

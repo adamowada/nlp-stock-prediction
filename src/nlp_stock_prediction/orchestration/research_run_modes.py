@@ -12,7 +12,6 @@ from nlp_stock_prediction.contracts.providers import (
     MarketDataProvider,
     NewsProvider,
     RedditProvider,
-    XProvider,
 )
 from nlp_stock_prediction.orchestration.orchestration_common import symbol_slug
 from nlp_stock_prediction.orchestration.report_data_modes import (
@@ -45,7 +44,6 @@ class ResearchMarketDataSelection:
 @dataclass(frozen=True)
 class ResearchSocialProviderSelection:
     reddit_provider: RedditProvider | None
-    x_provider: XProvider | None
 
 
 @dataclass(frozen=True)
@@ -91,15 +89,13 @@ class ResearchRunModeAdapter:
         )
 
     def social_providers(self, symbol: str) -> ResearchSocialProviderSelection:
-        normalized_symbol = symbol.strip().upper()
+        del symbol
         if self.is_live:
             return ResearchSocialProviderSelection(
                 reddit_provider=self.live_providers.reddit_provider(),
-                x_provider=self.live_providers.x_provider(normalized_symbol),
             )
         return ResearchSocialProviderSelection(
             reddit_provider=self.fixtures.reddit_provider(),
-            x_provider=self.fixtures.x_provider(normalized_symbol),
         )
 
     def news_providers(self, symbol: str) -> tuple[NewsProvider, ...]:

@@ -291,6 +291,37 @@ def test_codex_activity_summarizes_shell_command_completion() -> None:
     )
 
 
+def test_codex_activity_summarizes_unknown_events_with_safe_fields() -> None:
+    assert _codex_activity_line(
+        {
+            "type": "artifact.indexed",
+            "run_id": "research-2026-05-14-tsla",
+            "artifact_path": "C:/repo/reports/2026-05-14/tsla/audit/social.json",
+            "api_key": "secret",
+        }
+    ) == (
+        "Observed artifact.indexed: run_id=research-2026-05-14-tsla, "
+        "artifact_path=.../tsla/audit/social.json."
+    )
+
+
+def test_codex_activity_summarizes_token_usage_events() -> None:
+    assert (
+        _codex_activity_line(
+            {
+                "type": "token_usage",
+                "usage": {
+                    "input_tokens": 20,
+                    "output_tokens": 8,
+                    "reasoning_output_tokens": 3,
+                    "total_tokens": 31,
+                },
+            }
+        )
+        == "Token usage (input 20, output 8, reasoning 3, total 31 tokens)."
+    )
+
+
 def test_codex_activity_suppresses_unhelpful_item_lifecycle_events() -> None:
     assert _codex_activity_line({"type": "item.started", "item": {"type": "unknown"}}) is None
     assert _codex_activity_line({"type": "item.completed", "item": {"type": "unknown"}}) is None

@@ -749,8 +749,11 @@ def _codex_activity_line(event: dict[str, object]) -> str | None:
         return "Turn started."
     if event_type == "turn.completed":
         return _turn_completed_line(event)
+    if (usage_line := _usage_activity_line(event, prefix="Token usage")) is not None:
+        return usage_line
     if event_type is not None and "error" in event_type.lower():
-        return "Codex reported an error."
+        detail = _selected_field_summary(event, exclude_keys={"type", "event", "kind"})
+        return _activity_sentence("Codex reported an error", detail)
 
     if item is not None:
         stage = _activity_state(event_type, _string_field(item, "status"))
@@ -766,7 +769,8 @@ def _codex_activity_line(event: dict[str, object]) -> str | None:
             return None
 
     if event_type is not None:
-        return f"Observed Codex event: {_humanize_event_type(event_type)}."
+        detail = _selected_field_summary(event, exclude_keys={"type", "event", "kind"})
+        return _activity_sentence(f"Observed {_humanize_event_type(event_type)}", detail)
     return None
 
 
@@ -863,19 +867,34 @@ def _reasoning_summary(item: dict[str, object]) -> str | None:
 
 
 def _turn_completed_line(event: dict[str, object]) -> str:
+    usage_line = _usage_activity_line(event, prefix="Turn completed")
+    if usage_line is not None:
+        return usage_line
+    return "Turn completed."
+
+
+def _usage_activity_line(event: dict[str, object], *, prefix: str) -> str | None:
     usage = _dict_field(event, "usage")
     if usage is None:
-        return "Turn completed."
+        usage = _dict_field(event, "token_usage")
+    if usage is None:
+        return None
+    input_tokens = usage.get("input_tokens")
     output_tokens = usage.get("output_tokens")
     reasoning_tokens = usage.get("reasoning_output_tokens")
+    total_tokens = usage.get("total_tokens")
     details: list[str] = []
+    if isinstance(input_tokens, int):
+        details.append(f"input {input_tokens}")
     if isinstance(output_tokens, int):
         details.append(f"output {output_tokens}")
     if isinstance(reasoning_tokens, int):
         details.append(f"reasoning {reasoning_tokens}")
+    if isinstance(total_tokens, int):
+        details.append(f"total {total_tokens}")
     if not details:
-        return "Turn completed."
-    return f"Turn completed ({', '.join(details)} tokens)."
+        return None
+    return f"{prefix} ({', '.join(details)} tokens)."
 
 
 def _arguments_payload(payload: dict[str, object]) -> object | None:
@@ -945,6 +964,51 @@ def _structured_result_summary(value: object) -> str | None:
     return None
 
 
+def _selected_field_summary(
+    payload: dict[str, object],
+    *,
+    exclude_keys: set[str],
+) -> str | None:
+    preferred = (
+        "tool_name",
+        "tool",
+        "name",
+        "command",
+        "status",
+        "exit_code",
+        "run_id",
+        "symbol",
+        "path",
+        "file",
+        "artifact_path",
+        "report_path",
+        "message",
+        "error",
+    )
+    parts: list[str] = []
+    for key in preferred:
+        if key in exclude_keys or key not in payload:
+            continue
+        if _is_sensitive_activity_key(key):
+            parts.append(f"{key}=<redacted>")
+            continue
+        parts.append(f"{key}={_format_activity_value(payload[key])}")
+        if len(parts) >= 4:
+            break
+    if parts:
+        return ", ".join(parts)
+    for key, value in payload.items():
+        if key in exclude_keys or key in {"item", "payload", "usage", "token_usage"}:
+            continue
+        if _is_sensitive_activity_key(key):
+            parts.append(f"{key}=<redacted>")
+        elif _is_safe_activity_value(value):
+            parts.append(f"{key}={_format_activity_value(value)}")
+        if len(parts) >= 4:
+            break
+    return ", ".join(parts) if parts else None
+
+
 def _coerce_mapping(value: object | None) -> dict[str, object]:
     if isinstance(value, dict):
         return value
@@ -971,6 +1035,10 @@ def _format_activity_value(value: object) -> str:
     if isinstance(value, dict):
         return f"{len(value)} fields"
     return _redacted_or_display_value(str(value))
+
+
+def _is_safe_activity_value(value: object) -> bool:
+    return isinstance(value, str | int | float | bool) or value is None
 
 
 def _redacted_or_display_value(value: str) -> str:
