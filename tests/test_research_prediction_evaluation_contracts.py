@@ -190,6 +190,29 @@ def test_evaluation_scores_no_source_evidence_as_insufficient() -> None:
 
 
 @pytest.mark.unit
+def test_evaluation_preserves_unavailable_candidate_status() -> None:
+    candidate = _candidate().model_copy(
+        update={
+            "candidate_id": "candidate-nvda-unavailable",
+            "instrument_id": "instrument:codex:NVDA",
+            "symbol": "NVDA",
+            "status": PredictionStatus.UNAVAILABLE,
+            "confidence": 0.08,
+        }
+    )
+
+    evaluation = evaluate_prediction_candidate(
+        candidate,
+        evidence_sources=(),
+        created_at=NOW,
+    )
+
+    assert evaluation.status == PredictionStatus.UNAVAILABLE
+    assert evaluation.score == 0.0
+    assert evaluation.metadata["candidate_declared_status"] == "unavailable"
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("source", "expected_context"),
     (

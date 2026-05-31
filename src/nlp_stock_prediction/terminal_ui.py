@@ -20,7 +20,11 @@ from rich.text import Text
 
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.contracts.report import AuditManifest, DailyReport
-from nlp_stock_prediction.orchestration.report_bundle import BatchReportBundle, ReportBundle
+from nlp_stock_prediction.orchestration.report_bundle import (
+    BatchReportBundle,
+    ReportBundle,
+    WsbBatchReportBundle,
+)
 from nlp_stock_prediction.reporting.view import ReportView
 
 ReportGenerator = Callable[[RunConfig], ReportBundle]
@@ -177,6 +181,23 @@ def print_batch_research_paths(
         for target in bundle.ranking_report.failed_targets:
             stream.write(f"{target.symbol}: {target.error_message}\n")
     stream.flush()
+
+
+def print_wsb_batch_research_paths(
+    bundle: WsbBatchReportBundle,
+    *,
+    file: IO[str] | None = None,
+) -> None:
+    """Print script-compatible WSB discovery and batch ranking paths."""
+
+    stream = file or sys.stdout
+    stream.write(f"Wrote WSB discovery Markdown: {bundle.discovery_markdown_path}\n")
+    stream.write(f"Wrote WSB discovery JSON: {bundle.discovery_json_path}\n")
+    stream.write(
+        "Discovered WSB symbols: "
+        f"{', '.join(stock.symbol for stock in bundle.discovery_report.trending_stocks)}\n"
+    )
+    print_batch_research_paths(bundle.batch_bundle, file=stream)
 
 
 def _ask_date(console: Console) -> date:
@@ -460,6 +481,7 @@ def _record_error(record: object) -> str | None:
 __all__ = [
     "print_batch_research_paths",
     "print_research_paths",
+    "print_wsb_batch_research_paths",
     "prompt_for_research_config",
     "render_research_complete",
     "render_research_error",

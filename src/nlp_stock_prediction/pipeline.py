@@ -6,11 +6,16 @@ from pathlib import Path
 from typing import cast
 
 from nlp_stock_prediction.contracts import DailyReport
-from nlp_stock_prediction.contracts.providers import BatchRunConfig, RunConfig
+from nlp_stock_prediction.contracts.providers import BatchRunConfig, RunConfig, WsbBatchRunConfig
 from nlp_stock_prediction.orchestration.orchestration_common import stable_digest
-from nlp_stock_prediction.orchestration.report_bundle import BatchReportBundle, ReportBundle
+from nlp_stock_prediction.orchestration.report_bundle import (
+    BatchReportBundle,
+    ReportBundle,
+    WsbBatchReportBundle,
+)
 from nlp_stock_prediction.orchestration.research_batch import generate_batch_research_reports
 from nlp_stock_prediction.orchestration.research_service import ResearchService
+from nlp_stock_prediction.orchestration.wsb_trending import generate_wsb_batch_research_reports
 
 LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
     "Live report generation requires source_mode='live' or live_providers=True; "
@@ -87,6 +92,12 @@ def generate_ranked_research_reports(config: BatchRunConfig) -> BatchReportBundl
     return generate_batch_research_reports(config, report_generator=generate_daily_report)
 
 
+def generate_wsb_trending_research_reports(config: WsbBatchRunConfig) -> WsbBatchReportBundle:
+    """Discover WSB-mentioned symbols and run concurrent Research Stage reports."""
+
+    return generate_wsb_batch_research_reports(config, report_generator=generate_daily_report)
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -139,6 +150,8 @@ __all__ = [
     "LIVE_ORCHESTRATION_DISABLED_MESSAGE",
     "BatchReportBundle",
     "ReportBundle",
+    "WsbBatchReportBundle",
     "generate_daily_report",
     "generate_ranked_research_reports",
+    "generate_wsb_trending_research_reports",
 ]

@@ -108,6 +108,8 @@ from nlp_stock_prediction.contracts.orchestration import (
     ResearchViabilityTarget,
     ToolExecutionResult,
     ToolInvocation,
+    WsbTrendingDiscoveryReport,
+    WsbTrendingStock,
 )
 from nlp_stock_prediction.contracts.provenance import (
     DataReference,
@@ -140,6 +142,7 @@ from nlp_stock_prediction.contracts.providers import (
     RedditProvider,
     RunConfig,
     TickerDiscoveryRequest,
+    WsbBatchRunConfig,
 )
 from nlp_stock_prediction.contracts.report import (
     DEFAULT_JSON_REPORT_CONTRACT,
@@ -307,4 +310,7 @@ __all__ = [
     "WarningSeverity",
     "Watchlist",
     "WatchlistEntry",
+    "WsbBatchRunConfig",
+    "WsbTrendingDiscoveryReport",
+    "WsbTrendingStock",
 ]

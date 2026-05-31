@@ -112,6 +112,19 @@ and writes aggregate ranking artifacts under `reports/<YYYY-MM-DD>/batch/`. The 
 research-priority score based on report evidence, prediction evaluation/confidence, signal artifacts,
 and contradictions; it is not a trading instruction or recommendation.
 
+Discover the most-mentioned public r/wallstreetbets symbols, then batch analyze the top 10:
+
+```sh
+python -m nlp_stock_prediction research-wsb-batch \
+  --date 2026-05-12 \
+  --output reports/ \
+  --live
+```
+
+The WSB workflow writes a Reddit mention-count discovery artifact under
+`reports/<YYYY-MM-DD>/wsb-trending/`, then writes the same per-symbol report bundles and batch
+viability ranking used by `research-batch`. Offline mode uses deterministic Reddit fixtures.
+
 In an interactive terminal, launch the Rich terminal UI for a guided report run:
 
 ```sh
@@ -144,6 +157,7 @@ python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction app
 python -m nlp_stock_prediction research --help
 python -m nlp_stock_prediction research-batch --help
+python -m nlp_stock_prediction research-wsb-batch --help
 python -m nlp_stock_prediction tui --help
 ```
 
@@ -176,6 +190,17 @@ python -m nlp_stock_prediction research-batch \
   --output reports/ \
   --offline \
   --max-workers 3
+```
+
+Discover public WSB mention leaders, then batch rank the resulting reports:
+
+```sh
+python -m nlp_stock_prediction research-wsb-batch \
+  --date 2026-05-12 \
+  --output reports/ \
+  --offline \
+  --limit 10 \
+  --max-discussion-pages 10
 ```
 
 Run the optional Research Stage Codex smoke workflow:

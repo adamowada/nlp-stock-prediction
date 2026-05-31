@@ -99,6 +99,7 @@ from nlp_stock_prediction.reporting.audit import stable_json_bytes
 from nlp_stock_prediction.storage.records import (
     CandidateArtifactLinkRecord,
     CandidateEvidenceLinkRecord,
+    InstrumentRecord,
     PredictionCandidateRecord,
     ResearchRunRecord,
     ToolRunRecord,
@@ -1171,27 +1172,60 @@ class ResearchService:
         )
         instrument_id = self._mode_adapter(self._require_run(run_id)).instrument_id(symbol)
         instrument = self.store.get_instrument(instrument_id)
+        instrument_missing = instrument is None
         if instrument is None:
-            raise ValueError(f"research candidate synthesis requires instrument: {instrument_id}")
+            instrument = InstrumentRecord(
+                instrument_id=instrument_id,
+                symbol=symbol.upper(),
+                asset_class="unknown",
+                name=f"{symbol.upper()} unresolved research symbol",
+                metadata={
+                    "research_candidate_synthesis": True,
+                    "instrument_resolution_status": "unavailable",
+                    "limitation": (
+                        "No stored instrument identity was available; candidate remains "
+                        "unavailable pending instrument resolution."
+                    ),
+                },
+            )
+            self.store.upsert_instrument(instrument)
         candidate_symbol = instrument.symbol
         candidate_id = f"candidate-research-{symbol_slug(symbol)}-{stable_digest(run_id)[:8]}"
         status = (
-            "contradicted"
+            "unavailable"
+            if instrument_missing
+            else "contradicted"
             if evidence_against
             else "evidence_supported"
             if evidence_for
             else "insufficient_evidence"
         )
         confidence = (
-            0.42 if evidence_for and not evidence_against else 0.28 if evidence_for else 0.18
+            0.08
+            if instrument_missing
+            else 0.42
+            if evidence_for and not evidence_against
+            else 0.28
+            if evidence_for
+            else 0.18
         )
         signal_artifacts = signal_artifact_references_for_records(
             self.store.list_artifacts_for_run(run_id)
         )
-        warnings = (
-            ()
-            if evidence_for or evidence_against
-            else ("No attributable directional source evidence was available.",)
+        warnings = tuple(
+            warning
+            for warning in (
+                (
+                    "No stored instrument identity was available; synthesized an "
+                    "unavailable research placeholder."
+                )
+                if instrument_missing
+                else None,
+                None
+                if evidence_for or evidence_against
+                else "No attributable directional source evidence was available.",
+            )
+            if warning is not None
         )
         candidate = PredictionCandidateRecord(
             candidate_id=candidate_id,

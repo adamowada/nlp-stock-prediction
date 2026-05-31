@@ -16,7 +16,11 @@ from nlp_stock_prediction.orchestration.dummy import (
     build_dummy_tool_registry,
     generate_dummy_report_bundle,
 )
-from nlp_stock_prediction.orchestration.report_bundle import BatchReportBundle, ReportBundle
+from nlp_stock_prediction.orchestration.report_bundle import (
+    BatchReportBundle,
+    ReportBundle,
+    WsbBatchReportBundle,
+)
 from nlp_stock_prediction.orchestration.report_data_modes import (
     CODEX_SMOKE_REPORT_DATA_MODE,
     DUMMY_SMOKE_REPORT_DATA_MODE,
@@ -94,6 +98,12 @@ from nlp_stock_prediction.orchestration.tools import (
     ToolRunResult,
     ToolSpec,
 )
+from nlp_stock_prediction.orchestration.wsb_trending import (
+    DEFAULT_WSB_SOURCE_URL,
+    WSB_TRENDING_PROVIDER,
+    discover_wsb_trending_stocks,
+    generate_wsb_batch_research_reports,
+)
 
 _EVALUATION_EXPORTS = {
     "EVALUATION_ABLATION_TOOL_ID",
@@ -124,6 +134,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "CODEX_SMOKE_REPORT_DATA_MODE",
     "DEFAULT_STAGE_ORDER",
+    "DEFAULT_WSB_SOURCE_URL",
     "DUMMY_ORCHESTRATION_DISABLED_MESSAGE",
     "DUMMY_SMOKE_REPORT_DATA_MODE",
     "EVALUATION_ABLATION_TOOL_ID",
@@ -137,6 +148,7 @@ __all__ = [
     "OFFLINE_FIXTURE_REPORT_DATA_MODE",
     "REPORT_DATA_MODE_KEY",
     "RESEARCH_STAGE_ORDER",
+    "WSB_TRENDING_PROVIDER",
     "ArtifactFileTransaction",
     "ArtifactIndex",
     "ArtifactType",
@@ -180,16 +192,19 @@ __all__ = [
     "ToolRunRecord",
     "ToolRunResult",
     "ToolSpec",
+    "WsbBatchReportBundle",
     "build_dummy_tool_registry",
     "build_evaluation_tool_registry",
     "build_research_tool_registry",
     "deterministic_generated_at",
+    "discover_wsb_trending_stocks",
     "enforce_live_report_input_boundary",
     "evaluation_tool_plan",
     "execute_research_tool",
     "find_non_live_report_input_violations",
     "generate_batch_research_reports",
     "generate_dummy_report_bundle",
+    "generate_wsb_batch_research_reports",
     "rank_report_viability",
     "report_data_mode_from_run",
     "report_data_mode_metadata",

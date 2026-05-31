@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from nlp_stock_prediction.contracts import DailyReport, ResearchViabilityRankingReport
+from nlp_stock_prediction.contracts import (
+    DailyReport,
+    ResearchViabilityRankingReport,
+    WsbTrendingDiscoveryReport,
+)
 from nlp_stock_prediction.orchestration.runtime import ToolRunRecord as RuntimeToolRunRecord
 from nlp_stock_prediction.storage.records import ToolRunRecord as StorageToolRunRecord
 
@@ -37,4 +41,15 @@ class BatchReportBundle:
     report_bundles: tuple[ReportBundle, ...]
 
 
-__all__ = ["BatchReportBundle", "ReportBundle", "ReportToolRunRecord"]
+@dataclass(frozen=True)
+class WsbBatchReportBundle:
+    """Files produced by WSB discovery plus batch research ranking."""
+
+    output_dir: Path
+    discovery_markdown_path: Path
+    discovery_json_path: Path
+    discovery_report: WsbTrendingDiscoveryReport
+    batch_bundle: BatchReportBundle
+
+
+__all__ = ["BatchReportBundle", "ReportBundle", "ReportToolRunRecord", "WsbBatchReportBundle"]

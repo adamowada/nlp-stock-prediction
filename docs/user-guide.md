@@ -166,6 +166,46 @@ status, prediction evaluation score when available, confidence, supporting evide
 artifacts, and contradictory evidence so Codex or a human can decide which reports deserve deeper
 follow-up.
 
+## Discover WSB Leaders And Batch Analyze
+
+Use `research-wsb-batch` when you want the workflow to discover public r/wallstreetbets mention
+leaders first, then batch analyze the top symbols:
+
+```sh
+python -m nlp_stock_prediction research-wsb-batch \
+  --date 2026-05-12 \
+  --output reports/ \
+  --live
+```
+
+The workflow reads public Reddit HTML only. It counts high-confidence ticker mentions in visible WSB
+posts/comments, writes a discovery artifact, then runs `research-batch` over the discovered symbols.
+The default limit is 10 symbols.
+
+Offline mode is deterministic and useful for testing the workflow shape:
+
+```sh
+python -m nlp_stock_prediction research-wsb-batch \
+  --date 2026-05-12 \
+  --output reports/ \
+  --offline \
+  --limit 10 \
+  --max-discussion-pages 10
+```
+
+This writes:
+
+```text
+reports/2026-05-12/wsb-trending/discovery.md
+reports/2026-05-12/wsb-trending/discovery.json
+reports/2026-05-12/batch/viability-ranking.md
+reports/2026-05-12/batch/viability-ranking.json
+```
+
+WSB discovery ranks observed public mentions, not verified stock quality. Instrument resolution,
+provider availability, contradictory evidence, and insufficient-evidence outcomes remain visible in
+the downstream reports and ranking.
+
 ## Launch The Rich Terminal UI
 
 Use `tui` when you want a more app-like terminal flow. If you run it in an interactive terminal, it
@@ -273,6 +313,41 @@ Arguments:
 | `--live` | One mode required | Use live providers and public-source adapters without fixture fallback. |
 | `--fixture-dir` | No | Offline fixture root override. |
 | `--cache-dir` | No | Optional provider cache directory for live provider/cache metadata. |
+
+## WSB Batch Command Reference
+
+The WSB workflow command shape is:
+
+```sh
+python -m nlp_stock_prediction research-wsb-batch \
+  --date <YYYY-MM-DD> \
+  --output <OUTPUT_DIR> \
+  --live
+```
+
+or:
+
+```sh
+python -m nlp_stock_prediction research-wsb-batch \
+  --date <YYYY-MM-DD> \
+  --output <OUTPUT_DIR> \
+  --offline
+```
+
+Arguments:
+
+| Argument | Required | Meaning |
+| --- | --- | --- |
+| `--date` | Yes | Shared point-in-time report date for WSB discovery and per-symbol reports. |
+| `--output` | Yes | Base output directory for discovery, per-symbol reports, and batch ranking. |
+| `--limit` | No | Number of WSB-mentioned symbols to batch analyze. Defaults to `10`; valid range is `1` to `50`. |
+| `--max-discussion-pages` | No | Number of public WSB discussion pages to expand while counting mentions. Defaults to `10`. |
+| `--max-workers` | No | Bounded concurrent per-symbol research runs. Defaults to `4`; valid range is `1` to `16`. |
+| `--source-url` | No | Public Reddit HTML source page. Defaults to `https://www.reddit.com/r/wallstreetbets/`. |
+| `--offline` | One mode required | Use deterministic Reddit and provider fixtures. |
+| `--live` | One mode required | Use live public Reddit/provider adapters without fixture fallback. |
+| `--fixture-dir` | No | Offline fixture root override. |
+| `--cache-dir` | No | Optional provider cache directory for public HTML and provider metadata. |
 
 ## Choosing Offline Or Live Mode
 

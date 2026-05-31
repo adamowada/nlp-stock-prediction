@@ -12,14 +12,19 @@ from pathlib import Path
 
 from rich.console import Console
 
-from nlp_stock_prediction.contracts.providers import BatchRunConfig, RunConfig
+from nlp_stock_prediction.contracts.providers import BatchRunConfig, RunConfig, WsbBatchRunConfig
 from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.evaluation.calibration import DEFAULT_CALIBRATION_BIN_EDGES
 from nlp_stock_prediction.orchestration.evaluation_service import EvaluationService
-from nlp_stock_prediction.pipeline import generate_daily_report, generate_ranked_research_reports
+from nlp_stock_prediction.pipeline import (
+    generate_daily_report,
+    generate_ranked_research_reports,
+    generate_wsb_trending_research_reports,
+)
 from nlp_stock_prediction.terminal_ui import (
     print_batch_research_paths,
     print_research_paths,
+    print_wsb_batch_research_paths,
     prompt_for_research_config,
     render_research_error,
     run_research_terminal,
@@ -31,6 +36,8 @@ _CLI_EPILOG = """Examples:
     --date 2026-05-12 --symbol TSLA --output reports/ --offline
   python -m nlp_stock_prediction research-batch \\
     --date 2026-05-12 --symbols TSLA MSFT NVDA --output reports/ --offline
+  python -m nlp_stock_prediction research-wsb-batch \\
+    --date 2026-05-12 --output reports/ --live
   python -m nlp_stock_prediction research \\
     --date 2026-05-12 --symbol TSLA --output reports/ --live
 
@@ -39,6 +46,8 @@ Configuration:
   Live runs require --live and use configured live providers without fixture fallback.
   Batch runs fan out independent per-symbol reports with bounded concurrency, then write a
   research-viability ranking artifact. The ranking is not a trading instruction.
+  The WSB batch workflow discovers public r/wallstreetbets ticker mentions first, then runs
+  the same batch analysis over the top discovered symbols.
   A local .env file is loaded automatically without overriding exported shell variables.
   Keep provider credentials in environment variables or ignored local .env files;
   see docs/configuration.md.
@@ -179,6 +188,74 @@ def build_parser() -> argparse.ArgumentParser:
         "--live",
         action="store_true",
         help="Use live providers and public-source adapters without fixture fallback.",
+    )
+    wsb_parser = subparsers.add_parser(
+        "research-wsb-batch",
+        help="Discover WSB-mentioned symbols and batch-rank research viability.",
+        description=(
+            "Discover the most-mentioned public r/wallstreetbets symbols, write a discovery "
+            "artifact, then generate per-symbol reports and a batch viability ranking."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_CLI_EPILOG,
+    )
+    wsb_parser.add_argument(
+        "--date",
+        dest="run_date",
+        required=True,
+        type=_parse_date,
+        help="Report date in YYYY-MM-DD format.",
+    )
+    wsb_parser.add_argument(
+        "--output",
+        dest="output_dir",
+        required=True,
+        type=Path,
+        help="Base output directory for discovery, per-symbol reports, and ranking artifacts.",
+    )
+    wsb_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Number of WSB-mentioned symbols to batch analyze. Defaults to 10.",
+    )
+    wsb_parser.add_argument(
+        "--max-discussion-pages",
+        type=int,
+        default=10,
+        help="Maximum public WSB discussion pages to expand during discovery.",
+    )
+    wsb_parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        help="Maximum concurrent per-symbol research runs, from 1 to 16.",
+    )
+    wsb_parser.add_argument(
+        "--source-url",
+        default="https://www.reddit.com/r/wallstreetbets/",
+        help="Public r/wallstreetbets HTML page to inspect for discovery.",
+    )
+    wsb_parser.add_argument(
+        "--fixture-dir",
+        type=Path,
+        help="Optional fixture root recorded in command metadata.",
+    )
+    wsb_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help="Optional provider cache directory recorded in command metadata.",
+    )
+    wsb_mode_group = wsb_parser.add_mutually_exclusive_group(required=True)
+    wsb_mode_group.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use deterministic offline fixtures.",
+    )
+    wsb_mode_group.add_argument(
+        "--live",
+        action="store_true",
+        help="Use live public Reddit/provider adapters without fixture fallback.",
     )
     tui_parser = subparsers.add_parser(
         "tui",
@@ -433,6 +510,22 @@ def build_batch_research_config(args: argparse.Namespace) -> BatchRunConfig:
     )
 
 
+def build_wsb_batch_research_config(args: argparse.Namespace) -> WsbBatchRunConfig:
+    return WsbBatchRunConfig(
+        run_date=args.run_date,
+        output_dir=args.output_dir,
+        fixture_dir=args.fixture_dir,
+        cache_dir=args.cache_dir,
+        offline=args.offline,
+        source_mode="offline" if args.offline else "live",
+        live_providers=args.live,
+        max_workers=args.max_workers,
+        limit=args.limit,
+        max_discussion_pages=args.max_discussion_pages,
+        source_url=args.source_url,
+    )
+
+
 def build_tui_research_config(args: argparse.Namespace) -> RunConfig:
     return prompt_for_research_config(
         run_date=args.run_date,
@@ -573,6 +666,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             render_research_error(str(exc), console=Console(stderr=True))
             return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
         return 0
+    if args.command == "research-wsb-batch":
+        try:
+            wsb_bundle = generate_wsb_trending_research_reports(
+                build_wsb_batch_research_config(args)
+            )
+            print_wsb_batch_research_paths(wsb_bundle)
+        except ValueError as exc:
+            render_research_error(str(exc), console=Console(stderr=True))
+            return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
+        return 0
     if args.command == "research":
         console = Console()
         try:
@@ -620,6 +723,7 @@ __all__ = [
     "build_parser",
     "build_research_config",
     "build_tui_research_config",
+    "build_wsb_batch_research_config",
     "main",
     "run_evaluation_command",
 ]

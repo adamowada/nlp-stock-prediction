@@ -176,13 +176,14 @@ report output, and no trading-instruction language.
 
 ```sh
 python -m pytest tests/test_research_tool_suite_e2e.py
-python -m pytest tests/test_research_tool_suite_e2e.py tests/test_research_public_wiring.py tests/test_research_service.py tests/test_research_batch.py
+python -m pytest tests/test_research_tool_suite_e2e.py tests/test_research_public_wiring.py tests/test_research_service.py tests/test_research_batch.py tests/test_wsb_trending_batch.py
 ```
 
 The gate must stay offline and should verify mixed-asset universe discovery, typed artifacts,
 SQLite tool-run/evidence/candidate indexing, rendered Markdown/JSON reports, batch viability
-ranking artifacts, audit manifest coverage, prediction-quality evaluation artifacts, Research Stage
-artifact type alignment, and visible recovery from partial tool failure.
+ranking artifacts, WSB trending-discovery artifacts, audit manifest coverage, prediction-quality
+evaluation artifacts, Research Stage artifact type alignment, and visible recovery from partial tool
+failure.
 
 ### Report Stage Report Gates
 

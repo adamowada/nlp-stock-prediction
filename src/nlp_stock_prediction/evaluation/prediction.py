@@ -91,7 +91,7 @@ def evaluate_prediction_candidate(
         ),
         missing_reference_ids=tuple(reference.evidence_id for reference in missing_refs),
     )
-    status = _evaluation_status(counts)
+    status = _evaluation_status(counts, candidate=candidate)
     score = _evaluation_score(candidate, counts, status)
     baseline = _baseline_comparison(candidate, score)
     uncertainty = _uncertainty_context(
@@ -320,7 +320,13 @@ def _source_attribution_rejection_reason(
     return None
 
 
-def _evaluation_status(counts: EvaluationEvidenceCounts) -> PredictionStatus:
+def _evaluation_status(
+    counts: EvaluationEvidenceCounts,
+    *,
+    candidate: PredictionCandidate,
+) -> PredictionStatus:
+    if candidate.status == PredictionStatus.UNAVAILABLE:
+        return PredictionStatus.UNAVAILABLE
     if counts.contradicting_source_evidence > 0:
         return PredictionStatus.CONTRADICTED
     if counts.supporting_source_evidence > 0:
@@ -340,6 +346,8 @@ def _evaluation_score(
         0.09,
         (counts.technical_signal_artifacts + counts.ml_signal_count) * 0.03,
     )
+    if status == PredictionStatus.UNAVAILABLE:
+        return 0.0
     if status == PredictionStatus.EVIDENCE_SUPPORTED:
         score = 0.48 + (support_depth * 0.24) + (candidate.confidence * 0.24)
         score -= missing_depth * 0.12

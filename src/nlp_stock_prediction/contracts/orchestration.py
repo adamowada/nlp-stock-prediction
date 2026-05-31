@@ -303,6 +303,60 @@ class ResearchViabilityRankingReport(ContractModel):
         return self
 
 
+class WsbTrendingStock(ContractModel):
+    """One WSB-mentioned symbol selected for downstream research."""
+
+    symbol: InstrumentSymbol
+    rank: int = Field(ge=1)
+    mention_count: int = Field(ge=1)
+    cashtag_count: int = Field(default=0, ge=0)
+    source_record_count: int = Field(default=0, ge=0)
+    source_urls: tuple[NonEmptyStr, ...]
+    snippets: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_trending_stock(self) -> WsbTrendingStock:
+        if not self.source_urls:
+            raise ValueError("WSB trending stocks require source URLs")
+        if self.cashtag_count > self.mention_count:
+            raise ValueError("cashtag_count cannot exceed mention_count")
+        return self
+
+
+class WsbTrendingDiscoveryReport(ContractModel):
+    """Public Reddit WSB mention-count discovery artifact."""
+
+    schema_version: Literal["wsb-trending-discovery.v1"] = "wsb-trending-discovery.v1"
+    generated_at: AwareDatetime
+    run_date: date
+    source_url: NonEmptyStr
+    provider_name: NonEmptyStr
+    mode: Literal["offline_fixture", "live"]
+    limit: int = Field(ge=1)
+    max_discussion_pages: int = Field(ge=0)
+    trending_stocks: tuple[WsbTrendingStock, ...] = Field(default_factory=tuple)
+    raw_snapshot_ids: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    source_urls: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    warnings: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_wsb_discovery(self) -> WsbTrendingDiscoveryReport:
+        symbols = tuple(stock.symbol for stock in self.trending_stocks)
+        if len(set(symbols)) != len(symbols):
+            raise ValueError("WSB trending discovery symbols must be unique")
+        ranks = tuple(stock.rank for stock in self.trending_stocks)
+        expected = tuple(range(1, len(self.trending_stocks) + 1))
+        if ranks != expected:
+            raise ValueError("WSB trending discovery ranks must be consecutive")
+        if len(self.trending_stocks) > self.limit:
+            raise ValueError("WSB trending discovery cannot exceed its limit")
+        if not self.source_urls:
+            raise ValueError("WSB trending discovery requires source URLs")
+        return self
+
+
 __all__ = [
     "CodexEvidenceImport",
     "OrchestratorRunSummary",
@@ -312,4 +366,6 @@ __all__ = [
     "ResearchViabilityTarget",
     "ToolExecutionResult",
     "ToolInvocation",
+    "WsbTrendingDiscoveryReport",
+    "WsbTrendingStock",
 ]

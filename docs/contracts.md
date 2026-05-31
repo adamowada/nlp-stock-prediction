@@ -337,6 +337,13 @@ evidence, linked signal artifacts, contradictory evidence, warnings, and per-sym
 The ranking artifact carries the source report paths, database paths when available, rationale,
 warnings, failed targets, mode, generated timestamp, and run date.
 
+The WSB batch workflow adds a preceding `WsbTrendingDiscoveryReport`. It counts high-confidence
+ticker mentions from public r/wallstreetbets HTML posts/comments, preserves source URLs, raw
+snapshot IDs, snippets, mention counts, cashtag counts, source-record counts, warnings, mode, and
+generated timestamp, then passes the top discovered symbols to the batch research ranking workflow.
+The discovery artifact represents observed public discussion volume only; it does not assert that a
+symbol is tradable, supported, or worth acting on.
+
 ## Planning State
 
 Active plans belong in the tracked planning SQLite database. Planning contracts include:

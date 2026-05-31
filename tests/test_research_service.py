@@ -411,3 +411,30 @@ def test_research_prediction_evaluation_service_writes_artifact_and_metadata(
     candidate = service.store.get_prediction_candidate("candidate-research-service-quality")
     assert candidate is not None
     assert "prediction_evaluation" in candidate.metadata
+
+
+@pytest.mark.integration
+def test_offline_research_flow_degrades_unresolved_symbols_to_unavailable_candidate(
+    tmp_path: Path,
+) -> None:
+    service = ResearchService(
+        repo_root=tmp_path,
+        fixture_root=Path(__file__).resolve().parents[1],
+    )
+
+    result = service.run_offline_research_flow(
+        run_date=RUN_DATE.isoformat(),
+        output_dir="reports/research-unresolved-symbol",
+        symbol="NVDA",
+    )
+
+    run_id = str(result["run_id"])
+    candidates = service.store.list_prediction_candidates_for_run(run_id)
+
+    assert candidates
+    assert candidates[0].status == "unavailable"
+    assert candidates[0].instrument_id == "instrument:codex:NVDA"
+    instrument = service.store.get_instrument("instrument:codex:NVDA")
+    assert instrument is not None
+    assert instrument.asset_class == "unknown"
+    assert Path(str(cast(dict[str, object], result["report"])["json_path"])).exists()

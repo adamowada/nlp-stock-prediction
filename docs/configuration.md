@@ -57,6 +57,20 @@ writes `viability-ranking.md` and `viability-ranking.json` under
 `<output>/<YYYY-MM-DD>/batch/`. The viability ranking is a research-priority artifact, not a trading
 instruction or recommendation.
 
+Discover public r/wallstreetbets mention leaders, then batch analyze them:
+
+```sh
+python -m nlp_stock_prediction research-wsb-batch \
+  --date 2026-05-12 \
+  --output reports/ \
+  --live \
+  --limit 10
+```
+
+The WSB workflow writes `discovery.md` and `discovery.json` under
+`<output>/<YYYY-MM-DD>/wsb-trending/`, then runs the same per-symbol reports and batch viability
+ranking used by `research-batch`.
+
 Launch the Rich terminal UI from an interactive terminal:
 
 ```sh
@@ -202,7 +216,7 @@ should be deleted or archived outside the repository rather than treated as sour
 The SQLite foundation is implemented in `nlp_stock_prediction.storage`. The planning database is
 `plans/planning.sqlite3` and is tracked in git. The default service research database is
 `data/prediction-research.sqlite3` and is generated local state ignored by git. The CLI `research`
-command and per-symbol `research-batch` work write isolated runtime databases named
+command, per-symbol `research-batch`, and WSB batch work write isolated runtime databases named
 `data/research-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3` so separate report
 invocations do not silently share stored evidence. Create or verify the default databases with:
 

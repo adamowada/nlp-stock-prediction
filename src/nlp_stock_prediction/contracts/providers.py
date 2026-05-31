@@ -145,6 +145,22 @@ class BatchRunConfig(ContractModel):
         return self
 
 
+class WsbBatchRunConfig(ContractModel):
+    """CLI workflow configuration for WSB discovery followed by batch research."""
+
+    run_date: date
+    output_dir: Path
+    fixture_dir: Path | None = None
+    cache_dir: Path | None = None
+    offline: bool = False
+    source_mode: Literal["disabled", "offline", "live"] = "disabled"
+    live_providers: bool = False
+    max_workers: int = Field(default=4, ge=1, le=16)
+    limit: int = Field(default=10, ge=1, le=50)
+    max_discussion_pages: int = Field(default=10, ge=0, le=50)
+    source_url: NonEmptyStr = "https://www.reddit.com/r/wallstreetbets/"
+
+
 class TickerDiscoveryRequest(ProviderRequest):
     source_url: str | None = None
 
@@ -315,4 +331,5 @@ __all__ = [
     "RedditProvider",
     "RunConfig",
     "TickerDiscoveryRequest",
+    "WsbBatchRunConfig",
 ]
