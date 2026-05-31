@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -27,7 +27,10 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
     OFFLINE_FIXTURE_REPORT_DATA_MODE,
     report_data_mode_metadata,
 )
-from nlp_stock_prediction.orchestration.research_common import evidence_reference
+from nlp_stock_prediction.orchestration.research_common import (
+    evidence_reference,
+    metric_source_evidence,
+)
 from nlp_stock_prediction.orchestration.research_fundamentals import (
     run_research_fundamentals_tool,
 )
@@ -372,6 +375,41 @@ def test_research_fundamentals_tool_indexes_sec_metrics_and_analysis(tmp_path: P
         "https://data.sec.gov/api/xbrl/companyfacts/CIK0001318605.json",
         "https://data.sec.gov/submissions/CIK0001318605.json",
     ]
+
+
+def test_metric_source_evidence_drops_future_observed_at_from_provenance() -> None:
+    future_as_of = (FETCHED_AT + timedelta(days=1)).date()
+
+    evidence = metric_source_evidence(
+        run_id=RUN_ID,
+        tool_slug="research_fundamentals",
+        fetched_at=FETCHED_AT,
+        provider_name="sec-edgar",
+        source_query_id="query-sec-orcl",
+        raw_snapshot_id="raw-sec",
+        cache_key="cache-sec",
+        symbol="ORCL",
+        metric=ProviderMetric(
+            name="sec_recent_filing_8_k",
+            value="8-K",
+            as_of=future_as_of,
+            metadata={
+                "source_url": (
+                    "https://www.sec.gov/Archives/edgar/data/1341439/example/orcl-8k.htm"
+                ),
+                "raw_snapshot_id": "raw-sec-upstream",
+            },
+        ),
+        source_kind=SourceKind.SEC_FILING,
+        retrieval_method=RetrievalMethod.OFFICIAL_API,
+        freshness_status=FreshnessStatus.UNKNOWN,
+        index=0,
+    )
+
+    assert evidence.created_at is None
+    assert evidence.provenance.observed_at is None
+    assert evidence.provenance.freshness_status == FreshnessStatus.UNKNOWN
+    assert evidence.metadata["metric_observed_at_after_fetched_at"] == "2026-05-12T00:00:00+00:00"
 
 
 def test_research_sector_macro_tool_preserves_stale_macro_evidence(tmp_path: Path) -> None:

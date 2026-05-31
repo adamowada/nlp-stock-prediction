@@ -17,16 +17,20 @@ from nlp_stock_prediction.contracts import (
 )
 from nlp_stock_prediction.providers._base import ProviderTransportError
 from nlp_stock_prediction.providers.reddit_scrape import (
+    RedditPublicPagePolicy,
     RedditPublicPageProvider,
     StaticHtmlTransport,
     build_reddit_public_search_url,
 )
 from nlp_stock_prediction.providers.scraping import HtmlCache, HtmlResponse
+from nlp_stock_prediction.reddit.public_html import (
+    extract_reddit_discussion_records_from_public_html,
+)
 
 RUN_DATE = date(2026, 5, 11)
 FETCHED_AT = datetime(2026, 5, 11, 16, 0, tzinfo=UTC)
-SUBREDDIT_URL = "https://www.reddit.com/r/wallstreetbets/"
-POST_URL = "https://www.reddit.com/r/wallstreetbets/comments/public001/daily_watch/"
+SUBREDDIT_URL = "https://old.reddit.com/r/wallstreetbets/"
+POST_URL = "https://old.reddit.com/r/wallstreetbets/comments/public001/daily_watch/"
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "reddit"
 
 
@@ -221,7 +225,7 @@ def test_public_page_policy_blocks_reddit_json_endpoints_before_fetch() -> None:
     provider = RedditPublicPageProvider(transport=transport, now=lambda: FETCHED_AT)
 
     result = provider.discover_tickers(
-        _ticker_request("https://www.reddit.com/r/wallstreetbets/.json")
+        _ticker_request("https://old.reddit.com/r/wallstreetbets/.json")
     )
 
     assert result.status == ProviderStatus.FAILED
@@ -230,6 +234,61 @@ def test_public_page_policy_blocks_reddit_json_endpoints_before_fetch() -> None:
     assert result.warnings[0].provider_error_type == "scraping_blocked_by_policy"
     assert result.warnings[0].metadata["policy_reason"] == "reddit_json_endpoint_disallowed"
     assert transport.calls == 0
+
+
+@pytest.mark.contract
+def test_public_page_policy_targets_old_reddit_only() -> None:
+    policy = RedditPublicPagePolicy()
+
+    assert policy.evaluate("https://old.reddit.com/r/wallstreetbets/").allowed
+    blocked = policy.evaluate("https://www.reddit.com/r/wallstreetbets/")
+
+    assert not blocked.allowed
+    assert blocked.reason == "non_old_reddit_host"
+
+
+@pytest.mark.contract
+def test_old_reddit_listing_markup_normalizes_to_discussion_records() -> None:
+    html = """
+    <div class=" thing id-t3_old001 link self"
+         data-fullname="t3_old001"
+         data-type="link"
+         data-author="wsbapp"
+         data-subreddit="wallstreetbets"
+         data-timestamp="1780084629000"
+         data-permalink="/r/wallstreetbets/comments/old001/daily_thread/"
+         data-comments-count="42"
+         data-score="199">
+      <div class="entry unvoted">
+        <p class="title"><a class="title may-blank"
+           href="/r/wallstreetbets/comments/old001/daily_thread/">Daily: $TSLA and MU</a></p>
+        <div class="usertext-body may-blank-within md-container">
+          <div class="md"><p>Watching $NVDA and $AMD sympathy.</p></div>
+        </div>
+      </div>
+    </div>
+    """
+
+    records = extract_reddit_discussion_records_from_public_html(
+        html,
+        source_url=SUBREDDIT_URL,
+    )
+
+    assert records == (
+        {
+            "kind": "post",
+            "id": "t3_old001",
+            "subreddit": "wallstreetbets",
+            "title": "Daily: $TSLA and MU",
+            "selftext": "Watching $NVDA and $AMD sympathy.",
+            "author": "wsbapp",
+            "created_utc": 1780084629,
+            "score": 199,
+            "permalink": "https://old.reddit.com/r/wallstreetbets/comments/old001/daily_thread/",
+            "url": "https://old.reddit.com/r/wallstreetbets/comments/old001/daily_thread/",
+            "num_comments": 42,
+        },
+    )
 
 
 @pytest.mark.contract
@@ -330,7 +389,7 @@ def test_public_search_policy_allows_global_search_but_blocks_api_paths() -> Non
 
 @pytest.mark.contract
 def test_public_page_discussion_without_matches_returns_empty_result() -> None:
-    no_discussion_url = "https://www.reddit.com/r/wallstreetbets/comments/public002/no_discussion/"
+    no_discussion_url = "https://old.reddit.com/r/wallstreetbets/comments/public002/no_discussion/"
     provider = _provider(
         {no_discussion_url: "<main><p>No ticker discussion is visible.</p></main>"},
         discussion_urls=(no_discussion_url,),

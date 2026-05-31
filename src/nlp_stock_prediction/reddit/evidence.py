@@ -18,7 +18,7 @@ from nlp_stock_prediction.contracts import (
 from nlp_stock_prediction.reddit.matching import find_ticker_matches, matched_tickers
 
 _DEFAULT_FRESHNESS_WINDOW_SECONDS = 86_400
-_DEFAULT_SOURCE_URL = "https://www.reddit.com/search/"
+_DEFAULT_SOURCE_URL = "https://old.reddit.com/search/"
 
 
 def normalize_reddit_evidence(

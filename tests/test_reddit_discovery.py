@@ -24,7 +24,7 @@ def _request() -> TickerDiscoveryRequest:
     return TickerDiscoveryRequest(
         request_id="reddit-devvit-card-2026-05-11",
         run_date=RUN_DATE,
-        source_url="https://www.reddit.com/r/wallstreetbets/",
+        source_url="https://old.reddit.com/r/wallstreetbets/",
         query="r/wallstreetbets Devvit daily ticker card",
     )
 

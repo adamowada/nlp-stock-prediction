@@ -314,16 +314,17 @@ variables or ignored `.env` files.
 | `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS` | No | Enables opt-in live test groups when combined with marked tests. |
 | `NLP_STOCK_PREDICTION_LIVE_SCRAPE_URL` | No | URL used by the opt-in live scraping smoke test. |
 | `NLP_STOCK_PREDICTION_LIVE_SCRAPE_EXPECT_TEXT` | No | Text expected in the opt-in live scraping smoke response. |
-| `NLP_STOCK_PREDICTION_LIVE_REDDIT_DISCUSSION_URL` | No | Public Reddit discussion URL used by the opt-in live Reddit whole-loop smoke test. |
+| `NLP_STOCK_PREDICTION_LIVE_REDDIT_DISCUSSION_URL` | No | Public `old.reddit.com` discussion URL used by the opt-in live Reddit whole-loop smoke test. |
 | `NLP_STOCK_PREDICTION_LIVE_REDDIT_SYMBOL` | No | Optional ticker expected in the live Reddit whole-loop smoke discussion page; defaults to `TSLA`. |
 
 SEC EDGAR ticker-to-CIK resolution is automatic through SEC's public
 `company_tickers_exchange.json` dataset; unresolved or malformed lookups surface as provider
 failures instead of requiring local per-symbol environment mappings.
 
-Social evidence is Reddit-only. Live runs use bounded public Reddit search and public discussion
-HTML scraping, preserve search/discussion provenance, and surface empty results, login walls, rate
-limits, stale content, or malformed pages as provider warnings rather than inferred sentiment.
+Social evidence is Reddit-only. Live runs use bounded public `old.reddit.com` search and public
+`old.reddit.com` discussion HTML scraping, preserve search/discussion provenance, and surface empty
+results, login walls, rate limits, stale content, or malformed pages as provider warnings rather
+than inferred sentiment.
 
 The project uses two SQLite databases:
 
@@ -415,9 +416,9 @@ python -m pytest -m live_scraping
 ```
 
 The Reddit whole-loop live smoke also needs
-`NLP_STOCK_PREDICTION_LIVE_REDDIT_DISCUSSION_URL` pointing at a public Reddit discussion page whose
-post or comments contain the target ticker text. Set `NLP_STOCK_PREDICTION_LIVE_REDDIT_SYMBOL` when
-the target is not `TSLA`.
+`NLP_STOCK_PREDICTION_LIVE_REDDIT_DISCUSSION_URL` pointing at a public `old.reddit.com` discussion
+page whose post or comments contain the target ticker text. Set
+`NLP_STOCK_PREDICTION_LIVE_REDDIT_SYMBOL` when the target is not `TSLA`.
 
 The optional Codex smoke tests require the `codex-smoke` extra and
 `NLP_STOCK_PREDICTION_RUN_CODEX_SMOKE=1`:

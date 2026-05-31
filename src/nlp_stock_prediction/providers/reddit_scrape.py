@@ -55,7 +55,7 @@ from nlp_stock_prediction.reddit.public_html import (
 
 T = TypeVar("T")
 
-_DEFAULT_REDDIT_SEARCH_URL = "https://www.reddit.com/search/"
+_DEFAULT_REDDIT_SEARCH_URL = "https://old.reddit.com/search/"
 _DEFAULT_USER_AGENT = (
     "nlp-stock-prediction/0.1 (educational fixture-backed stock report; public Reddit pages only)"
 )
@@ -117,7 +117,7 @@ class _RedditSearchSelection:
 class RedditPublicPagePolicy:
     """Allow only public Reddit HTML pages, never API/private/login paths."""
 
-    allowed_hosts: tuple[str, ...] = ("www.reddit.com", "reddit.com")
+    allowed_hosts: tuple[str, ...] = ("old.reddit.com",)
 
     def evaluate(self, url: str) -> RedditPublicPagePolicyDecision:
         parsed = urlsplit(url)
@@ -127,6 +127,8 @@ class RedditPublicPagePolicy:
         if parsed.scheme != "https":
             return RedditPublicPagePolicyDecision(False, "reddit_public_pages_require_https")
         if host not in self.allowed_hosts:
+            if host in {"www.reddit.com", "reddit.com"}:
+                return RedditPublicPagePolicyDecision(False, "non_old_reddit_host")
             return RedditPublicPagePolicyDecision(False, "non_reddit_host")
         if path.endswith(".json") or "/.json" in path or parsed.query.lower().endswith(".json"):
             return RedditPublicPagePolicyDecision(False, "reddit_json_endpoint_disallowed")

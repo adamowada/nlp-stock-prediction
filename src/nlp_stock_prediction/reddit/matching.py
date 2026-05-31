@@ -20,6 +20,7 @@ class TickerMatch:
 
 _TOKEN_RE = re.compile(r"\$?[A-Za-z][A-Za-z0-9.\-']*|\d+(?:\.\d+)?")
 _BOUNDARY_CHARS = r"A-Za-z0-9_.\-"
+_RIGHT_BOUNDARY_RE = rf"(?=$|[^{_BOUNDARY_CHARS}]|\.(?=$|\s))"
 _SHORT_SYMBOLS_REQUIRING_CONTEXT = frozenset({"AI", "IT", "MU", "ON"})
 _TRADING_CONTEXT_WORDS = frozenset(
     {
@@ -125,7 +126,7 @@ def _normalize_tickers(tickers: Iterable[str]) -> tuple[str, ...]:
 
 def _find_cashtag_matches(text: str, ticker: str) -> Iterable[TickerMatch]:
     pattern = re.compile(
-        rf"(?<![{_BOUNDARY_CHARS}])\${re.escape(ticker)}(?![{_BOUNDARY_CHARS}])",
+        rf"(?<![{_BOUNDARY_CHARS}])\${re.escape(ticker)}{_RIGHT_BOUNDARY_RE}",
         flags=re.IGNORECASE,
     )
     for match in pattern.finditer(text):
@@ -139,7 +140,7 @@ def _find_cashtag_matches(text: str, ticker: str) -> Iterable[TickerMatch]:
 
 
 def _find_bare_symbol_matches(text: str, ticker: str) -> Iterable[TickerMatch]:
-    pattern = re.compile(rf"(?<![{_BOUNDARY_CHARS}]){re.escape(ticker)}(?![{_BOUNDARY_CHARS}])")
+    pattern = re.compile(rf"(?<![{_BOUNDARY_CHARS}]){re.escape(ticker)}{_RIGHT_BOUNDARY_RE}")
     for match in pattern.finditer(text):
         yield TickerMatch(
             ticker=ticker,

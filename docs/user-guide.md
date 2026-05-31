@@ -343,7 +343,7 @@ Arguments:
 | `--limit` | No | Number of WSB-mentioned symbols to batch analyze. Defaults to `10`; valid range is `1` to `50`. |
 | `--max-discussion-pages` | No | Number of public WSB discussion pages to expand while counting mentions. Defaults to `10`. |
 | `--max-workers` | No | Bounded concurrent per-symbol research runs. Defaults to `4`; valid range is `1` to `16`. |
-| `--source-url` | No | Public Reddit HTML source page. Defaults to `https://www.reddit.com/r/wallstreetbets/`. |
+| `--source-url` | No | Public old Reddit HTML source page. Defaults to `https://old.reddit.com/r/wallstreetbets/`. |
 | `--offline` | One mode required | Use deterministic Reddit and provider fixtures. |
 | `--live` | One mode required | Use live public Reddit/provider adapters without fixture fallback. |
 | `--fixture-dir` | No | Offline fixture root override. |

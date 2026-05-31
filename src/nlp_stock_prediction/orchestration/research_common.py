@@ -395,6 +395,10 @@ def metric_source_evidence(
         index=index,
     )
     observed_at = aware_datetime_from_metric_as_of(metric.as_of)
+    provenance_observed_at = provenance_observed_at_from_metric(
+        observed_at,
+        fetched_at=fetched_at,
+    )
     source_url = metric_source_url(provider_name, metric, raw_identifier)
     upstream_provider = text_from_metadata(metric.metadata, "provider_name") or provider_name
     upstream_raw_snapshot_id = text_from_metadata(metric.metadata, "raw_snapshot_id")
@@ -405,13 +409,29 @@ def metric_source_evidence(
         f"{stable_digest('|'.join((run_id, provider_name, source_query_id, raw_identifier)))}"
     )
     claim = metric_claim(symbol=symbol, metric=metric)
+    provider_metadata = {
+        "research_tool": tool_slug,
+        "metric": model_json(metric),
+        "source_query_id": source_query_id,
+        "research_metric_provider_name": provider_name,
+    }
+    evidence_metadata = {
+        "research_tool": tool_slug,
+        "provider_metric": model_json(metric),
+        "source_query_id": source_query_id,
+    }
+    if observed_at is not None and provenance_observed_at is None:
+        future_observed_at = observed_at.isoformat()
+        provider_metadata["metric_observed_at_after_fetched_at"] = future_observed_at
+        evidence_metadata["metric_observed_at_after_fetched_at"] = future_observed_at
+
     return SourceEvidence(
         evidence_id=evidence_id,
         source_kind=source_kind,
         ticker=ticker,
         title=f"{provider_name} {metric.name}",
         text=claim,
-        created_at=observed_at,
+        created_at=provenance_observed_at,
         permalink=source_url,
         matched_tickers=((ticker,) if ticker else ()),
         provenance=SourceProvenance(
@@ -419,7 +439,7 @@ def metric_source_evidence(
             source_kind=source_kind,
             retrieval_method=retrieval_method,
             fetched_at=fetched_at,
-            observed_at=observed_at,
+            observed_at=provenance_observed_at,
             source_url=source_url,
             permalink=source_url,
             raw_identifier=raw_identifier,
@@ -431,18 +451,9 @@ def metric_source_evidence(
             query=query or source_query_id,
             cache_key=upstream_cache_key or cache_key,
             freshness_status=freshness_status,
-            provider_metadata={
-                "research_tool": tool_slug,
-                "metric": model_json(metric),
-                "source_query_id": source_query_id,
-                "research_metric_provider_name": provider_name,
-            },
+            provider_metadata=provider_metadata,
         ),
-        metadata={
-            "research_tool": tool_slug,
-            "provider_metric": model_json(metric),
-            "source_query_id": source_query_id,
-        },
+        metadata=evidence_metadata,
     )
 
 
@@ -727,6 +738,16 @@ def aware_datetime_from_metric_as_of(value: date | datetime | None) -> datetime 
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
     return datetime(value.year, value.month, value.day, tzinfo=UTC)
+
+
+def provenance_observed_at_from_metric(
+    observed_at: datetime | None,
+    *,
+    fetched_at: datetime,
+) -> datetime | None:
+    if observed_at is not None and observed_at > fetched_at:
+        return None
+    return observed_at
 
 
 def metric_raw_identifier(

@@ -45,6 +45,47 @@ def test_wsb_trending_discovery_counts_public_reddit_mentions() -> None:
     assert discovery.source_urls[0] == DEFAULT_WSB_SOURCE_URL
 
 
+def test_wsb_trending_discovery_normalizes_sentence_punctuation_suffixes() -> None:
+    html = """
+    <html>
+      <body>
+        <div
+          class="thing id-t3_punct001"
+          data-type="link"
+          data-fullname="t3_punct001"
+          data-subreddit="wallstreetbets"
+          data-permalink="/r/wallstreetbets/comments/punct001/hpe_watch/"
+        >
+          <a class="title" href="/r/wallstreetbets/comments/punct001/hpe_watch/">
+            Watching $HPE. HPE. BRK.B.
+          </a>
+          <div class="usertext-body">
+            HPE stock and $HPE. into earnings.
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    discovery = discover_wsb_trending_stocks(
+        WsbBatchRunConfig(
+            run_date=RUN_DATE,
+            output_dir=Path("reports"),
+            offline=True,
+            source_mode="offline",
+            limit=10,
+            max_discussion_pages=0,
+        ),
+        transport=StaticHtmlTransport({DEFAULT_WSB_SOURCE_URL: html}),
+    )
+
+    hpe = next(stock for stock in discovery.trending_stocks if stock.symbol == "HPE")
+    symbols = {stock.symbol for stock in discovery.trending_stocks}
+
+    assert "HPE." not in symbols
+    assert hpe.mention_count == 4
+
+
 def test_wsb_batch_workflow_discovers_then_batch_analyzes(tmp_path: Path) -> None:
     seen_symbols: list[str] = []
 

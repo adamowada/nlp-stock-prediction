@@ -24,7 +24,7 @@ from nlp_stock_prediction.contracts import (
 )
 
 _IDENTIFIER_PREFIX = "ticker-container-"
-_DEFAULT_SOURCE_URL = "https://www.reddit.com/search/"
+_DEFAULT_SOURCE_URL = "https://old.reddit.com/search/"
 _TICKER_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _DEFAULT_FRESHNESS_WINDOW_SECONDS = 86_400
 

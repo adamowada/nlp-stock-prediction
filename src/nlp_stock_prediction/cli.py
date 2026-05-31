@@ -233,7 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wsb_parser.add_argument(
         "--source-url",
-        default="https://www.reddit.com/r/wallstreetbets/",
+        default="https://old.reddit.com/r/wallstreetbets/",
         help="Public r/wallstreetbets HTML page to inspect for discovery.",
     )
     wsb_parser.add_argument(

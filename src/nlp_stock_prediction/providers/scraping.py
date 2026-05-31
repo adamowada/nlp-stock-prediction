@@ -13,7 +13,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from nlp_stock_prediction.contracts import ProviderWarning, WarningCode, WarningSeverity
@@ -68,7 +68,7 @@ class UrllibHtmlTransport:
         timeout: float = 10.0,
         max_bytes: int = DEFAULT_HTML_MAX_BYTES,
     ) -> HtmlResponse:
-        request = Request(url, headers=dict(headers or {}))
+        request = Request(_ascii_url(url), headers=dict(headers or {}))
         try:
             with urlopen(request, timeout=timeout) as response:
                 body = response.read(max_bytes + 1)
@@ -103,7 +103,7 @@ class UrllibHtmlTransport:
             raise ProviderTransportError(str(exc), retryable=True, error_type=error_type) from exc
         except TimeoutError as exc:
             raise ProviderTransportError(str(exc), retryable=True, error_type="timeout") from exc
-        except (OSError, UnicodeDecodeError, LookupError) as exc:
+        except (OSError, UnicodeError, LookupError) as exc:
             raise ProviderTransportError(
                 str(exc),
                 retryable=True,
@@ -580,6 +580,19 @@ class _VisibleTextParser(HTMLParser):
 
 def _attrs_to_map(attrs: list[tuple[str, str | None]]) -> dict[str, str]:
     return {key.lower(): value for key, value in attrs if value is not None}
+
+
+def _ascii_url(url: str) -> str:
+    split = urlsplit(url)
+    return urlunsplit(
+        (
+            split.scheme,
+            split.netloc.encode("idna").decode("ascii"),
+            quote(split.path, safe="/:%"),
+            quote(split.query, safe="=&?/:+,%"),
+            quote(split.fragment, safe="=&?/:+,%"),
+        )
+    )
 
 
 __all__ = [

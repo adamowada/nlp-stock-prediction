@@ -6,9 +6,11 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
-_DEFAULT_SOURCE_URL = "https://www.reddit.com/search/"
+_DEFAULT_SOURCE_URL = "https://old.reddit.com/search/"
+_REDDIT_PUBLIC_HOST = "old.reddit.com"
+_REDDIT_HOSTS = frozenset({"old.reddit.com", "www.reddit.com", "reddit.com"})
 
 
 @dataclass(slots=True)
@@ -37,6 +39,7 @@ class _DiscussionRecordBuilder:
         raw_identifier = _first_attr(
             self.raw_attributes,
             "data-reddit-id",
+            "data-fullname",
             "thingid",
             "thing-id",
             "post-id",
@@ -103,6 +106,7 @@ class _DiscussionRecordBuilder:
             "comments",
             "num-comments",
             "data-num-comments",
+            "data-comments-count",
         )
         if num_comments is not None:
             record["num_comments"] = num_comments
@@ -114,12 +118,24 @@ class _RedditDiscussionHtmlParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.records: list[_DiscussionRecordBuilder] = []
-        self._record_stack: list[tuple[int, str]] = []
-        self._field_stack: list[tuple[int, str, str]] = []
+        self._record_stack: list[tuple[int, str, int]] = []
+        self._field_stack: list[tuple[int, str, str, int]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         normalized_tag = tag.lower()
         attr_map = _attrs_to_dict(attrs)
+        if self._record_stack:
+            index, record_tag, depth = self._record_stack[-1]
+            self._record_stack[-1] = (index, record_tag, depth + 1)
+        current_record = self._record_stack[-1][0] if self._record_stack else None
+        if self._field_stack and current_record == self._field_stack[-1][0]:
+            field_record, active_field_name, field_tag, field_depth = self._field_stack[-1]
+            self._field_stack[-1] = (
+                field_record,
+                active_field_name,
+                field_tag,
+                field_depth + 1,
+            )
         kind = _record_kind(normalized_tag, attr_map)
         if kind is not None:
             self.records.append(
@@ -129,14 +145,14 @@ class _RedditDiscussionHtmlParser(HTMLParser):
                     source_rank=len(self.records),
                 )
             )
-            self._record_stack.append((len(self.records) - 1, normalized_tag))
+            self._record_stack.append((len(self.records) - 1, normalized_tag, 0))
 
         current_record = self._record_stack[-1][0] if self._record_stack else None
         if current_record is None:
             return
         field_name = _field_name(normalized_tag, attr_map, self.records[current_record].kind)
         if field_name is not None:
-            self._field_stack.append((current_record, field_name, normalized_tag))
+            self._field_stack.append((current_record, field_name, normalized_tag, 0))
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)
@@ -145,15 +161,36 @@ class _RedditDiscussionHtmlParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if not data.strip() or not self._field_stack:
             return
-        record_index, field_name, _tag = self._field_stack[-1]
+        record_index, field_name, _tag, _depth = self._field_stack[-1]
         self.records[record_index].append(field_name, data)
 
     def handle_endtag(self, tag: str) -> None:
         normalized_tag = tag.lower()
-        if self._field_stack and self._field_stack[-1][2] == normalized_tag:
-            self._field_stack.pop()
-        if self._record_stack and self._record_stack[-1][1] == normalized_tag:
+        if self._field_stack:
+            field_record, field_name, field_tag, field_depth = self._field_stack[-1]
+            if field_tag == normalized_tag and field_depth == 0:
+                self._field_stack.pop()
+            elif field_depth > 0:
+                self._field_stack[-1] = (
+                    field_record,
+                    field_name,
+                    field_tag,
+                    field_depth - 1,
+                )
+        if not self._record_stack:
+            return
+        record_index, record_tag, record_depth = self._record_stack[-1]
+        if record_tag == normalized_tag and record_depth == 0:
             self._record_stack.pop()
+            if self._record_stack:
+                parent_index, parent_tag, parent_depth = self._record_stack[-1]
+                self._record_stack[-1] = (
+                    parent_index,
+                    parent_tag,
+                    max(0, parent_depth - 1),
+                )
+        elif record_depth > 0:
+            self._record_stack[-1] = (record_index, record_tag, record_depth - 1)
 
 
 class _ObservedAtHtmlParser(HTMLParser):
@@ -323,6 +360,8 @@ def extract_snapshot_observed_at(html: str) -> datetime | None:
 def _record_kind(tag: str, attrs: dict[str, str]) -> str | None:
     explicit_kind = attrs.get("data-reddit-kind", "").lower()
     test_id = attrs.get("data-testid", "").lower()
+    data_type = attrs.get("data-type", "").lower()
+    classes = _classes(attrs)
     if tag == "shreddit-post" or explicit_kind == "post" or test_id in {"post", "reddit-post"}:
         return "post"
     if (
@@ -331,6 +370,11 @@ def _record_kind(tag: str, attrs: dict[str, str]) -> str | None:
         or test_id in {"comment", "reddit-comment"}
     ):
         return "comment"
+    if tag == "div" and "thing" in classes:
+        if data_type == "comment" or any(value.startswith("id-t1_") for value in classes):
+            return "comment"
+        if data_type in {"link", "post"} or any(value.startswith("id-t3_") for value in classes):
+            return "post"
     return None
 
 
@@ -338,15 +382,27 @@ def _field_name(tag: str, attrs: dict[str, str], record_kind: str) -> str | None
     slot = attrs.get("slot", "").lower()
     data_field = attrs.get("data-field", "").lower()
     test_id = attrs.get("data-testid", "").lower()
-    if slot == "title" or data_field == "title" or test_id in {"post-title", "title"}:
+    classes = _classes(attrs)
+    if (
+        slot == "title"
+        or data_field == "title"
+        or test_id in {"post-title", "title"}
+        or (record_kind == "post" and tag == "a" and "title" in classes)
+    ):
         return "title"
     if slot in {"text-body", "post-content", "comment", "body"}:
         return "body"
     if data_field in {"selftext", "body"} or test_id in {"post-content", "comment-content"}:
         return "body"
+    if tag == "div" and "usertext-body" in classes:
+        return "body"
     if tag == "shreddit-comment" and record_kind == "comment":
         return "body"
     return None
+
+
+def _classes(attrs: dict[str, str]) -> frozenset[str]:
+    return frozenset(attrs.get("class", "").replace("&#32;", " ").lower().split())
 
 
 def _attrs_to_dict(attrs: list[tuple[str, str | None]]) -> dict[str, str]:
@@ -368,7 +424,13 @@ def _first_attr(attrs: dict[str, str], *keys: str) -> str | None:
 def _created_utc(attrs: dict[str, str]) -> int | None:
     value = _first_attr(attrs, "created-utc", "data-created-utc")
     if value is None:
-        return None
+        timestamp = _first_attr(attrs, "data-timestamp")
+        if timestamp is None:
+            return None
+        try:
+            return int(float(timestamp) / 1000)
+        except ValueError:
+            return None
     try:
         return int(float(value))
     except ValueError:
@@ -416,7 +478,24 @@ def _normalize_url(value: str | None, source_url: str) -> str | None:
     stripped = value.strip()
     if not stripped:
         return None
-    return urljoin(source_url, stripped)
+    return _normalize_public_reddit_host(urljoin(source_url, stripped))
+
+
+def _normalize_public_reddit_host(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.netloc.lower() not in _REDDIT_HOSTS:
+        return value
+    if not parsed.path.lower().startswith("/r/"):
+        return value
+    return urlunsplit(
+        (
+            "https",
+            _REDDIT_PUBLIC_HOST,
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
 
 
 def _is_public_discussion_url(value: str | None) -> bool:

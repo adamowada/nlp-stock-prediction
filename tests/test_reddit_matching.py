@@ -21,6 +21,20 @@ def test_cashtags_match_case_insensitively_and_preserve_text_order() -> None:
 
 
 @pytest.mark.unit
+def test_terminal_sentence_periods_do_not_become_part_of_ticker() -> None:
+    text = "Watching $HPE. HPE. BRK.B. BRK did not match inside BRK.BASIC."
+
+    matches = find_ticker_matches(text, ("HPE", "BRK.B", "BRK"))
+
+    assert [(match.ticker, match.text) for match in matches] == [
+        ("HPE", "$HPE"),
+        ("HPE", "HPE"),
+        ("BRK.B", "BRK.B"),
+        ("BRK", "BRK"),
+    ]
+
+
+@pytest.mark.unit
 def test_short_tickers_do_not_match_lowercase_words_or_common_plain_english() -> None:
     text = "I am on it with an AI summary after the museum trip, no position."
 

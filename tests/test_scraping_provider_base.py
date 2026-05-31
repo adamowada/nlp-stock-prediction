@@ -5,10 +5,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.error import URLError
+from urllib.request import Request as UrlRequest
 
 import pytest
 
 from nlp_stock_prediction.contracts import WarningCode, WarningSeverity
+from nlp_stock_prediction.providers import scraping
 from nlp_stock_prediction.providers._base import MalformedProviderResponse, ProviderTransportError
 from nlp_stock_prediction.providers.scraping import (
     DEFAULT_HTML_MAX_BYTES,
@@ -159,6 +161,42 @@ def test_urllib_html_transport_classifies_wrapped_socket_timeout(
         UrllibHtmlTransport().get_html("https://example.com/")
 
     assert exc.value.error_type == "timeout"
+
+
+def test_urllib_html_transport_percent_encodes_unicode_urls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, str] = {}
+
+    class _Response:
+        status = 200
+        url = "https://old.reddit.com/r/wallstreetbets/comments/test/title_%F0%9F%9A%80/"
+
+        def __init__(self) -> None:
+            self.headers = {"Content-Type": "text/html; charset=utf-8"}
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _max_bytes: int) -> bytes:
+            return b"<html><body>ok</body></html>"
+
+    def fake_urlopen(request: UrlRequest, *, timeout: float) -> _Response:
+        del timeout
+        seen["url"] = request.full_url
+        return _Response()
+
+    monkeypatch.setattr(scraping, "urlopen", fake_urlopen)
+
+    response = UrllibHtmlTransport().get_html(
+        "https://old.reddit.com/r/wallstreetbets/comments/test/title_🚀/"
+    )
+
+    assert response.html == "<html><body>ok</body></html>"
+    assert seen["url"].endswith("/title_%F0%9F%9A%80/")
 
 
 def test_parse_html_document_extracts_visible_text_canonical_url_and_links() -> None:

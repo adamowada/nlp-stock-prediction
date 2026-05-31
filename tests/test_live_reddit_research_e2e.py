@@ -105,7 +105,7 @@ def test_live_reddit_discussion_data_survives_full_research_loop(tmp_path: Path)
     }.issubset({record.tool_name for record in tool_runs})
     assert reddit_evidence, (
         "Live Reddit E2E smoke did not persist Reddit evidence. Set "
-        f"{LIVE_REDDIT_DISCUSSION_URL_ENV} to a public Reddit discussion page containing "
+        f"{LIVE_REDDIT_DISCUSSION_URL_ENV} to a public old Reddit discussion page containing "
         f"{symbol.upper()} text and reachable without an interactive verification wall."
     )
     assert all(
@@ -303,13 +303,13 @@ def _require_live_reddit_discussion_url() -> str:
     value = _env_value(LIVE_REDDIT_DISCUSSION_URL_ENV)
     if value is None:
         pytest.skip(
-            f"Set {LIVE_REDDIT_DISCUSSION_URL_ENV} to a public Reddit discussion URL containing "
-            "the target ticker text to run the live Reddit E2E smoke."
+            f"Set {LIVE_REDDIT_DISCUSSION_URL_ENV} to a public old Reddit discussion URL "
+            "containing the target ticker text to run the live Reddit E2E smoke."
         )
-    if not value.startswith("https://www.reddit.com/r/") or "/comments/" not in value:
+    if not value.startswith("https://old.reddit.com/r/") or "/comments/" not in value:
         pytest.fail(
             f"{LIVE_REDDIT_DISCUSSION_URL_ENV} must be an "
-            "https://www.reddit.com/r/.../comments/... URL."
+            "https://old.reddit.com/r/.../comments/... URL."
         )
     return value
 

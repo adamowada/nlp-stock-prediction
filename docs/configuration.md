@@ -270,8 +270,9 @@ rate-limited, unavailable, or returns no usable bars. Missing optional credentia
 the run graph and final report instead of being replaced with fixture data.
 
 Social evidence has no credentialed social-network provider surface. The live path uses bounded
-public Reddit search and public discussion-page HTML scraping through the shared scraping cache,
-with warnings for login walls, rate limits, empty results, stale content, and malformed pages.
+public `old.reddit.com` search and public `old.reddit.com` discussion-page HTML scraping through
+the shared scraping cache, with warnings for login walls, rate limits, empty results, stale content,
+and malformed pages.
 
 The AP News live adapter searches AP's public search page for the requested ticker before falling
 back to the financial-markets hub. AP search results are still filtered through ticker matching, so

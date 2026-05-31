@@ -158,7 +158,7 @@ class WsbBatchRunConfig(ContractModel):
     max_workers: int = Field(default=4, ge=1, le=16)
     limit: int = Field(default=10, ge=1, le=50)
     max_discussion_pages: int = Field(default=10, ge=0, le=50)
-    source_url: NonEmptyStr = "https://www.reddit.com/r/wallstreetbets/"
+    source_url: NonEmptyStr = "https://old.reddit.com/r/wallstreetbets/"
 
 
 class TickerDiscoveryRequest(ProviderRequest):

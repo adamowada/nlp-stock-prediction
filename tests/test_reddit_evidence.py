@@ -149,7 +149,7 @@ def test_reddit_evidence_with_invalid_created_at_uses_missing_freshness() -> Non
         "body": "$TSLA swing only if it clears the trigger.",
         "created_at": "not-a-date",
         "score": 12,
-        "permalink": "https://www.reddit.com/r/wallstreetbets/comments/test/comment/",
+        "permalink": "https://old.reddit.com/r/wallstreetbets/comments/test/comment/",
     }
 
     evidence = normalize_reddit_evidence(

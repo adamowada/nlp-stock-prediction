@@ -45,7 +45,7 @@ def test_fixture_reddit_provider_satisfies_discovery_and_discussion_contracts() 
         TickerDiscoveryRequest(
             request_id="discover-reddit-2026-05-11",
             run_date=RUN_DATE,
-            source_url="https://www.reddit.com/r/wallstreetbets/",
+            source_url="https://old.reddit.com/r/wallstreetbets/",
         )
     )
     discussion = provider.fetch_discussion(
@@ -90,7 +90,7 @@ def test_fixture_reddit_provider_surfaces_invalid_discovery_as_partial_result() 
         TickerDiscoveryRequest(
             request_id="discover-reddit-malformed",
             run_date=RUN_DATE,
-            source_url="https://www.reddit.com/r/wallstreetbets/",
+            source_url="https://old.reddit.com/r/wallstreetbets/",
         )
     )
 

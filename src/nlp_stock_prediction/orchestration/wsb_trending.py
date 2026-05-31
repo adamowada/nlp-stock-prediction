@@ -41,7 +41,7 @@ from nlp_stock_prediction.reddit.public_html import (
 )
 
 WSB_TRENDING_PROVIDER = "reddit-public-wsb-trending"
-DEFAULT_WSB_SOURCE_URL = "https://www.reddit.com/r/wallstreetbets/"
+DEFAULT_WSB_SOURCE_URL = "https://old.reddit.com/r/wallstreetbets/"
 
 ReportGenerator = Callable[[RunConfig], ReportBundle]
 
@@ -69,6 +69,7 @@ _NON_TICKER_WORDS = frozenset(
         "YOLO",
     }
 )
+_TRAILING_SYMBOL_PUNCTUATION = ".,;:!?)]}"
 
 
 @dataclass(frozen=True)
@@ -425,7 +426,7 @@ def _is_ticker_like(symbol: str) -> bool:
 
 
 def _normalize_symbol(symbol: str) -> str:
-    return symbol.strip().removeprefix("$").upper()
+    return symbol.strip().removeprefix("$").upper().rstrip(_TRAILING_SYMBOL_PUNCTUATION)
 
 
 def _subreddit_from_url(value: str | None) -> str | None:

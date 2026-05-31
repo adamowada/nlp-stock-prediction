@@ -135,7 +135,7 @@ Vantage is not configured.
 
 The Reddit live E2E smoke runs the full Research Stage service loop while targeting live Reddit
 social evidence. It must skip unless `NLP_STOCK_PREDICTION_ALLOW_LIVE_TESTS=1` and
-`NLP_STOCK_PREDICTION_LIVE_REDDIT_DISCUSSION_URL` points to a public Reddit discussion page
+`NLP_STOCK_PREDICTION_LIVE_REDDIT_DISCUSSION_URL` points to a public `old.reddit.com` discussion page
 containing the target ticker text. Use `NLP_STOCK_PREDICTION_LIVE_REDDIT_SYMBOL` for symbols other
 than `TSLA`.
 
