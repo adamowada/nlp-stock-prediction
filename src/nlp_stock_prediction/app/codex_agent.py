@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +40,7 @@ class ProcessRunner(Protocol):
         *,
         cwd: Path,
         on_stdout_line: StdoutLineHandler | None = None,
+        stdin_text: str | None = None,
     ) -> ProcessResult: ...
 
 
@@ -49,14 +51,21 @@ class SubprocessRunner:
         *,
         cwd: Path,
         on_stdout_line: StdoutLineHandler | None = None,
+        stdin_text: str | None = None,
     ) -> ProcessResult:
         if on_stdout_line is not None:
-            return self._run_streaming(command, cwd=cwd, on_stdout_line=on_stdout_line)
+            return self._run_streaming(
+                command,
+                cwd=cwd,
+                on_stdout_line=on_stdout_line,
+                stdin_text=stdin_text,
+            )
         completed = subprocess.run(
             command,
             cwd=cwd,
             check=False,
             capture_output=True,
+            input=stdin_text,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -73,10 +82,13 @@ class SubprocessRunner:
         *,
         cwd: Path,
         on_stdout_line: StdoutLineHandler,
+        stdin_text: str | None,
     ) -> ProcessResult:
+        stdin_pipe = subprocess.PIPE if stdin_text is not None else None
         process = subprocess.Popen(
             command,
             cwd=cwd,
+            stdin=stdin_pipe,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -87,12 +99,27 @@ class SubprocessRunner:
         stdout_lines: list[str] = []
         stderr_lines: list[str] = []
 
+        def write_stdin() -> None:
+            if process.stdin is None:
+                return
+            try:
+                process.stdin.write(stdin_text or "")
+            except OSError:
+                pass
+            finally:
+                with suppress(OSError):
+                    process.stdin.close()
+
         def read_stderr() -> None:
             if process.stderr is None:
                 return
             for line in process.stderr:
                 stderr_lines.append(line)
 
+        stdin_thread: threading.Thread | None = None
+        if stdin_text is not None:
+            stdin_thread = threading.Thread(target=write_stdin, daemon=True)
+            stdin_thread.start()
         stderr_thread = threading.Thread(target=read_stderr, daemon=True)
         stderr_thread.start()
         if process.stdout is not None:
@@ -100,6 +127,8 @@ class SubprocessRunner:
                 stdout_lines.append(line)
                 on_stdout_line(line)
         returncode = process.wait()
+        if stdin_thread is not None:
+            stdin_thread.join()
         stderr_thread.join()
         return ProcessResult(
             returncode=returncode,
@@ -189,6 +218,7 @@ class CodexAgentAdapter:
             command,
             cwd=request.repo_root,
             on_stdout_line=_event_stream_handler(on_event) if on_event is not None else None,
+            stdin_text=prompt,
         )
         if result.returncode != 0:
             _append_transcript(transcript_path, role="error", content=result.stderr.strip())
@@ -238,7 +268,7 @@ class CodexAgentAdapter:
             str(request.repo_root),
             "--output-last-message",
             str(last_message_path),
-            prompt,
+            "-",
         ]
 
     def _resume_command(
@@ -257,7 +287,7 @@ class CodexAgentAdapter:
             "--output-last-message",
             str(last_message_path),
             request.session_id,
-            prompt,
+            "-",
         ]
 
     def _mcp_config_args(self, repo_root: Path, database_path: Path) -> list[str]:

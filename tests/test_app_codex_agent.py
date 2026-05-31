@@ -25,6 +25,7 @@ pytestmark = pytest.mark.unit
 class FakeRunner:
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
+        self.stdin_texts: list[str | None] = []
 
     def run(
         self,
@@ -32,9 +33,11 @@ class FakeRunner:
         *,
         cwd: Path,
         on_stdout_line: StdoutLineHandler | None = None,
+        stdin_text: str | None = None,
     ) -> ProcessResult:
         del cwd
         self.commands.append(command)
+        self.stdin_texts.append(stdin_text)
         output_path = Path(command[command.index("--output-last-message") + 1])
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("High-level conclusion from Codex.\n", encoding="utf-8")
@@ -106,6 +109,27 @@ def test_subprocess_runner_decodes_codex_output_as_utf8(
     assert seen_kwargs["text"] is True
 
 
+def test_subprocess_runner_sends_prompt_on_stdin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_kwargs: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        del command
+        seen_kwargs.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout='{"type":"done"}\n', stderr="")
+
+    monkeypatch.setattr("nlp_stock_prediction.app.codex_agent.subprocess.run", fake_run)
+
+    SubprocessRunner().run(["codex", "exec", "-"], cwd=tmp_path, stdin_text="line 1\nline 2")
+
+    assert seen_kwargs["input"] == "line 1\nline 2"
+    assert seen_kwargs["encoding"] == "utf-8"
+    assert seen_kwargs["errors"] == "replace"
+    assert seen_kwargs["text"] is True
+
+
 def test_subprocess_runner_streams_codex_stdout_lines(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -145,6 +169,53 @@ def test_subprocess_runner_streams_codex_stdout_lines(
     assert seen_kwargs["text"] is True
 
 
+def test_subprocess_runner_streaming_mode_sends_prompt_on_stdin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStdin:
+        def __init__(self) -> None:
+            self.value = ""
+            self.closed = False
+
+        def write(self, value: str) -> int:
+            self.value += value
+            return len(value)
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdin = FakeStdin()
+            self.stdout = StringIO('{"type":"thread.started","thread_id":"thread-123"}\n')
+            self.stderr = StringIO("")
+
+        def wait(self) -> int:
+            return 0
+
+    seen_processes: list[FakeProcess] = []
+
+    def fake_popen(command: list[str], **kwargs: object) -> FakeProcess:
+        del command, kwargs
+        process = FakeProcess()
+        seen_processes.append(process)
+        return process
+
+    monkeypatch.setattr("nlp_stock_prediction.app.codex_agent.subprocess.Popen", fake_popen)
+
+    SubprocessRunner().run(
+        ["codex", "exec", "-"],
+        cwd=tmp_path,
+        on_stdout_line=lambda _line: None,
+        stdin_text="full\nprompt",
+    )
+
+    assert len(seen_processes) == 1
+    assert seen_processes[0].stdin.value == "full\nprompt"
+    assert seen_processes[0].stdin.closed is True
+
+
 def test_codex_adapter_starts_and_resumes_session(tmp_path: Path) -> None:
     runner = FakeRunner()
     adapter = CodexAgentAdapter(runner=runner, python_executable=Path("python"))
@@ -177,13 +248,21 @@ def test_codex_adapter_starts_and_resumes_session(tmp_path: Path) -> None:
     assert "resume" in runner.commands[1]
     assert "--search" in runner.commands[0]
     assert "mcp_servers.nlp-stock-prediction.args" in " ".join(runner.commands[0])
-    assert "full filesystem permissions" in runner.commands[0][-1]
-    assert "do not create, edit, delete, format, stage, commit, push" in runner.commands[0][-1]
-    assert "Do not reveal private chain-of-thought" in runner.commands[0][-1]
-    assert "0.0-1.0 research/evidence scales" in runner.commands[0][-1]
-    assert "source reliability counts" in runner.commands[0][-1]
-    assert "trading-strategy context" in runner.commands[0][-1]
-    assert "Do not place trades, size positions" in runner.commands[0][-1]
+    assert runner.commands[0][-1] == "-"
+    assert runner.commands[1][-1] == "-"
+    assert runner.stdin_texts[0] is not None
+    assert runner.stdin_texts[1] is not None
+    assert "User message:\nSummarize the selected report." in runner.stdin_texts[0]
+    assert "User message:\nWhat changed?" in runner.stdin_texts[1]
+    assert "Summarize the selected report." not in runner.commands[0]
+    assert "What changed?" not in runner.commands[1]
+    assert "full filesystem permissions" in runner.stdin_texts[0]
+    assert "do not create, edit, delete, format, stage, commit, push" in runner.stdin_texts[0]
+    assert "Do not reveal private chain-of-thought" in runner.stdin_texts[0]
+    assert "0.0-1.0 research/evidence scales" in runner.stdin_texts[0]
+    assert "source reliability counts" in runner.stdin_texts[0]
+    assert "trading-strategy context" in runner.stdin_texts[0]
+    assert "Do not place trades, size positions" in runner.stdin_texts[0]
     transcript = first.transcript_path.read_text(encoding="utf-8")
     assert "Summarize the selected report" in transcript
     assert "High-level conclusion from Codex." in transcript
