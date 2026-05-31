@@ -16,7 +16,7 @@ from nlp_stock_prediction.orchestration.dummy import (
     build_dummy_tool_registry,
     generate_dummy_report_bundle,
 )
-from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
+from nlp_stock_prediction.orchestration.report_bundle import BatchReportBundle, ReportBundle
 from nlp_stock_prediction.orchestration.report_data_modes import (
     CODEX_SMOKE_REPORT_DATA_MODE,
     DUMMY_SMOKE_REPORT_DATA_MODE,
@@ -29,6 +29,10 @@ from nlp_stock_prediction.orchestration.report_data_modes import (
     find_non_live_report_input_violations,
     report_data_mode_from_run,
     report_data_mode_metadata,
+)
+from nlp_stock_prediction.orchestration.research_batch import (
+    generate_batch_research_reports,
+    rank_report_viability,
 )
 from nlp_stock_prediction.orchestration.research_common import ResearchToolResult
 from nlp_stock_prediction.orchestration.research_fundamentals import (
@@ -137,6 +141,7 @@ __all__ = [
     "ArtifactIndex",
     "ArtifactType",
     "ArtifactWriter",
+    "BatchReportBundle",
     "CodexSmokeMcpService",
     "EvaluationService",
     "EvaluationToolMetadata",
@@ -183,7 +188,9 @@ __all__ = [
     "evaluation_tool_plan",
     "execute_research_tool",
     "find_non_live_report_input_violations",
+    "generate_batch_research_reports",
     "generate_dummy_report_bundle",
+    "rank_report_viability",
     "report_data_mode_from_run",
     "report_data_mode_metadata",
     "research_tool_plan",

@@ -123,6 +123,28 @@ class RunConfig(ContractModel):
     live_providers: bool = False
 
 
+class BatchRunConfig(ContractModel):
+    """CLI batch research configuration contract."""
+
+    run_date: date
+    output_dir: Path
+    symbols: tuple[TickerSymbol, ...]
+    fixture_dir: Path | None = None
+    cache_dir: Path | None = None
+    offline: bool = False
+    source_mode: Literal["disabled", "offline", "live"] = "disabled"
+    live_providers: bool = False
+    max_workers: int = Field(default=4, ge=1, le=16)
+
+    @model_validator(mode="after")
+    def validate_batch_symbols(self) -> BatchRunConfig:
+        if not self.symbols:
+            raise ValueError("batch research requires at least one symbol")
+        if len(set(self.symbols)) != len(self.symbols):
+            raise ValueError("batch research symbols must be unique after normalization")
+        return self
+
+
 class TickerDiscoveryRequest(ProviderRequest):
     source_url: str | None = None
 
@@ -270,6 +292,7 @@ class LLMExtractor(Protocol):
 
 
 __all__ = [
+    "BatchRunConfig",
     "DateWindow",
     "EvidenceRequest",
     "ExtractionRequest",

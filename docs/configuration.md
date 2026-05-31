@@ -41,6 +41,22 @@ Generate a guarded live-provider report:
 python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output reports/ --live
 ```
 
+Generate and rank multiple report targets:
+
+```sh
+python -m nlp_stock_prediction research-batch \
+  --date 2026-05-12 \
+  --symbols TSLA MSFT NVDA \
+  --output reports/ \
+  --offline \
+  --max-workers 3
+```
+
+Batch research runs the existing per-symbol report workflow concurrently with bounded workers, then
+writes `viability-ranking.md` and `viability-ranking.json` under
+`<output>/<YYYY-MM-DD>/batch/`. The viability ranking is a research-priority artifact, not a trading
+instruction or recommendation.
+
 Launch the Rich terminal UI from an interactive terminal:
 
 ```sh
@@ -186,7 +202,7 @@ should be deleted or archived outside the repository rather than treated as sour
 The SQLite foundation is implemented in `nlp_stock_prediction.storage`. The planning database is
 `plans/planning.sqlite3` and is tracked in git. The default service research database is
 `data/prediction-research.sqlite3` and is generated local state ignored by git. The CLI `research`
-command writes isolated runtime databases named
+command and per-symbol `research-batch` work write isolated runtime databases named
 `data/research-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3` so separate report
 invocations do not silently share stored evidence. Create or verify the default databases with:
 

@@ -138,6 +138,34 @@ path records used by scripts. The dashboard shows the report files, provider hea
 scenario summary, evidence preview, and tool-run status while preserving the same
 Markdown/JSON/audit files on disk.
 
+## Research And Rank Multiple Symbols
+
+Use `research-batch` when you want the assistant to fan out independent per-symbol research runs and
+rank the resulting targets by follow-up research viability:
+
+```sh
+python -m nlp_stock_prediction research-batch \
+  --date 2026-05-12 \
+  --symbols TSLA MSFT NVDA \
+  --output reports/ \
+  --offline \
+  --max-workers 3
+```
+
+`--symbols` accepts repeated values or comma-separated lists, so `--symbols TSLA,MSFT NVDA` is also
+valid. Each symbol still gets its own standard report bundle under
+`reports/<YYYY-MM-DD>/<symbol-slug>/`. The aggregate ranking is written to:
+
+```text
+reports/2026-05-12/batch/viability-ranking.md
+reports/2026-05-12/batch/viability-ranking.json
+```
+
+The viability ranking is a research-priority score, not trading advice. It combines candidate
+status, prediction evaluation score when available, confidence, supporting evidence, signal
+artifacts, and contradictory evidence so Codex or a human can decide which reports deserve deeper
+follow-up.
+
 ## Launch The Rich Terminal UI
 
 Use `tui` when you want a more app-like terminal flow. If you run it in an interactive terminal, it
@@ -210,6 +238,41 @@ Arguments:
 | `--cache-dir` | No | Optional provider cache directory for live provider/cache metadata. Prefer an ignored path such as `cache/`. |
 
 `--offline` and `--live` are mutually exclusive. You must choose one.
+
+## Batch Research Command Reference
+
+The batch command shape is:
+
+```sh
+python -m nlp_stock_prediction research-batch \
+  --date <YYYY-MM-DD> \
+  --symbols <SYMBOL> [<SYMBOL> ...] \
+  --output <OUTPUT_DIR> \
+  --offline
+```
+
+or:
+
+```sh
+python -m nlp_stock_prediction research-batch \
+  --date <YYYY-MM-DD> \
+  --symbols <SYMBOL> [<SYMBOL> ...] \
+  --output <OUTPUT_DIR> \
+  --live
+```
+
+Arguments:
+
+| Argument | Required | Meaning |
+| --- | --- | --- |
+| `--date` | Yes | Shared point-in-time report date for every symbol. |
+| `--symbols` | Yes | Symbols or pairs to research. Values are normalized and must be unique after normalization. |
+| `--output` | Yes | Base output directory for per-symbol reports and batch ranking artifacts. |
+| `--max-workers` | No | Bounded concurrent per-symbol runs. Defaults to `4`; valid range is `1` to `16`. |
+| `--offline` | One mode required | Use deterministic offline fixtures. |
+| `--live` | One mode required | Use live providers and public-source adapters without fixture fallback. |
+| `--fixture-dir` | No | Offline fixture root override. |
+| `--cache-dir` | No | Optional provider cache directory for live provider/cache metadata. |
 
 ## Choosing Offline Or Live Mode
 

@@ -13,11 +13,13 @@ from pydantic import Field, model_validator
 
 from nlp_stock_prediction.contracts.base import (
     AwareDatetime,
+    Confidence,
     ContractModel,
     JsonObject,
     NonEmptyStr,
+    Score,
 )
-from nlp_stock_prediction.contracts.enums import TimeHorizon
+from nlp_stock_prediction.contracts.enums import PredictionStatus, TimeHorizon
 from nlp_stock_prediction.contracts.evidence import SourceEvidence
 from nlp_stock_prediction.contracts.instruments import InstrumentSymbol
 from nlp_stock_prediction.contracts.provenance import DataReference
@@ -235,11 +237,79 @@ class OrchestratorRunSummary(ContractModel):
         return self
 
 
+class ResearchViabilityTarget(ContractModel):
+    """One researched instrument ranked by follow-up research viability."""
+
+    symbol: InstrumentSymbol
+    viability_score: Score
+    research_status: Literal["ranked", "failed"] = "ranked"
+    rank: int | None = Field(default=None, ge=1)
+    report_status: NonEmptyStr | None = None
+    candidate_id: str | None = None
+    candidate_status: PredictionStatus | None = None
+    candidate_confidence: Confidence | None = None
+    evaluation_score: Score | None = None
+    evidence_for_count: int = Field(default=0, ge=0)
+    evidence_against_count: int = Field(default=0, ge=0)
+    signal_artifact_count: int = Field(default=0, ge=0)
+    markdown_path: str | None = None
+    json_path: str | None = None
+    database_path: str | None = None
+    rationale: tuple[NonEmptyStr, ...]
+    warnings: tuple[NonEmptyStr, ...] = Field(default_factory=tuple)
+    error_message: str | None = None
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_viability_target(self) -> ResearchViabilityTarget:
+        if self.research_status == "ranked":
+            if self.rank is None:
+                raise ValueError("ranked research viability targets require rank")
+            if self.report_status is None:
+                raise ValueError("ranked research viability targets require report_status")
+            if self.markdown_path is None or self.json_path is None:
+                raise ValueError("ranked research viability targets require report paths")
+        if self.research_status == "failed" and not self.error_message:
+            raise ValueError("failed research viability targets require error_message")
+        return self
+
+
+class ResearchViabilityRankingReport(ContractModel):
+    """Batch artifact that ranks researched instruments by evidence-backed viability."""
+
+    schema_version: Literal["research-batch-ranking.v1"] = "research-batch-ranking.v1"
+    generated_at: AwareDatetime
+    run_date: date
+    mode: Literal["offline_fixture", "live"]
+    ranked_targets: tuple[ResearchViabilityTarget, ...] = Field(default_factory=tuple)
+    failed_targets: tuple[ResearchViabilityTarget, ...] = Field(default_factory=tuple)
+    metadata: JsonObject = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_ranking_report(self) -> ResearchViabilityRankingReport:
+        ranked_symbols = tuple(target.symbol for target in self.ranked_targets)
+        failed_symbols = tuple(target.symbol for target in self.failed_targets)
+        all_symbols = (*ranked_symbols, *failed_symbols)
+        if len(set(all_symbols)) != len(all_symbols):
+            raise ValueError("batch research ranking symbols must be unique")
+        ranks = tuple(target.rank for target in self.ranked_targets)
+        expected = tuple(range(1, len(self.ranked_targets) + 1))
+        if ranks != expected:
+            raise ValueError("batch research ranks must be consecutive starting at 1")
+        if any(target.research_status != "ranked" for target in self.ranked_targets):
+            raise ValueError("ranked_targets entries must have research_status='ranked'")
+        if any(target.research_status != "failed" for target in self.failed_targets):
+            raise ValueError("failed_targets entries must have research_status='failed'")
+        return self
+
+
 __all__ = [
     "CodexEvidenceImport",
     "OrchestratorRunSummary",
     "ResearchObjective",
     "ResearchToolSpec",
+    "ResearchViabilityRankingReport",
+    "ResearchViabilityTarget",
     "ToolExecutionResult",
     "ToolInvocation",
 ]

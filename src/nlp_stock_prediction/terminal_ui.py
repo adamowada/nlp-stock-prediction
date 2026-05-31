@@ -20,7 +20,7 @@ from rich.text import Text
 
 from nlp_stock_prediction.contracts.providers import RunConfig
 from nlp_stock_prediction.contracts.report import AuditManifest, DailyReport
-from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
+from nlp_stock_prediction.orchestration.report_bundle import BatchReportBundle, ReportBundle
 from nlp_stock_prediction.reporting.view import ReportView
 
 ReportGenerator = Callable[[RunConfig], ReportBundle]
@@ -153,6 +153,29 @@ def print_research_paths(bundle: ReportBundle, *, file: IO[str] | None = None) -
     stream.write(f"Wrote Markdown report: {bundle.markdown_path}\n")
     stream.write(f"Wrote JSON report: {bundle.json_path}\n")
     stream.write(f"Wrote audit artifacts: {bundle.audit_dir}\n")
+    stream.flush()
+
+
+def print_batch_research_paths(
+    bundle: BatchReportBundle,
+    *,
+    file: IO[str] | None = None,
+) -> None:
+    """Print script-compatible batch ranking paths and rank summaries."""
+
+    stream = file or sys.stdout
+    stream.write(f"Wrote batch ranking Markdown: {bundle.ranking_markdown_path}\n")
+    stream.write(f"Wrote batch ranking JSON: {bundle.ranking_json_path}\n")
+    stream.write(f"Ranked research targets: {len(bundle.ranking_report.ranked_targets)}\n")
+    for target in bundle.ranking_report.ranked_targets:
+        stream.write(
+            f"{target.rank}. {target.symbol} viability {target.viability_score:.3f} "
+            f"({target.report_status}) -> {target.markdown_path}\n"
+        )
+    if bundle.ranking_report.failed_targets:
+        stream.write(f"Failed research targets: {len(bundle.ranking_report.failed_targets)}\n")
+        for target in bundle.ranking_report.failed_targets:
+            stream.write(f"{target.symbol}: {target.error_message}\n")
     stream.flush()
 
 
@@ -435,6 +458,7 @@ def _record_error(record: object) -> str | None:
 
 
 __all__ = [
+    "print_batch_research_paths",
     "print_research_paths",
     "prompt_for_research_config",
     "render_research_complete",

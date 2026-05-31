@@ -12,12 +12,13 @@ from pathlib import Path
 
 from rich.console import Console
 
-from nlp_stock_prediction.contracts.providers import RunConfig
+from nlp_stock_prediction.contracts.providers import BatchRunConfig, RunConfig
 from nlp_stock_prediction.environment import load_local_dotenv
 from nlp_stock_prediction.evaluation.calibration import DEFAULT_CALIBRATION_BIN_EDGES
 from nlp_stock_prediction.orchestration.evaluation_service import EvaluationService
-from nlp_stock_prediction.pipeline import generate_daily_report
+from nlp_stock_prediction.pipeline import generate_daily_report, generate_ranked_research_reports
 from nlp_stock_prediction.terminal_ui import (
+    print_batch_research_paths,
     print_research_paths,
     prompt_for_research_config,
     render_research_error,
@@ -28,12 +29,16 @@ CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE = 3
 _CLI_EPILOG = """Examples:
   python -m nlp_stock_prediction research \\
     --date 2026-05-12 --symbol TSLA --output reports/ --offline
+  python -m nlp_stock_prediction research-batch \\
+    --date 2026-05-12 --symbols TSLA MSFT NVDA --output reports/ --offline
   python -m nlp_stock_prediction research \\
     --date 2026-05-12 --symbol TSLA --output reports/ --live
 
 Configuration:
   Offline runs are deterministic and do not use network providers.
   Live runs require --live and use configured live providers without fixture fallback.
+  Batch runs fan out independent per-symbol reports with bounded concurrency, then write a
+  research-viability ranking artifact. The ranking is not a trading instruction.
   A local .env file is loaded automatically without overriding exported shell variables.
   Keep provider credentials in environment variables or ignored local .env files;
   see docs/configuration.md.
@@ -114,6 +119,63 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use deterministic offline fixtures.",
     )
     mode_group.add_argument(
+        "--live",
+        action="store_true",
+        help="Use live providers and public-source adapters without fixture fallback.",
+    )
+    batch_parser = subparsers.add_parser(
+        "research-batch",
+        help="Generate and rank prediction research reports for multiple symbols.",
+        description=(
+            "Generate per-symbol Markdown/JSON reports concurrently, then write aggregate "
+            "research-viability ranking artifacts under <output>/<YYYY-MM-DD>/batch/."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_CLI_EPILOG,
+    )
+    batch_parser.add_argument(
+        "--date",
+        dest="run_date",
+        required=True,
+        type=_parse_date,
+        help="Report date in YYYY-MM-DD format.",
+    )
+    batch_parser.add_argument(
+        "--output",
+        dest="output_dir",
+        required=True,
+        type=Path,
+        help="Base output directory; per-symbol reports and batch ranking are written below it.",
+    )
+    batch_parser.add_argument(
+        "--symbols",
+        nargs="+",
+        required=True,
+        help="Instrument symbols to research; accepts repeated values or comma-separated lists.",
+    )
+    batch_parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        help="Maximum concurrent per-symbol research runs, from 1 to 16.",
+    )
+    batch_parser.add_argument(
+        "--fixture-dir",
+        type=Path,
+        help="Optional fixture root recorded in command metadata.",
+    )
+    batch_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        help="Optional provider cache directory recorded in command metadata.",
+    )
+    batch_mode_group = batch_parser.add_mutually_exclusive_group(required=True)
+    batch_mode_group.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use deterministic offline fixtures.",
+    )
+    batch_mode_group.add_argument(
         "--live",
         action="store_true",
         help="Use live providers and public-source adapters without fixture fallback.",
@@ -348,6 +410,29 @@ def build_research_config(args: argparse.Namespace) -> RunConfig:
     )
 
 
+def _parse_symbol_values(values: Sequence[str]) -> tuple[str, ...]:
+    symbols: list[str] = []
+    for value in values:
+        symbols.extend(part.strip() for part in value.split(",") if part.strip())
+    if not symbols:
+        raise ValueError("--symbols requires at least one non-empty symbol")
+    return tuple(symbols)
+
+
+def build_batch_research_config(args: argparse.Namespace) -> BatchRunConfig:
+    return BatchRunConfig(
+        run_date=args.run_date,
+        output_dir=args.output_dir,
+        symbols=_parse_symbol_values(args.symbols),
+        fixture_dir=args.fixture_dir,
+        cache_dir=args.cache_dir,
+        offline=args.offline,
+        source_mode="offline" if args.offline else "live",
+        live_providers=args.live,
+        max_workers=args.max_workers,
+    )
+
+
 def build_tui_research_config(args: argparse.Namespace) -> RunConfig:
     return prompt_for_research_config(
         run_date=args.run_date,
@@ -480,6 +565,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+    if args.command == "research-batch":
+        try:
+            batch_bundle = generate_ranked_research_reports(build_batch_research_config(args))
+            print_batch_research_paths(batch_bundle)
+        except ValueError as exc:
+            render_research_error(str(exc), console=Console(stderr=True))
+            return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
+        return 0
     if args.command == "research":
         console = Console()
         try:
@@ -491,8 +584,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     console=console,
                 )
             else:
-                bundle = generate_daily_report(config)
-                print_research_paths(bundle)
+                research_bundle = generate_daily_report(config)
+                print_research_paths(research_bundle)
         except ValueError as exc:
             render_research_error(str(exc), console=Console(stderr=True))
             return CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE
@@ -522,6 +615,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 __all__ = [
     "CONTRACT_GATE_NOT_IMPLEMENTED_EXIT_CODE",
+    "build_batch_research_config",
     "build_evaluation_service",
     "build_parser",
     "build_research_config",

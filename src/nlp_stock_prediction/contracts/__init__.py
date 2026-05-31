@@ -104,6 +104,8 @@ from nlp_stock_prediction.contracts.orchestration import (
     OrchestratorRunSummary,
     ResearchObjective,
     ResearchToolSpec,
+    ResearchViabilityRankingReport,
+    ResearchViabilityTarget,
     ToolExecutionResult,
     ToolInvocation,
 )
@@ -115,6 +117,7 @@ from nlp_stock_prediction.contracts.provenance import (
     SourceProvenance,
 )
 from nlp_stock_prediction.contracts.providers import (
+    BatchRunConfig,
     DateWindow,
     EvidenceRequest,
     ExtractionRequest,
@@ -170,6 +173,7 @@ __all__ = [
     "AuditArtifact",
     "AuditManifest",
     "BaselineComparison",
+    "BatchRunConfig",
     "CalibrationBin",
     "CalibrationDriftCheck",
     "CalibrationSummary",
@@ -268,6 +272,8 @@ __all__ = [
     "ReportSourceReference",
     "ResearchObjective",
     "ResearchToolSpec",
+    "ResearchViabilityRankingReport",
+    "ResearchViabilityTarget",
     "RetrievalMethod",
     "RunConfig",
     "Score",

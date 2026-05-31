@@ -325,6 +325,18 @@ outcome data. Each prior review also carries a `prediction_outcome` and
 `prediction_outcome_evaluation` metadata projection using the settled Evaluation Stage outcome contracts so
 future consumers do not need a second prior-review vocabulary.
 
+## Batch Research Ranking
+
+Implemented batch research keeps the single-instrument report contract as the per-symbol unit of
+work. `research-batch` runs those units with bounded concurrency and writes aggregate
+`ResearchViabilityRankingReport` artifacts under `<output>/<YYYY-MM-DD>/batch/`.
+
+Research viability is a follow-up priority score, not trade attractiveness. It is derived from
+candidate status, prediction evaluation score when available, candidate confidence, supporting
+evidence, linked signal artifacts, contradictory evidence, warnings, and per-symbol run failures.
+The ranking artifact carries the source report paths, database paths when available, rationale,
+warnings, failed targets, mode, generated timestamp, and run date.
+
 ## Planning State
 
 Active plans belong in the tracked planning SQLite database. Planning contracts include:

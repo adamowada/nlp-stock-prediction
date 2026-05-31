@@ -97,6 +97,21 @@ python -m nlp_stock_prediction research --date 2026-05-12 --symbol TSLA --output
 The offline command writes local report artifacts under
 `reports/<YYYY-MM-DD>/<symbol-slug>/` without using network providers or live credentials.
 
+Generate and rank multiple research targets with bounded concurrency:
+
+```sh
+python -m nlp_stock_prediction research-batch \
+  --date 2026-05-12 \
+  --symbols TSLA MSFT NVDA \
+  --output reports/ \
+  --offline
+```
+
+Batch research keeps the single-symbol report contract intact, writes one report bundle per symbol,
+and writes aggregate ranking artifacts under `reports/<YYYY-MM-DD>/batch/`. The viability score is a
+research-priority score based on report evidence, prediction evaluation/confidence, signal artifacts,
+and contradictions; it is not a trading instruction or recommendation.
+
 In an interactive terminal, launch the Rich terminal UI for a guided report run:
 
 ```sh
@@ -128,6 +143,7 @@ Show available CLI commands:
 python -m nlp_stock_prediction --help
 python -m nlp_stock_prediction app
 python -m nlp_stock_prediction research --help
+python -m nlp_stock_prediction research-batch --help
 python -m nlp_stock_prediction tui --help
 ```
 
@@ -149,6 +165,17 @@ python -m nlp_stock_prediction research \
   --symbol TSLA \
   --output reports/ \
   --live
+```
+
+Generate offline reports for several targets and rank research viability:
+
+```sh
+python -m nlp_stock_prediction research-batch \
+  --date 2026-05-12 \
+  --symbols TSLA MSFT NVDA \
+  --output reports/ \
+  --offline \
+  --max-workers 3
 ```
 
 Run the optional Research Stage Codex smoke workflow:
@@ -280,9 +307,9 @@ The project uses two SQLite databases:
 - `data/prediction-research.sqlite3`: ignored default research state for service/tool runs that do
   not choose a per-run database.
 - `data/research-{offline|live}-runtime-{date}-{symbol_hash}-{output_hash}.sqlite3`: ignored CLI
-  research databases created by `python -m nlp_stock_prediction research ...`. These isolate report
-  runs by date, symbol, output path, and live/offline mode so one invocation cannot silently reuse
-  another invocation's stored evidence.
+  research databases created by `python -m nlp_stock_prediction research ...` and per-symbol
+  `research-batch` work. These isolate report runs by date, symbol, output path, and live/offline
+  mode so one invocation cannot silently reuse another invocation's stored evidence.
 
 Generated reports, provider cache files, research databases, and raw artifacts are local working
 state by default and are ignored unless explicitly promoted as small test fixtures.

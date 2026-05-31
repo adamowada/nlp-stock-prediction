@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import cast
 
 from nlp_stock_prediction.contracts import DailyReport
-from nlp_stock_prediction.contracts.providers import RunConfig
+from nlp_stock_prediction.contracts.providers import BatchRunConfig, RunConfig
 from nlp_stock_prediction.orchestration.orchestration_common import stable_digest
-from nlp_stock_prediction.orchestration.report_bundle import ReportBundle
+from nlp_stock_prediction.orchestration.report_bundle import BatchReportBundle, ReportBundle
+from nlp_stock_prediction.orchestration.research_batch import generate_batch_research_reports
 from nlp_stock_prediction.orchestration.research_service import ResearchService
 
 LIVE_ORCHESTRATION_DISABLED_MESSAGE = (
@@ -80,6 +81,12 @@ def generate_daily_report(config: RunConfig) -> ReportBundle:
     )
 
 
+def generate_ranked_research_reports(config: BatchRunConfig) -> BatchReportBundle:
+    """Generate concurrent Research Stage reports and rank follow-up viability."""
+
+    return generate_batch_research_reports(config, report_generator=generate_daily_report)
+
+
 def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -128,4 +135,10 @@ def _path_arg(path: Path, repo_root: Path) -> str:
         return resolved.as_posix()
 
 
-__all__ = ["LIVE_ORCHESTRATION_DISABLED_MESSAGE", "ReportBundle", "generate_daily_report"]
+__all__ = [
+    "LIVE_ORCHESTRATION_DISABLED_MESSAGE",
+    "BatchReportBundle",
+    "ReportBundle",
+    "generate_daily_report",
+    "generate_ranked_research_reports",
+]
